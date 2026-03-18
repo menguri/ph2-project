@@ -1,8 +1,41 @@
-import pandas as pd
 import os
+import sys
+import subprocess
 import argparse
 from datetime import datetime
 from typing import List
+
+
+def _ensure_project_python() -> None:
+    """현재 인터프리터가 프로젝트 venv가 아니면 재실행합니다."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(script_dir)
+    preferred_python = os.path.join(repo_root, "overcooked_v2", "bin", "python")
+
+    # 무한 재실행 방지
+    if os.environ.get("GENERATE_SUMMARY_REEXEC") == "1":
+        return
+
+    if os.path.isfile(preferred_python) and os.path.realpath(sys.executable) != os.path.realpath(preferred_python):
+        env = os.environ.copy()
+        env["GENERATE_SUMMARY_REEXEC"] = "1"
+        print(f"[INFO] Re-launching with project python: {preferred_python}")
+        completed = subprocess.run([preferred_python, __file__, *sys.argv[1:]], env=env)
+        sys.exit(completed.returncode)
+
+
+_ensure_project_python()
+
+try:
+    import pandas as pd
+except ModuleNotFoundError as e:
+    if e.name == "pandas":
+        print("[ERROR] 'pandas' is not installed in the active Python environment.")
+        print(f"[ERROR] Current python: {sys.executable}")
+        print("[HINT] Install with this interpreter:")
+        print(f"       {sys.executable} -m pip install pandas")
+        sys.exit(1)
+    raise
 
 # summary_utils.py에서 방금 생성한 함수를 가져옵니다.
 from utils.summary_utils import calculate_metrics_for_run

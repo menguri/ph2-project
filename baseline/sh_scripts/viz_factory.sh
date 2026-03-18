@@ -19,10 +19,11 @@ echo "Starting visualization factory by environment..."
 echo "Eval max steps: ${EVAL_MAX_STEPS}"
 
 # ./run_visualize.sh --gpu 7 --dir runs/20251209-000000_coord_ring --all --num_seeds 5
-./run_visualize.sh --gpu 7 --dir runs/20260318-120848_40mzsr6l_coord_ring_e3t --cross --num_seeds 5 --no_viz &
-# ./run_visualize.sh --gpu 1 --dir runs/20260309-171541_lomludhr_coord_ring_e3t --cross --num_seeds 5 &
-# ./run_visualize.sh --gpu 2 --dir runs/20260309-203511_fjvm0sg0_forced_coord_e3t --cross --num_seeds 5 &
-# ./run_visualize.sh --gpu 3 --dir runs/20260309-234546_6wfwbmfv_cramped_room_fcp --cross --num_seeds 5 &
+# ./run_visualize.sh --gpu 7 --dir runs/20260318-114337_m8rlj469_asymm_advantages_sp --cross --num_seeds 5 --no_viz 
+# ./run_visualize.sh --gpu 7 --dir runs/20260318-114338_bsnlsfpp_counter_circuit_sp --cross --num_seeds 5 --no_viz 
+# ./run_visualize.sh --gpu 7 --dir runs/20260318-114338_utvei1oo_forced_coord_sp --cross --num_seeds 5 --no_viz 
+# ./run_visualize.sh --gpu 7 --dir runs/20260318-114339_xf0xbxqn_coord_ring_sp --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-125027_bgsls8hb_cramped_room_sp --cross --num_seeds 5 --no_viz 
 # wait
 # ./run_visualize.sh --gpu 0 --dir runs/20260309-235315_a229nt2i_counter_circuit_e3t --cross --num_seeds 5 &
 # ./run_visualize.sh --gpu 1 --dir runs/20260310-011253_fao1ejiu_asymm_advantages_fcp --cross --num_seeds 5 & 
