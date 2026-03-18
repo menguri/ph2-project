@@ -33,7 +33,6 @@ from overcooked_v2_experiments.eval.evaluate import eval_pairing
 from overcooked_v2_experiments.eval.policy import PolicyPairing
 from overcooked_v2_experiments.eval.utils import (
     make_eval_env,
-    resolve_old_overcooked_flags,
 )
 
 
@@ -59,19 +58,18 @@ def visualize_ppo_policy(
     # 2) 환경 생성
     initial_env_kwargs = copy.deepcopy(config["env"]["ENV_KWARGS"])
     env_kwargs = initial_env_kwargs | extra_env_kwargs
-    cfg_old_overcooked, cfg_disable_old_auto = resolve_old_overcooked_flags(config)
-    if old_overcooked_override is not None:
-        cfg_old_overcooked = bool(old_overcooked_override)
-    if disable_old_overcooked_auto_override is not None:
-        cfg_disable_old_auto = bool(disable_old_overcooked_auto_override)
+    cfg_old_overcooked = False
+    cfg_disable_old_auto = True
+    if old_overcooked_override or disable_old_overcooked_auto_override:
+        print("[WARN] --old_overcooked/--disable_old_overcooked_auto are ignored. Eval is fixed to overcooked_v2.")
     env_layout = env_kwargs.get("layout")
     env_kwargs_no_layout = copy.deepcopy(env_kwargs)
     env_kwargs_no_layout.pop("layout", None)
     env, _env_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,
-        old_overcooked=cfg_old_overcooked,
-        disable_auto=cfg_disable_old_auto,
+        old_overcooked=False,
+        disable_auto=True,
     )
 
     num_actors = env.num_agents
@@ -240,8 +238,8 @@ def visualize_ppo_policy(
                         all_recipes=num_seeds is None,
                         no_viz=no_viz,
                         algorithm=alg_arg,
-                        old_overcooked=cfg_old_overcooked,
-                        disable_old_overcooked_auto=cfg_disable_old_auto,
+                        old_overcooked=False,
+                        disable_old_overcooked_auto=True,
                     )
                 
                 if no_viz:

@@ -169,6 +169,11 @@ def eval_pairing(
 
     value_rows_by_annotation = {}
 
+    # Hard-force OV2 eval path regardless of upstream arguments/config.
+    # This guards against accidental old-overcooked routing from any caller.
+    old_overcooked = False
+    disable_old_overcooked_auto = True
+
     env_kwargs = copy.deepcopy(env_kwargs)
     engine_name, _resolved_probe_kwargs = resolve_eval_engine(
         layout_name,
@@ -176,6 +181,10 @@ def eval_pairing(
         old_overcooked=old_overcooked,
         disable_auto=disable_old_overcooked_auto,
     )
+    if engine_name != "overcooked_v2":
+        raise RuntimeError(
+            f"Eval engine must be overcooked_v2, got '{engine_name}'"
+        )
 
     if value_analysis:
         if engine_name == "overcooked":

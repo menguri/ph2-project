@@ -5,6 +5,7 @@ from omegaconf import OmegaConf
 import wandb
 import jax
 import os
+import pickle
 from datetime import datetime
 import jax.numpy as jnp
 
@@ -115,7 +116,83 @@ def load_fcp_populations(population_dir: Path):
     return stacked_populations, first_fcp_config
 
 
+def load_mep_population(population_dir: Path):
+    """
+    MEP S1이 저장한 population 디렉토리에서 N개 actor params를 로드한다.
+    각 member는 mep_population/member_{i}/actor_params.pkl 에 저장된다.
+
+    Returns
+    -------
+    stacked_params : PyTree with leaf shape (N, ...)
+    """
+    population_dir = Path(population_dir)
+    if not population_dir.exists():
+        raise ValueError(f"MEP population dir not found: {population_dir}")
+
+    member_dirs = sorted(
+        [d for d in population_dir.iterdir() if d.is_dir() and d.name.startswith("member_")],
+        key=lambda d: int(d.name.split("_")[1]),
+    )
+    if not member_dirs:
+        raise ValueError(f"No member_* dirs found in {population_dir}")
+
+    params_list = []
+    for md in member_dirs:
+        pkl = md / "actor_params.pkl"
+        if not pkl.exists():
+            raise ValueError(f"Missing actor_params.pkl in {md}")
+        with open(pkl, "rb") as f:
+            params_list.append(pickle.load(f))
+    print(f"[MEP] Loaded {len(params_list)} population members from {population_dir}")
+
+    stacked = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *params_list)
+    return stacked
+
+
 def single_run(config):
+    alg_name = config.get("ALG_NAME", "SP")
+
+    # ----------------------------------------------------------------
+    # MEP_S1: population training
+    # ----------------------------------------------------------------
+    if alg_name == "MEP_S1":
+        from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
+        train_fn = make_train_mep_s1(config)
+        rng = jax.random.PRNGKey(config["SEED"])
+        with jax.disable_jit(False):
+            out = jax.jit(train_fn)(rng)
+
+        # Save N actor checkpoints to RUN_BASE_DIR/mep_population/member_{i}/
+        pop_params = out["pop_actor_params"]   # leaf shape (N, ...)
+        N = jax.tree_util.tree_leaves(pop_params)[0].shape[0]
+        run_base_dir = Path(config["RUN_BASE_DIR"])
+        pop_dir = run_base_dir / "mep_population"
+        pop_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(N):
+            member_params = jax.tree_util.tree_map(lambda x: x[i], pop_params)
+            member_dir = pop_dir / f"member_{i}"
+            member_dir.mkdir(exist_ok=True)
+            with open(member_dir / "actor_params.pkl", "wb") as f:
+                pickle.dump(member_params, f)
+        print(f"[MEP S1] Saved {N} population members to {pop_dir}")
+        return out
+
+    # ----------------------------------------------------------------
+    # MEP_S2: adaptive agent training
+    # ----------------------------------------------------------------
+    if alg_name == "MEP_S2":
+        from overcooked_v2_experiments.ppo.mep.mep_s2 import make_train_mep_s2
+        pop_dir = Path(config["MEP_POPULATION_DIR"])
+        pop_params = load_mep_population(pop_dir)
+        train_fn = make_train_mep_s2(config)
+        rng = jax.random.PRNGKey(config["SEED"])
+        with jax.disable_jit(False):
+            out = jax.jit(lambda r: train_fn(r, population=pop_params))(rng)
+        return out
+
+    # ----------------------------------------------------------------
+    # Standard SP / FCP / BC
+    # ----------------------------------------------------------------
     num_seeds = config["NUM_SEEDS"]
     num_runs = num_seeds
 
