@@ -1,0 +1,129 @@
+#!/bin/bash
+
+cd "$(dirname "$0")" || exit 1
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -z "$REPO_ROOT" || ! -d "$REPO_ROOT/overcooked_v2_experiments" ]]; then
+  REPO_ROOT="/home/mlic/mingukang/ex-overcookedv2/experiments-stablock"
+fi
+
+# -----------------------------------------------------------------------------
+# PH2 Experiment Factory
+# -----------------------------------------------------------------------------
+EXP="rnn-ph2"
+ENV_DEVICE="gpu"
+NENVS=64
+NUM_SEEDS=5
+NSTEPS=256
+
+FIXED_SEED=42
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    *)
+      echo "[WARN] Unknown option ignored: $1"
+      shift
+      ;;
+  esac
+done
+
+# Shared PH1 blocked-target params
+: "${PH1_BETA:=1.0}"
+: "${PH1_BETA_SCHEDULE_ENABLED:=True}"
+: "${PH1_BETA_START:=0.0}"
+: "${PH1_BETA_END:=1.0}"
+: "${PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS:=-1}"
+: "${PH1_OMEGA:=10.0}"
+: "${PH1_SIGMA:=2.0}"
+: "${PH1_DIST_THRESH:=0.1}"
+: "${PH1_POOL_SIZE:=128}"
+: "${PH1_NORMAL_PROB:=0.5}"
+: "${PH1_MULTI_PENALTY_ENABLED:=True}"
+: "${PH1_MULTI_PENALTY_SINGLE_WEIGHT:=1.0}"
+: "${PH1_MULTI_PENALTY_OTHER_WEIGHT:=1.0}"
+: "${PH1_EPSILON:=0.2}"
+: "${PH2_EPSILON:=0.2}"
+: "${PH1_WARMUP_STEPS:=2000000}"
+: "${ACTION_PREDICTION:=True}"
+
+# PH2 schedule configs
+PH2_RATIO_STAGE1=2
+PH2_RATIO_STAGE2=1
+PH2_RATIO_STAGE3=2
+PH2_FIXED_IND_PROB=""
+
+run_ph2() {
+  local gpus=$1
+  local env=$2
+  local ph1_omega=${3:-$PH1_OMEGA}
+  local ph1_sigma=${4:-$PH1_SIGMA}
+  local ph1_max_penalty_count=${5:-1}
+
+  local tags="ph2,e3t,multi_penalty_max${ph1_max_penalty_count}"
+
+  local -a cmd=("./run_user_wandb.sh"
+    --gpus "$gpus"
+    --seeds "$NUM_SEEDS"
+    --seed "$FIXED_SEED"
+    --env "$env"
+    --exp "$EXP"
+    --env-device "$ENV_DEVICE"
+    --nenvs "$NENVS"
+    --nsteps "$NSTEPS"
+    --tags "$tags" \
+    --ph1-beta $PH1_BETA \
+    --ph1-beta-schedule-enabled $PH1_BETA_SCHEDULE_ENABLED \
+    --ph1-beta-start $PH1_BETA_START \
+    --ph1-beta-end $PH1_BETA_END \
+    --ph1-beta-schedule-horizon-env-steps $PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS \
+    --ph1-omega $ph1_omega \
+    --ph1-sigma $ph1_sigma \
+    --ph1-dist $PH1_DIST_THRESH \
+    --ph1-pool-size $PH1_POOL_SIZE \
+    --ph1-normal-prob $PH1_NORMAL_PROB \
+    --ph1-multi-penalty-enabled $PH1_MULTI_PENALTY_ENABLED \
+    --ph1-max-penalty-count $ph1_max_penalty_count \
+    --ph1-multi-penalty-single-weight $PH1_MULTI_PENALTY_SINGLE_WEIGHT \
+    --ph1-multi-penalty-other-weight $PH1_MULTI_PENALTY_OTHER_WEIGHT \
+    --ph1-epsilon $PH1_EPSILON \
+    --ph1-warmup-steps $PH1_WARMUP_STEPS \
+    --ph2-ratio-stage1 $PH2_RATIO_STAGE1 \
+    --ph2-ratio-stage2 $PH2_RATIO_STAGE2 \
+    --ph2-ratio-stage3 $PH2_RATIO_STAGE3 \
+    --action-prediction "$ACTION_PREDICTION")
+
+  if [[ -n "$PH2_FIXED_IND_PROB" ]]; then
+    cmd+=(--ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB")
+  fi
+  if [[ -n "$PH2_EPSILON" ]]; then
+    cmd+=(--ph2-epsilon "$PH2_EPSILON")
+  fi
+
+  echo "Executing: ${cmd[*]}"
+  "${cmd[@]}"
+}
+
+# -----------------------------------------------------------------------------
+# PH2 Preset: OV1 layouts / omega=10 / sigma=2.0 / max_penalty_count=1
+# - Sequential execution by layout (one-by-one)
+# -----------------------------------------------------------------------------
+SWEEP_GPUS="0,1,2,3,4"
+TARGET_OMEGA=10.0
+TARGET_SIGMA=2.0
+TARGET_MAX_COUNT=1
+
+
+echo "[PH2-SWEEP] layout=counter_circuit"
+run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=cramped_room"
+run_ph2 "$SWEEP_GPUS" "cramped_room" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=asymm_advantages"
+run_ph2 "$SWEEP_GPUS" "asymm_advantages" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=coord_ring"
+run_ph2 "$SWEEP_GPUS" "coord_ring" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] all OV1 layout jobs finished."
