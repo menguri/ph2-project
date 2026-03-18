@@ -475,11 +475,16 @@ def make_train(
                                 obs_pop[np.newaxis, np.newaxis, :],
                                 jnp.array([obs_ld])[np.newaxis, :],
                             )
-                            new_fcp_h_state, fcp_pi, _ = population_network.apply(
+                            pop_outputs = population_network.apply(
                                 current_p,
                                 jax.tree.map(lambda x: x[np.newaxis, :], fcp_h_state),
                                 current_ac_in,
                             )
+                            # CNN: (h, pi, v), RNN/E3T: (h, pi, v, pred_logits)
+                            if len(pop_outputs) == 4:
+                                new_fcp_h_state, fcp_pi, _, _ = pop_outputs
+                            else:
+                                new_fcp_h_state, fcp_pi, _ = pop_outputs
                             fcp_action = fcp_pi.sample(seed=_rng)
                             return fcp_action.squeeze(), jax.tree.map(
                                 lambda x: x.squeeze(axis=0), new_fcp_h_state

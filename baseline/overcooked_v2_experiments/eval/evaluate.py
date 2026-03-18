@@ -112,8 +112,8 @@ def eval_pairing(
     old_overcooked=False,
     disable_old_overcooked_auto=False,
 ):
-    assert (
-        not all_recipes and num_seeds > 1
+    assert not (
+        all_recipes and num_seeds is not None
     ), "Only one of all_recipes and num_seeds can be set"
     assert "layout" not in env_kwargs, "Layout should be passed as layout_name"
 

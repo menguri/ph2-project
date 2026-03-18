@@ -282,9 +282,17 @@ def visualize_ppo_policy(
                 alg_arg = "STL"
             else:
                 alg_arg = current_algs[0]
-            
-            # JIT Key
-            jit_key = current_algs
+
+            # JIT Key: include alg tuple + behavior-affecting config values per agent
+            # so that different config variants (e.g. different LEARNER_USE_BLOCKED_INPUT,
+            # stablock_enabled) are compiled separately rather than sharing the first-compiled
+            # closure.
+            current_stablock_fp = tuple(_get_stablock(cfg) for cfg in current_configs)
+            config_fp = tuple(
+                bool(cfg.get("LEARNER_USE_BLOCKED_INPUT", True))
+                for cfg in current_configs
+            )
+            jit_key = current_algs + config_fp + current_stablock_fp
             
             if jit_key not in jit_cache:
                 print(f"Compiling JIT for pair: {jit_key}")
@@ -316,8 +324,6 @@ def visualize_ppo_policy(
                     env_kwargs_no_layout = copy.deepcopy(env_kwargs)
                     layout_name = env_kwargs_no_layout.pop("layout")
 
-                    current_stablock = [_get_stablock(cfg) for cfg in current_configs]
-                    
                     return eval_pairing(
                         policy_pairing,
                         layout_name,
@@ -327,7 +333,7 @@ def visualize_ppo_policy(
                         all_recipes=num_seeds is None,
                         no_viz=no_viz,
                         algorithm=alg_arg,
-                        stablock_enabled=current_stablock,
+                        stablock_enabled=list(current_stablock_fp),
                         latent_analysis=latent_analysis,
                         value_analysis=value_analysis,
                         old_overcooked=cfg_old_overcooked,

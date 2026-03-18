@@ -191,9 +191,15 @@ def visualize_ppo_policy(
                 alg_arg = "E3T"
             else:
                 alg_arg = current_algs[0]
-            
-            # JIT Key
-            jit_key = current_algs
+
+            # JIT Key: include alg tuple + behavior-affecting config values per agent
+            # so that different config variants (e.g. different LEARNER_USE_BLOCKED_INPUT)
+            # are compiled separately rather than sharing the first-compiled closure.
+            config_fp = tuple(
+                bool(cfg.get("LEARNER_USE_BLOCKED_INPUT", True))
+                for cfg in current_configs
+            )
+            jit_key = current_algs + config_fp
             
             if jit_key not in jit_cache:
                 print(f"Compiling JIT for pair: {jit_key}")

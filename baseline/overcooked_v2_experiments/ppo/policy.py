@@ -49,13 +49,34 @@ class PPOPolicy(AbstractPolicy):
         if not self.with_batching:
             ac_in = _add_dim(ac_in)
 
-        # E3T prediction is generated internally by the network (GRU output → PartnerPredictor).
-        # No external partner_prediction input needed.
-        next_hstate, pi, value, pred_logits = self.network.apply(
-            params,
-            hstate,
-            ac_in,
-        )
+        # E3T prediction path must be enabled during eval as well, otherwise
+        # parameter shapes mismatch (e.g., Dense expecting 128+action_dim input).
+        alg_name = self.config.get("ALG_NAME", "")
+        if "alg" in self.config and isinstance(self.config["alg"], dict):
+            alg_name = self.config["alg"].get("ALG_NAME", alg_name)
+        use_prediction = bool(self.config.get("USE_PREDICTION", True))
+        model_type = self.config.get("model", {}).get("TYPE", "")
+        use_pred_flag = (alg_name == "E3T") and use_prediction and (model_type == "RNN")
+
+        if use_pred_flag:
+            outputs = self.network.apply(
+                params,
+                hstate,
+                ac_in,
+                use_prediction=True,
+            )
+        else:
+            outputs = self.network.apply(
+                params,
+                hstate,
+                ac_in,
+            )
+
+        if len(outputs) == 4:
+            next_hstate, pi, value, pred_logits = outputs
+        else:
+            next_hstate, pi, value = outputs
+            pred_logits = None
 
         if self.stochastic:
             action = pi.sample(seed=key)

@@ -48,18 +48,18 @@ def resolve_eval_engine(
     )
     use_old = bool(old_overcooked or auto_old)
 
-    if use_old:
-        allowed = {"layout", "random_reset", "max_steps"}
-        kwargs = {k: v for k, v in kwargs.items() if k in allowed}
-        if isinstance(kwargs.get("layout"), str):
-            layout_name = kwargs["layout"]
-            if layout_name not in overcooked_layouts:
-                raise ValueError(
-                    f"Unknown overcooked(v1) layout '{layout_name}'. "
-                    f"Available: {sorted(overcooked_layouts.keys())}"
-                )
-            kwargs["layout"] = overcooked_layouts[layout_name]
-        return "overcooked", kwargs
+    # if use_old:
+    #     allowed = {"layout", "random_reset", "max_steps"}
+    #     kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+    #     if isinstance(kwargs.get("layout"), str):
+    #         layout_name = kwargs["layout"]
+    #         if layout_name not in overcooked_layouts:
+    #             raise ValueError(
+    #                 f"Unknown overcooked(v1) layout '{layout_name}'. "
+    #                 f"Available: {sorted(overcooked_layouts.keys())}"
+    #             )
+    #         kwargs["layout"] = overcooked_layouts[layout_name]
+    #     return "overcooked", kwargs
 
     return "overcooked_v2", kwargs
 

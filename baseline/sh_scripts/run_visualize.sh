@@ -92,10 +92,28 @@ ARGS=( --d "$DIRECTORY" --seed "$SEED" --num_seeds "$NUM_SEEDS" )
 [ -n "$MAX_STEPS" ] && ARGS+=( --max_steps "$MAX_STEPS" )
 
 # Change to experiments directory
-cd "$(dirname "$0")/.." || exit 1
+SCRIPT_DIR_VIZ="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT_VIZ="$(cd "${SCRIPT_DIR_VIZ}/../.." && pwd)"
+PROJECT_DIR_VIZ="$(cd "${SCRIPT_DIR_VIZ}/.." && pwd)"
+
+# Activate venv
+VENV_DIR_VIZ="${REPO_ROOT_VIZ}/overcooked_v2"
+LEGACY_VENV_DIR_VIZ="${REPO_ROOT_VIZ}/overcookedv2"
+if [[ -f "${VENV_DIR_VIZ}/bin/activate" ]]; then
+    source "${VENV_DIR_VIZ}/bin/activate"
+elif [[ -f "${LEGACY_VENV_DIR_VIZ}/bin/activate" ]]; then
+    source "${LEGACY_VENV_DIR_VIZ}/bin/activate"
+fi
+
+# Set PYTHONPATH to this project only — prevents stale ex-overcookedv2 modules from leaking in
+export PYTHONPATH="${PROJECT_DIR_VIZ}:${REPO_ROOT_VIZ}/JaxMARL"
+echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
+
+cd "${PROJECT_DIR_VIZ}" || exit 1
 
 # Run visualization
-python overcooked_v2_experiments/ppo/utils/visualize_ppo.py "${ARGS[@]}"
+env -u LD_LIBRARY_PATH -u XLA_FLAGS \
+    python overcooked_v2_experiments/ppo/utils/visualize_ppo.py "${ARGS[@]}"
 
 echo ""
 echo "Visualization complete!"

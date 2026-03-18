@@ -6,7 +6,6 @@ import jax
 import numpy as np
 import jax.numpy as jnp
 import jaxmarl
-from jaxmarl.environments.overcooked.layouts import overcooked_layouts
 from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 from jaxmarl.viz.overcooked_v2_visualizer import OvercookedV2Visualizer
 
@@ -28,6 +27,14 @@ def resolve_old_overcooked_flags(config: Dict[str, Any]) -> Tuple[bool, bool]:
         disable_auto = disable_auto or bool(
             config["alg"].get("DISABLE_OLD_OVERCOOKED_AUTO", False)
         )
+    # If the checkpoint was trained with the overcooked_v2 engine, disable auto-detection
+    # so that layouts like "cramped_room" (which also exist in overcooked v1) are not
+    # incorrectly routed to the v1 engine during eval.
+    env_cfg = config.get("env", {})
+    if isinstance(env_cfg, dict):
+        env_name = env_cfg.get("ENV_NAME", config.get("ENV_NAME", ""))
+        if str(env_name) == "overcooked_v2":
+            disable_auto = True
     return old_overcooked, disable_auto
 
 
@@ -40,26 +47,11 @@ def resolve_eval_engine(
     kwargs = dict(env_kwargs)
     kwargs["layout"] = layout
 
-    layout_name = layout if isinstance(layout, str) else None
-    auto_old = (
-        (not disable_auto)
-        and isinstance(layout_name, str)
-        and (layout_name in overcooked_layouts)
-    )
-    use_old = bool(old_overcooked or auto_old)
-
-    if use_old:
-        allowed = {"layout", "random_reset", "max_steps"}
-        kwargs = {k: v for k, v in kwargs.items() if k in allowed}
-        if isinstance(kwargs.get("layout"), str):
-            layout_name = kwargs["layout"]
-            if layout_name not in overcooked_layouts:
-                raise ValueError(
-                    f"Unknown overcooked(v1) layout '{layout_name}'. "
-                    f"Available: {sorted(overcooked_layouts.keys())}"
-                )
-            kwargs["layout"] = overcooked_layouts[layout_name]
-        return "overcooked", kwargs
+    # Always route evaluation to overcooked_v2.
+    # NOTE:
+    # - We intentionally ignore `old_overcooked` / `disable_auto` flags here.
+    # - This prevents layout-name based auto-routing to overcooked(v1), which can
+    #   cause observation-shape mismatches against v2-trained checkpoints.
 
     return "overcooked_v2", kwargs
 

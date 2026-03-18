@@ -4,9 +4,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
+# REPO_ROOT = ph2-project/ph2/ (project dir with overcooked_v2_experiments)
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [[ -z "$REPO_ROOT" || ! -d "$REPO_ROOT/overcooked_v2_experiments" ]]; then
-    REPO_ROOT="/home/mlic/mingukang/ex-overcookedv2/experiments-stablock"
+# ACTUAL_REPO_ROOT = ph2-project/ (parent repo with venv and JaxMARL)
+ACTUAL_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Activate venv
+VENV_DIR="${ACTUAL_REPO_ROOT}/overcooked_v2"
+LEGACY_VENV_DIR="${ACTUAL_REPO_ROOT}/overcookedv2"
+if [[ -f "${VENV_DIR}/bin/activate" ]]; then
+    # shellcheck disable=SC1090
+    source "${VENV_DIR}/bin/activate"
+elif [[ -f "${LEGACY_VENV_DIR}/bin/activate" ]]; then
+    # shellcheck disable=SC1090
+    source "${LEGACY_VENV_DIR}/bin/activate"
 fi
 
 # Default values
@@ -277,8 +288,10 @@ if [[ "$CROSS" == true && "$dir_base_lc" == *"ph1"* ]]; then
     [ -n "$MAX_STEPS" ] && PH1_ARGS+=( --max_steps "$MAX_STEPS" )
 
     cd "$REPO_ROOT" || exit 1
-    export PYTHONPATH="$REPO_ROOT"
-    python overcooked_v2_experiments/ppo/utils/ph1_recent_cross_eval.py "${PH1_ARGS[@]}"
+    export PYTHONPATH="${REPO_ROOT}:${ACTUAL_REPO_ROOT}/JaxMARL"
+    echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
+    env -u LD_LIBRARY_PATH -u XLA_FLAGS \
+        python overcooked_v2_experiments/ppo/utils/ph1_recent_cross_eval.py "${PH1_ARGS[@]}"
 
     echo ""
     echo "PH1 recent-tilde cross evaluation complete!"
@@ -302,11 +315,12 @@ ARGS=( --d "$DIRECTORY" --seed "$SEED" --num_seeds "$NUM_SEEDS" )
 # Change to experiments directory
 cd "$REPO_ROOT" || exit 1
 
-# PYTHONPATH를 experiments-stablock만으로 설정하여 다른 experiments 폴더 코드 사용 방지
-export PYTHONPATH="$REPO_ROOT"
+export PYTHONPATH="${REPO_ROOT}:${ACTUAL_REPO_ROOT}/JaxMARL"
+echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
 
 # Run visualization
-python overcooked_v2_experiments/ppo/utils/visualize_ppo.py "${ARGS[@]}"
+env -u LD_LIBRARY_PATH -u XLA_FLAGS \
+    python overcooked_v2_experiments/ppo/utils/visualize_ppo.py "${ARGS[@]}"
 
 echo ""
 echo "Visualization complete!"
