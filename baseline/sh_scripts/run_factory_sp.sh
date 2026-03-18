@@ -7,7 +7,7 @@ cd "$(dirname "$0")" || exit 1
 # ===============================
 EXP="rnn-sp"
 ENV_DEVICE="cpu"
-NENVS=128
+NENVS=64
 NSTEPS=128
 
 run_sp() {
@@ -31,17 +31,20 @@ run_sp() {
 }
 
 # 실행 목록
-run_sp "5,6" "cramped_room" ""
-run_sp "5,6" "asymm_advantages" "" 
-run_sp "5,6" "coord_ring" "" 
-run_sp "5,6" "forced_coord" "" 
-run_sp "5,6" "counter_circuit" "" 
-run_sp "5,6" "grounded_coord_simple" "" 
-run_sp "5,6" "grounded_coord_ring" "" 
-run_sp "5,6" "demo_cook_simple" "" 
-run_sp "5,6" "demo_cook_wide" "" 
-run_sp "5,6" "test_time_simple" "" 
-run_sp "5,6" "test_time_wide" "" 
+run_sp "0,1" "counter_circuit" "" &
+# run_sp "2,3" "asymm_advantages" "" & 
+# run_sp "4,5" "coord_ring" "" &
+# run_sp "6,7" "forced_coord" "" &
+# wait
+# run_sp "0,1" "cramped_room" "" &
+
+
+# run_sp "5,6" "grounded_coord_simple" ""  
+# run_sp "5,6" "grounded_coord_ring" "" 
+# run_sp "5,6" "demo_cook_simple" "" 
+# run_sp "5,6" "demo_cook_wide" "" 
+# run_sp "5,6" "test_time_simple" "" 
+# run_sp "5,6" "test_time_wide" "" 
 # run_sp "5,6" "cramped_room" "" 
 # run_sp "1,2,4,5,6" "asymm_advantages" "" 
 # run_sp "5,6" "coord_ring" "" 

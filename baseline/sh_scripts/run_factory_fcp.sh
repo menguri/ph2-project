@@ -138,17 +138,17 @@ run_fcp() {
 # # 6. Test Time Wide
 # run_fcp "0,1,2,3,4" "test_time_wide" ""
 
-# 11. Counter Circuit (Original)
-run_fcp "0,1,2,3,4" "counter_circuit" ""
-
-# # 7. Cramped Room (Original)
-run_fcp "0,1,2,3,4" "cramped_room" ""
-
 # # 8. Asymmetric Advantages (Original)
-run_fcp "0,1,2,3,4" "asymm_advantages" ""
+run_fcp "2,3,4,5,6" "asymm_advantages" ""
 
 # 9. Coordination Ring (Original)
-run_fcp "0,1,2,3,4" "coord_ring" ""
+run_fcp "2,3,4,5,6" "coord_ring" ""
 
 # # 10. Forced Coordination (Original)
-run_fcp "0,1,2,3,4" "forced_coord" ""
+run_fcp "2,3,4,5,6" "forced_coord" ""
+
+# # 7. Cramped Room (Original)
+run_fcp "2,3,4,5,6" "cramped_room" ""
+
+# 11. Counter Circuit (Original)
+run_fcp "2,3,4,5,6" "counter_circuit" ""
