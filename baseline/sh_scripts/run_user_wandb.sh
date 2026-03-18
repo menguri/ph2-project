@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENV_DIR="${REPO_ROOT}/overcooked_v2"
 LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 
@@ -365,17 +366,18 @@ else
   exit 1
 fi
 
-# ex-overcookedv2 전용 import 경로 고정 (CEC 등 다른 레포의 PYTHONPATH 오염 방지)
-export PYTHONPATH="/home/mlic/mingukang/ex-overcookedv2/experiments:/home/mlic/mingukang/ex-overcookedv2/JaxMARL"
-echo "[INFO] PYTHONPATH set for ex-overcookedv2: ${PYTHONPATH}"
+# import 경로: 현재 프로젝트 디렉토리 + JaxMARL
+export PYTHONPATH="${PROJECT_DIR}:${REPO_ROOT}/JaxMARL"
+echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
 
 # 2) WandB 로그인
-if [[ -f "experiments/wandb_info/wandb_api_key" ]]; then
-  export WANDB_API_KEY=$(cat experiments/wandb_info/wandb_api_key)
-  echo "[INFO] WandB API key loaded from wandb_info/wandb_api_key"
+if [[ -f "${REPO_ROOT}/wandb_info/wandb_api_key" ]]; then
+  WANDB_API_KEY=$(cat "${REPO_ROOT}/wandb_info/wandb_api_key")
+  export WANDB_API_KEY
+  echo "[INFO] WandB API key loaded from ${REPO_ROOT}/wandb_info/wandb_api_key"
   wandb login "$WANDB_API_KEY"
 else
-  echo "[WARN] WandB API key file not found at experiments/wandb_info/wandb_api_key"
+  echo "[WARN] WandB API key file not found at ${REPO_ROOT}/wandb_info/wandb_api_key"
 fi
 
 # 3) 파이썬 진단 (가상환경 활성화 후)
@@ -398,7 +400,6 @@ except Exception as e:
 PY
 
 # 3) 실험 실행
-cd experiments
-
+cd "${PROJECT_DIR}"
 env -u LD_LIBRARY_PATH -u XLA_FLAGS \
   python overcooked_v2_experiments/ppo/main.py "${PY_ARGS[@]}" 2>&1 | filter_ptx

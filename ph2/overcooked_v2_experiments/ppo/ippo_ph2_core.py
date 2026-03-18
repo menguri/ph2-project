@@ -473,6 +473,8 @@ def make_train(
         _vprint("init_x", init_x[0].shape, init_x[1].shape)
 
         # E3T: Prepare dummy inputs for Single Initialization
+        # action_prediction: prediction is generated internally after GRU, so partner_prediction
+        # is always None at call sites. Init must match.
         dummy_partner_prediction = None
         dummy_blocked_states = None
         # NOTE: agent_idx conditioning removed
@@ -2204,6 +2206,7 @@ def make_train(
                     and use_ph1_partner_pred
                     and use_partner_modeling
                     and prediction_enabled
+                    and not action_prediction  # action_prediction: internal after GRU, not external input
                 )
                 ph1_prob_apply_fn = network.apply
                 ph1_prob_params = train_state.params

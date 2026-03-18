@@ -17,9 +17,9 @@ class AbstractPolicy(abc.ABC):
         Args:
             obs (chex.Array): 관측값.
             done (chex.Array): 완료 플래그.
-            hstate (chex.Array): 은닉 상태.
+            hstate (chex.Array): 은닉 상태 (GRU가 히스토리를 암묵적으로 유지함).
             key (chex.Array): 랜덤 키.
-            **kwargs: obs_history, act_history와 같은 추가적인 인자들.
+            **kwargs: 추가적인 인자들 (예: blocked_states).
 
         Returns:
             Tuple[int, chex.Array, dict]: 행동, 새로운 은닉 상태, 추가 정보를 포함하는 튜플.

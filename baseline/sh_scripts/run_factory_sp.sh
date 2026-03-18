@@ -7,8 +7,8 @@ cd "$(dirname "$0")" || exit 1
 # ===============================
 EXP="rnn-sp"
 ENV_DEVICE="cpu"
-NENVS=256
-NSTEPS=256
+NENVS=128
+NSTEPS=128
 
 run_sp() {
     local gpus=$1

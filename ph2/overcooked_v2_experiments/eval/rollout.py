@@ -39,9 +39,7 @@ def init_rollout(policies: List[AbstractPolicy], env):
         actions = {}
         next_hstates = {}
         all_extras = {}
-        
-        obs_history = kwargs.get("obs_history", None)
-        act_history = kwargs.get("act_history", None)
+
         blocked_states = kwargs.get("blocked_states", None)
         # agent_idx conditioning was removed from the PPO policy/network.
 
@@ -54,12 +52,7 @@ def init_rollout(policies: List[AbstractPolicy], env):
                 hstate[agent_id],
             )
 
-            # 가능한 경우 에이전트별 히스토리 추출
             policy_kwargs = {}
-            if obs_history is not None:
-                policy_kwargs["obs_history"] = obs_history[agent_id]
-            if act_history is not None:
-                policy_kwargs["act_history"] = act_history[agent_id]
             if blocked_states is not None and agent_id in blocked_states:
                 policy_kwargs["blocked_states"] = blocked_states[agent_id]
 
@@ -157,22 +150,6 @@ def get_rollout(
     # 초기 reset 먼저 수행해서 PH1 full-view shape에 맞춘 history를 구성
     key, key_r = jax.random.split(key, 2)
     obs, state = reset_fn(key_r)
-
-    # obs_history 및 act_history 초기화 (E3T인 경우에만)
-    init_obs_history = None
-    init_act_history = None
-    if e3t_like:
-        # k=5라고 가정
-        k = 5
-        obs_shape = obs["agent_0"].shape
-        # obs_history는 각 에이전트에 대한 배열의 딕셔너리입니다
-        init_obs_history = {
-            f"agent_{i}": jnp.zeros((k, *obs_shape)) for i in range(env.num_agents)
-        }
-        # act_history는 각 에이전트에 대한 정수 배열의 딕셔너리입니다
-        init_act_history = {
-            f"agent_{i}": jnp.zeros((k,), dtype=jnp.int32) for i in range(env.num_agents)
-        }
 
     stablock_enabled = (
         [False] * env.num_agents if stablock_enabled is None else stablock_enabled
@@ -295,40 +272,14 @@ def get_rollout(
             total_reward,
             penalized_total_reward,
             hstate,
-            obs_history,
-            act_history,
             dist_sum,
             pen_sum,
             stat_count,
         ) = carry
 
-        # obs_history 업데이트 (E3T인 경우에만)
-        next_obs_history = None
-        if e3t_like:
-            def update_history(hist, new_obs, is_done):
-                # 완료 시 리셋
-                hist = jax.lax.select(is_done, jnp.zeros_like(hist), hist)
-                
-                # 시프트 및 추가
-                hist = jnp.roll(hist, shift=-1, axis=0)
-                hist = hist.at[-1].set(new_obs)
-                return hist
-
-            next_obs_history = {}
-            for i in range(env.num_agents):
-                agent_id = f"agent_{i}"
-                obs_src = obs[agent_id]
-                next_obs_history[agent_id] = update_history(
-                    obs_history[agent_id], obs_src, done[agent_id]
-                )
-
         key_sample, key_step = jax.random.split(key, 2)
 
-        # E3T인 경우에만 obs_history 및 act_history 전달
         kwargs = {}
-        if e3t_like:
-            kwargs["obs_history"] = next_obs_history if next_obs_history is not None else obs_history
-            kwargs["act_history"] = act_history  # act_history는 아직 업데이트 전 (이전 스텝까지의 파트너 행동)
         if blocked_states is not None and e3t_like:
             kwargs["blocked_states"] = blocked_states
 
@@ -375,43 +326,6 @@ def get_rollout(
         next_obs, next_state, reward, next_done, info = step_fn(
             key_step, state, actions
         )
-        
-        # act_history 업데이트 (E3T인 경우에만)
-        # 주의: act_history는 '파트너'의 행동을 저장해야 함
-        # agent_0의 act_history에는 agent_1의 행동을, agent_1에는 agent_0의 행동을 저장
-        next_act_history = None
-        if e3t_like:
-            def update_act_history(hist, partner_act, is_done):
-                # 완료 시 리셋
-                hist = jax.lax.select(is_done, jnp.zeros_like(hist), hist)
-                
-                # 시프트 및 추가
-                hist = jnp.roll(hist, shift=-1, axis=0)
-                hist = hist.at[-1].set(partner_act)
-                return hist
-            
-            next_act_history = {}
-            # 2인용 게임 가정
-            if env.num_agents == 2:
-                # Agent 0의 파트너는 Agent 1
-                next_act_history["agent_0"] = update_act_history(
-                    act_history["agent_0"], actions["agent_1"], done["agent_0"]
-                )
-                # Agent 1의 파트너는 Agent 0
-                next_act_history["agent_1"] = update_act_history(
-                    act_history["agent_1"], actions["agent_0"], done["agent_1"]
-                )
-            else:
-                # 2인 이상인 경우 정의가 모호하므로 일단 자기 자신을 제외한 첫 번째 에이전트 등으로 정의하거나
-                # E3T가 2인용으로 설계되었다면 에러를 띄우는 게 맞음.
-                # 여기서는 일단 0 <-> 1 만 처리하고 나머지는 0으로 채움 (임시)
-                for i in range(env.num_agents):
-                    agent_id = f"agent_{i}"
-                    partner_idx = (i + 1) % env.num_agents # 다음 에이전트를 파트너로 가정
-                    partner_id = f"agent_{partner_idx}"
-                    next_act_history[agent_id] = update_act_history(
-                        act_history[agent_id], actions[partner_id], done[agent_id]
-                    )
 
         # PH1 evaluation-time penalty reconstruction
         step_penalty_env, step_dist_env = _compute_ph1_eval_step_stats(
@@ -433,8 +347,6 @@ def get_rollout(
             new_total_reward,
             penalized_total_reward,
             next_hstate,
-            next_obs_history,
-            next_act_history,
             dist_sum,
             pen_sum,
             stat_count,
@@ -459,40 +371,14 @@ def get_rollout(
             total_reward,
             penalized_total_reward,
             hstate,
-            obs_history,
-            act_history,
             dist_sum,
             pen_sum,
             stat_count,
         ) = carry
 
-        # obs_history 업데이트 (E3T인 경우에만)
-        next_obs_history = None
-        if e3t_like:
-            def update_history(hist, new_obs, is_done):
-                # 완료 시 리셋
-                hist = jax.lax.select(is_done, jnp.zeros_like(hist), hist)
-
-                # 시프트 및 추가
-                hist = jnp.roll(hist, shift=-1, axis=0)
-                hist = hist.at[-1].set(new_obs)
-                return hist
-
-            next_obs_history = {}
-            for i in range(env.num_agents):
-                agent_id = f"agent_{i}"
-                obs_src = obs[agent_id]
-                next_obs_history[agent_id] = update_history(
-                    obs_history[agent_id], obs_src, done[agent_id]
-                )
-
         key_sample, key_step = jax.random.split(key, 2)
 
-        # E3T인 경우에만 obs_history 및 act_history 전달
         kwargs = {}
-        if e3t_like:
-            kwargs["obs_history"] = next_obs_history if next_obs_history is not None else obs_history
-            kwargs["act_history"] = act_history  # act_history는 아직 업데이트 전 (이전 스텝까지의 파트너 행동)
         if blocked_states is not None and e3t_like:
             kwargs["blocked_states"] = blocked_states
 
@@ -538,43 +424,6 @@ def get_rollout(
             key_step, state, actions
         )
 
-        # act_history 업데이트 (E3T인 경우에만)
-        # 주의: act_history는 '파트너'의 행동을 저장해야 함
-        # agent_0의 act_history에는 agent_1의 행동을, agent_1에는 agent_0의 행동을 저장
-        next_act_history = None
-        if e3t_like:
-            def update_act_history(hist, partner_act, is_done):
-                # 완료 시 리셋
-                hist = jax.lax.select(is_done, jnp.zeros_like(hist), hist)
-
-                # 시프트 및 추가
-                hist = jnp.roll(hist, shift=-1, axis=0)
-                hist = hist.at[-1].set(partner_act)
-                return hist
-
-            next_act_history = {}
-            # 2인용 게임 가정
-            if env.num_agents == 2:
-                # Agent 0의 파트너는 Agent 1
-                next_act_history["agent_0"] = update_act_history(
-                    act_history["agent_0"], actions["agent_1"], done["agent_0"]
-                )
-                # Agent 1의 파트너는 Agent 0
-                next_act_history["agent_1"] = update_act_history(
-                    act_history["agent_1"], actions["agent_0"], done["agent_1"]
-                )
-            else:
-                # 2인 이상인 경우 정의가 모호하므로 일단 자기 자신을 제외한 첫 번째 에이전트 등으로 정의하거나
-                # E3T가 2인용으로 설계되었다면 에러를 띄우는 게 맞음.
-                # 여기서는 일단 0 <-> 1 만 처리하고 나머지는 0으로 채움 (임시)
-                for i in range(env.num_agents):
-                    agent_id = f"agent_{i}"
-                    partner_idx = (i + 1) % env.num_agents  # 다음 에이전트를 파트너로 가정
-                    partner_id = f"agent_{partner_idx}"
-                    next_act_history[agent_id] = update_act_history(
-                        act_history[agent_id], actions[partner_id], done[agent_id]
-                    )
-
         # PH1 evaluation-time penalty reconstruction
         step_penalty_env, step_dist_env = _compute_ph1_eval_step_stats(
             next_state,
@@ -596,11 +445,6 @@ def get_rollout(
         hstate_agent = hstate[agent_id]
 
         policy_kwargs = {}
-        if e3t_like:
-            obs_hist_src = next_obs_history if next_obs_history is not None else obs_history
-            policy_kwargs["obs_history"] = obs_hist_src[agent_id]
-            policy_kwargs["act_history"] = act_history[agent_id]
-
         value_by_et_list = []
         for et in et_candidates:
             if not ph1_enabled:
@@ -619,8 +463,6 @@ def get_rollout(
             new_total_reward,
             penalized_total_reward,
             next_hstate,
-            next_obs_history,
-            next_act_history,
             dist_sum,
             pen_sum,
             stat_count,
@@ -655,8 +497,6 @@ def get_rollout(
         jnp.float32(0.0),
         jnp.float32(0.0),
         init_hstate,
-        init_obs_history,
-        init_act_history,
         jnp.float32(0.0),
         jnp.float32(0.0),
         jnp.float32(0.0),
@@ -712,10 +552,10 @@ def get_rollout(
         ) = jax.lax.scan(_perform_step, carry, keys)
         cumulative_reward_seq = jnp.cumsum(step_reward_seq)
 
-    total_reward = carry[3] # Index 3 is total_reward
+    total_reward = carry[3]  # Index 3 is total_reward
     penalized_total_reward = carry[4]
-    ph1_distance_mean = jnp.where(carry[10] > 0, carry[8] / carry[10], 0.0)
-    ph1_penalty_mean = jnp.where(carry[10] > 0, carry[9] / carry[10], 0.0)
+    ph1_distance_mean = jnp.where(carry[8] > 0, carry[6] / carry[8], 0.0)
+    ph1_penalty_mean = jnp.where(carry[8] > 0, carry[7] / carry[8], 0.0)
 
     # Calculate mean accuracy per agent
     total_correct = jnp.sum(prediction_correct_seq, axis=0)

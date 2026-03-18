@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENV_DIR="${REPO_ROOT}/overcooked_v2"
 LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 
@@ -584,13 +585,13 @@ else
 fi
 
 # 2) WandB 로그인
-if [[ -f "wandb_info/wandb_api_key" ]]; then
-  WANDB_API_KEY=$(cat wandb_info/wandb_api_key)
+if [[ -f "${REPO_ROOT}/wandb_info/wandb_api_key" ]]; then
+  WANDB_API_KEY=$(cat "${REPO_ROOT}/wandb_info/wandb_api_key")
   export WANDB_API_KEY
-  echo "[INFO] WandB API key loaded from wandb_info/wandb_api_key"
+  echo "[INFO] WandB API key loaded from ${REPO_ROOT}/wandb_info/wandb_api_key"
   wandb login "$WANDB_API_KEY"
 else
-  echo "[WARN] WandB API key file not found at wandb_info/wandb_api_key"
+  echo "[WARN] WandB API key file not found at ${REPO_ROOT}/wandb_info/wandb_api_key"
 fi
 
 # 3) 파이썬 진단 (가상환경 활성화 후)
@@ -616,10 +617,11 @@ except Exception as e:
 PY
 
 # 3) 실험 실행
-cd experiments-stablock
+cd "${PROJECT_DIR}"
 
-# PYTHONPATH를 experiments-stablock만으로 설정하여 다른 experiments 폴더 코드 사용 방지
-export PYTHONPATH="/home/mlic/mingukang/ex-overcookedv2/experiments-stablock"
+# import 경로: 현재 프로젝트 디렉토리 + JaxMARL
+export PYTHONPATH="${PROJECT_DIR}:${REPO_ROOT}/JaxMARL"
+echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
 
 env -u LD_LIBRARY_PATH XLA_FLAGS="${RUNTIME_XLA_FLAGS}" \
   python overcooked_v2_experiments/ppo/main.py "${PY_ARGS[@]}" 2>&1 | filter_ptx

@@ -50,9 +50,8 @@ class ScannedRNN(nn.Module):
 class ActorCriticRNN(ActorCriticBase):
 
     @staticmethod
-    def initialize_carry(batch_size, hidden_size, pred_dim=6):
-        rnn_carry = ScannedRNN.initialize_carry(batch_size, hidden_size)
-        return rnn_carry
+    def initialize_carry(batch_size, hidden_size):
+        return ScannedRNN.initialize_carry(batch_size, hidden_size)
 
     def _action_prediction_enabled(self) -> bool:
         return bool(self.config.get("ACTION_PREDICTION", True))
@@ -158,13 +157,6 @@ class ActorCriticRNN(ActorCriticBase):
         # embedding shape: (T, B, H, W, C) -> (T, B, D)
         obs_emb = shared_ln(jax.vmap(embed_model)(obs))
         embedding = obs_emb
-
-        # E3T Conditioning (Layer 4)
-        if partner_prediction is not None:
-            # Defensive check: squeeze extra dimension if present (e.g. (Batch, 1, Time, Dim))
-            if partner_prediction.ndim > embedding.ndim:
-                partner_prediction = partner_prediction.squeeze(axis=1)
-            embedding = jnp.concatenate([embedding, partner_prediction], axis=-1)
 
         # [STA-PH1] blocked_states가 이미지(상태/관측)인 경우 인코딩
         # NOTE: blocked target is expected to be a *global full* state, which may

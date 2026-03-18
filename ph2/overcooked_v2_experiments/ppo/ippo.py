@@ -61,11 +61,8 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
     info: jnp.ndarray
     train_mask: jnp.ndarray
-    obs_history: jnp.ndarray
-    act_history: jnp.ndarray
     partner_action: jnp.ndarray
     is_ego: jnp.ndarray
-    z_state: jnp.ndarray
     blocked_states: jnp.ndarray
     prev_action: jnp.ndarray
     partner_prediction: jnp.ndarray
@@ -477,17 +474,12 @@ def make_train(
 
         # E3T: Prepare dummy inputs for Single Initialization
         dummy_partner_prediction = None
-        dummy_obs_hist = None
-        dummy_act_hist = None
         dummy_blocked_states = None
         # NOTE: agent_idx conditioning removed
 
         if (e3t_enabled or (ph1_enabled and use_ph1_partner_pred)) and use_partner_modeling:
             # Shape: (Time=1, Batch=NUM_ENVS, ActionDim=6)
             dummy_partner_prediction = jnp.zeros((1, model_config["NUM_ENVS"], ACTION_DIM))
-            # Shape: (1, Batch, Context=5, H, W, C)
-            dummy_obs_hist = jnp.zeros((1, model_config["NUM_ENVS"], 5, *state_shape))
-            dummy_act_hist = jnp.zeros((1, model_config["NUM_ENVS"], 5), dtype=jnp.int32)
 
         # Keep init-time blocked input rule consistent with runtime apply rule.
         # PH2 phase2(ind) learner path uses population partner and should not consume blocked input.
@@ -511,12 +503,10 @@ def make_train(
         # Single Init: Initialize all parameters at once to avoid collision
         # 단일 초기화: 파라미터 충돌 방지를 위해 모든 모듈을 한 번에 초기화
         network_params = network.init(
-            _rng, 
-            init_hstate, 
-            init_x, 
+            _rng,
+            init_hstate,
+            init_x,
             partner_prediction=dummy_partner_prediction,
-            obs_history=dummy_obs_hist,
-            act_history=dummy_act_hist,
             blocked_states=dummy_blocked_states,
         )
 
@@ -598,8 +588,6 @@ def make_train(
                 initial_population_hstate,
                 last_population_annealing_mask,
                 initial_fcp_pop_agent_idxs,
-                obs_history,
-                act_history,
                 last_partner_action,
                 last_action,
                 ego_idxs,
@@ -631,8 +619,6 @@ def make_train(
                     population_hstate,
                     population_annealing_mask,
                     fcp_pop_agent_idxs,
-                    obs_history,
-                    act_history,
                     last_partner_action,
                     last_action,
                     ego_idxs,
@@ -787,11 +773,6 @@ def make_train(
                         (model_config["NUM_ACTORS"], 2), -1, dtype=jnp.int32
                     )
 
-                # Capture z_state from input hstate (before update) for storage
-                z_state_in = jnp.zeros((model_config["NUM_ACTORS"], ACTION_DIM))
-                if isinstance(hstate, tuple):
-                    _, z_state_in = hstate
-
                 # jax.debug.print("check4 {x}", x=hstate.flatten()[0])
 
                 # SELECT ACTION
@@ -804,45 +785,16 @@ def make_train(
                     obs_batch = obs_batch.astype(jnp.bfloat16)
 
                 # --------------------------------------------------------------
-                # E3T History Update & Partner Prediction
+                # E3T Partner Prediction
                 # --------------------------------------------------------------
-                # 1. History Update
-                if (e3t_enabled or (ph1_enabled and use_ph1_partner_pred)) and use_partner_modeling:
-                    # last_done이 True이면 히스토리 초기화 (Masking)
-                    reset_mask = (1 - last_done.astype(jnp.int32))[:, None]
-                    obs_history = obs_history * reset_mask[..., None, None, None].astype(jnp.float32)
-                    act_history = act_history * reset_mask
-                    
-                    # Shift (Left)
-                    obs_history = jnp.roll(obs_history, shift=-1, axis=1)
-                    act_history = jnp.roll(act_history, shift=-1, axis=1)
-                    
-                    # Update last element
-                    # obs_history[-1] <- current obs (obs_batch)
-                    obs_history = obs_history.at[:, -1].set(obs_batch)
-                    
-                    # act_history[-1] <- last partner action
-                    # 에피소드 시작 시점(last_done=True)이면 0으로 처리
-                    # last_partner_action은 이전 스텝의 '내' 행동이므로, 파트너의 행동을 얻기 위해 swap해야 함
-                    # (NUM_ACTORS = 2 * NUM_ENVS 가정)
-                    prev_partner_action = jnp.roll(last_partner_action, shift=model_config["NUM_ENVS"], axis=0)
-                    last_partner_action_masked = jnp.where(last_done, 0, prev_partner_action)
-                    act_history = act_history.at[:, -1].set(last_partner_action_masked)
-                
-                # 2. Partner Prediction
+                # Partner Prediction
                 partner_prediction = None
                 combined_prediction = jnp.zeros((model_config["NUM_ACTORS"], ACTION_DIM))
                 if (e3t_enabled or (ph1_enabled and use_ph1_partner_pred)) and use_partner_modeling:
-                    # Extract z_state if available
-                    z_in = None
-                    if isinstance(hstate, tuple):
-                        _, z_in = hstate
-                        # z_in is (Batch, Dim)
-                    
                     # anchor removed
 
                     # (1) 실제 파트너 예측 (Ego용)
-                    real_prediction = network.apply(train_state.params, obs_history, act_history, z_state=z_in, method='predict_partner')
+                    real_prediction = network.apply(train_state.params, hstate, method='predict_partner')
                     
                     # (2) 무작위 행동 임베딩 (Partner용)
                     # 파트너는 Ego를 예측하지 않고, 무작위 행동(또는 노이즈)을 조건으로 받아 자신의 정책을 수행한다고 가정
@@ -1345,11 +1297,8 @@ def make_train(
                     obs_batch,
                     info,
                     action_pick_mask,
-                    obs_history,
-                    act_history,
                     current_partner_action,
                     is_ego,
-                    z_state_in,
                     blocked_states_actor,
                     last_action,
                     combined_prediction,
@@ -1366,8 +1315,6 @@ def make_train(
                     population_hstate,
                     new_population_annealing_mask,
                     new_fcp_pop_agent_idxs,
-                    obs_history,
-                    act_history,
                     last_partner_action,
                     action.squeeze(),
                     ego_idxs,
@@ -1391,8 +1338,6 @@ def make_train(
                 initial_population_hstate,
                 last_population_annealing_mask,
                 initial_fcp_pop_agent_idxs,
-                obs_history,
-                act_history,
                 last_partner_action,
                 last_action,
                 ego_idxs,
@@ -1417,8 +1362,6 @@ def make_train(
                 next_population_hstate,
                 last_population_annealing_mask,
                 next_fcp_pop_agent_idxs,
-                obs_history,
-                act_history,
                 last_partner_action,
                 next_last_action,
                 next_ego_idxs,
@@ -1453,7 +1396,7 @@ def make_train(
             is_ego_last = (actor_indices == target_ego_idxs)
             if (e3t_enabled or (ph1_enabled and use_ph1_partner_pred)) and use_partner_modeling:
                 # 1. Predict
-                pred_logits = network.apply(train_state.params, obs_history, act_history, method='predict_partner')
+                pred_logits = network.apply(train_state.params, next_initial_hstate, method='predict_partner')
                 
                 # 2. Random Input for Partner
                 rng, rng_rand_input = jax.random.split(rng)
@@ -1561,21 +1504,14 @@ def make_train(
 
                         if (e3t_enabled or use_ph1) and use_partner_modeling:
                             # 1. Forward Pass for Prediction
-                            # PPO 미니배치는 셔플되어 시간 연속성이 없으므로 Scan을 사용할 수 없습니다.
-                            # 따라서 단일 스텝 예측(predict_partner)을 사용합니다.
-                            
-                            # traj_batch.obs_history: (Minibatch, 5, H, W, C)
-                            # traj_batch.act_history: (Minibatch, 5)
-                            obs_hist_flat = traj_batch.obs_history
-                            act_hist_flat = traj_batch.act_history
-                            
+                            # GRU hidden state carries history implicitly; use stored hstate.
+
                             # --------------------------------------------------------------
                             # [E3T Implementation] Partner Prediction Loss
                             # --------------------------------------------------------------
                             # 인코더는 파트너의 다음 행동을 예측하도록 학습합니다.
-                            # z_state는 Rollout 시점의 값을 사용하여 일관성을 유지합니다 (Carry state matching).
-                            
-                            pred_logits = network.apply(params, obs_hist_flat, act_hist_flat, z_state=traj_batch.z_state, method='predict_partner')
+
+                            pred_logits = network.apply(params, traj_batch.hstate, method='predict_partner')
                             
                             # Policy Input (Actor Training) uses the same prediction
                             pred_logits_policy = pred_logits
@@ -2235,8 +2171,6 @@ def make_train(
                 next_population_hstate,
                 last_population_annealing_mask,
                 next_fcp_pop_agent_idxs,
-                obs_history,
-                act_history,
                 last_partner_action,
                 next_last_action,
                 next_ego_idxs,
@@ -2281,9 +2215,6 @@ def make_train(
 
         rng, _rng = jax.random.split(rng)
 
-        # E3T History Buffers
-        initial_obs_history = jnp.zeros((model_config["NUM_ACTORS"], 5, *state_shape))
-        initial_act_history = jnp.zeros((model_config["NUM_ACTORS"], 5), dtype=jnp.int32)
         initial_last_partner_action = jnp.zeros((model_config["NUM_ACTORS"],), dtype=jnp.int32)
         initial_last_action = jnp.zeros((model_config["NUM_ACTORS"],), dtype=jnp.int32)
 
@@ -2366,8 +2297,6 @@ def make_train(
             init_population_hstate,
             init_population_annealing_mask,
             init_fcp_pop_idxs,
-            initial_obs_history,
-            initial_act_history,
             initial_last_partner_action,
             initial_last_action,
             initial_ego_idxs,
