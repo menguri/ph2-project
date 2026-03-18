@@ -33,5 +33,8 @@ echo "Eval max steps: ${EVAL_MAX_STEPS}"
 # ./run_visualize.sh --gpu 5 --dir runs/20260311-194957_zxfgx6u0_forced_coord_sp --cross --num_seeds 5 --no_viz --max_steps "${EVAL_MAX_STEPS}" "${OLD_ENGINE_ARGS[@]}"
 # ./run_visualize.sh --gpu 5 --dir runs/20260311-210104_p017uvs1_counter_circuit_sp --cross --num_seeds 5 --no_viz --max_steps "${EVAL_MAX_STEPS}" "${OLD_ENGINE_ARGS[@]}"
 
+# Wait for all background jobs; with `set -e`, any non-zero exit will fail this script.
+wait
+
 echo ""
 echo "All visualizations completed!"

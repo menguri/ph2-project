@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 # Change to script directory
 cd "$(dirname "$0")" || exit 1
 
@@ -96,24 +98,40 @@ SCRIPT_DIR_VIZ="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT_VIZ="$(cd "${SCRIPT_DIR_VIZ}/../.." && pwd)"
 PROJECT_DIR_VIZ="$(cd "${SCRIPT_DIR_VIZ}/.." && pwd)"
 
-# Activate venv
+# Resolve python executable from project venv first.
+# Avoid sourcing activate scripts because moved/broken venv paths can leave stale VIRTUAL_ENV values.
 VENV_DIR_VIZ="${REPO_ROOT_VIZ}/overcooked_v2"
 LEGACY_VENV_DIR_VIZ="${REPO_ROOT_VIZ}/overcookedv2"
-if [[ -f "${VENV_DIR_VIZ}/bin/activate" ]]; then
-    source "${VENV_DIR_VIZ}/bin/activate"
-elif [[ -f "${LEGACY_VENV_DIR_VIZ}/bin/activate" ]]; then
-    source "${LEGACY_VENV_DIR_VIZ}/bin/activate"
+PYTHON_BIN_VIZ=""
+
+if [[ -x "${VENV_DIR_VIZ}/bin/python" ]]; then
+    PYTHON_BIN_VIZ="${VENV_DIR_VIZ}/bin/python"
+elif [[ -x "${LEGACY_VENV_DIR_VIZ}/bin/python" ]]; then
+    PYTHON_BIN_VIZ="${LEGACY_VENV_DIR_VIZ}/bin/python"
+else
+    echo "[ERROR] Could not find venv python executable."
+    echo "        Expected one of:"
+    echo "        - ${VENV_DIR_VIZ}/bin/python"
+    echo "        - ${LEGACY_VENV_DIR_VIZ}/bin/python"
+    exit 1
 fi
 
 # Set PYTHONPATH to this project only — prevents stale ex-overcookedv2 modules from leaking in
 export PYTHONPATH="${PROJECT_DIR_VIZ}:${REPO_ROOT_VIZ}/JaxMARL"
 echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
+echo "[INFO] Using python: ${PYTHON_BIN_VIZ}"
+
+# Hard fail early when required deps are missing in selected python.
+"${PYTHON_BIN_VIZ}" -c "import jax" >/dev/null 2>&1 || {
+    echo "[ERROR] Selected python does not have 'jax' installed: ${PYTHON_BIN_VIZ}"
+    exit 1
+}
 
 cd "${PROJECT_DIR_VIZ}" || exit 1
 
 # Run visualization
 env -u LD_LIBRARY_PATH -u XLA_FLAGS \
-    python overcooked_v2_experiments/ppo/utils/visualize_ppo.py "${ARGS[@]}"
+    "${PYTHON_BIN_VIZ}" overcooked_v2_experiments/ppo/utils/visualize_ppo.py "${ARGS[@]}"
 
 echo ""
 echo "Visualization complete!"

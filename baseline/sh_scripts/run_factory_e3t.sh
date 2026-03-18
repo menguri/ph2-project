@@ -15,9 +15,9 @@ NENVS=128
 NSTEPS=128
 
 # E3T Specific Settings
-EPSILON=0.5
+EPSILON=0.3
 USE_PM=True
-PRED_COEF=0.2
+PRED_COEF=0.8
 
 # Function to run experiment
 run_e3t() {
