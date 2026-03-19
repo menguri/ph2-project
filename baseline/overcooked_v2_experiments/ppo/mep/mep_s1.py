@@ -280,7 +280,13 @@ def make_train_mep_s1(config):
                         reward, info["shaped_reward"],
                     )
                     ego_reward = reward[env.agents[0]]  # (E,)
-                    info = jax.tree_util.tree_map(lambda x: x.reshape((NUM_ENVS,)), info)
+                    # Drop shaped_reward from logged info (already consumed above).
+                    # Keeping it would waste (N, T, E) trajectory memory per agent.
+                    # Remaining entries: (NUM_ENVS,) scalars or (NUM_ENVS, 2) per-agent
+                    info = {k: v for k, v in info.items() if k != "shaped_reward"}
+                    info = jax.tree_util.tree_map(
+                        lambda x: x.mean(axis=-1) if x.ndim > 1 else x, info
+                    )
 
                     transition = MEPTransition(
                         done=done_env,
@@ -325,30 +331,33 @@ def make_train_mep_s1(config):
              pop_actor_hstates, pop_partner_hstates, pop_critic_hstates) = finals
 
             # ---- ENTROPY BONUS ------------------------------------------
-            # ego_obs_all: (N, NUM_STEPS, NUM_ENVS, H, W, C)
-            # Compute bonus for each member using all N actor probs
+            # jax.lax.map (not vmap) over N members/actors → sequential forward
+            # passes, so peak conv batch = T*E (not N*T*E). Avoids OOM on
+            # large layouts where vmap(vmap(...)) would batch N²×T×E together.
 
-            def compute_bonus(ego_obs_i, ego_done_i, ego_act_i):
+            def compute_bonus(args):
                 """Return -log π_pop(a|s) for member i. Shape: (NUM_STEPS, NUM_ENVS)."""
+                ego_obs_i, ego_done_i, ego_act_i = args
                 init_h = MAPPOActorRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
 
                 def fwd_k(ak_params):
                     _, pi = actor_network.apply(
                         ak_params, init_h, (ego_obs_i, ego_done_i)
                     )
-                    return pi.probs  # (NUM_STEPS, NUM_ENVS, A)
+                    return pi.probs  # (T, E, A)
 
-                all_probs = jax.vmap(fwd_k)(all_actor_params)  # (N, T, E, A)
-                mean_prob = jnp.mean(all_probs, axis=0)          # (T, E, A)
+                # Sequential over N actors → peak memory O(T*E) per forward pass
+                all_probs = jax.lax.map(fwd_k, all_actor_params)  # (N, T, E, A)
+                mean_prob = jnp.mean(all_probs, axis=0)             # (T, E, A)
                 taken = jnp.take_along_axis(
                     mean_prob, ego_act_i[..., jnp.newaxis], axis=-1
-                ).squeeze(-1)                                    # (T, E)
-                return -jnp.log(taken + 1e-6)                   # (T, E)
+                ).squeeze(-1)                                       # (T, E)
+                return -jnp.log(taken + 1e-6)                      # (T, E)
 
-            all_bonuses = jax.vmap(compute_bonus)(
-                all_traj.ego_obs,    # (N, T, E, H, W, C)
-                all_traj.done,       # (N, T, E)
-                all_traj.ego_action, # (N, T, E)
+            # Sequential over N members → peak memory O(T*E) per member
+            all_bonuses = jax.lax.map(
+                compute_bonus,
+                (all_traj.ego_obs, all_traj.done, all_traj.ego_action),
             )  # (N, T, E)
 
             shaped_rewards = all_traj.reward + entropy_alpha * all_bonuses
@@ -546,7 +555,14 @@ def make_train_mep_s1(config):
             metric["env_step"] = update_step * NUM_STEPS * NUM_ENVS
 
             def _log(m):
-                wandb.log({f"mep_s1/{k}": float(v) for k, v in m.items()})
+                flat = {}
+                for k, v in m.items():
+                    if isinstance(v, dict):
+                        for kk, vv in v.items():
+                            flat[f"{k}/{kk}"] = float(vv)
+                    else:
+                        flat[k] = float(v)
+                wandb.log({f"mep_s1/{k}": v for k, v in flat.items()})
 
             jax.debug.callback(_log, metric)
 

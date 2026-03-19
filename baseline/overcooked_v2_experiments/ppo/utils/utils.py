@@ -27,6 +27,10 @@ def _infer_run_suffix(config) -> str:
         suffix = f"e3t"
     if config.get("ALG_NAME") == "E3D":
         suffix = f"e3d"
+    if config.get("ALG_NAME") == "MEP_S1":
+        suffix = "m1"
+    if config.get("ALG_NAME") == "MEP_S2":
+        suffix = "m2"
 
     return suffix
 

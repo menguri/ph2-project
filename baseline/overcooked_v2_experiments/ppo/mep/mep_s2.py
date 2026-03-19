@@ -204,6 +204,9 @@ def make_train_mep_s2(config):
             partner_params = jax.tree_util.tree_map(
                 lambda x: x[partner_idx], pop_actor_params
             )
+            # Reset partner hstate at each update step so stale hidden state
+            # from a previous (different) partner does not carry over.
+            partner_hstate = MAPPOActorRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
 
             # ---- ROLLOUT ------------------------------------------------
             def _env_step(step_state, _):
@@ -263,7 +266,10 @@ def make_train_mep_s2(config):
                     reward, info["shaped_reward"],
                 )
                 ego_reward = reward[env.agents[0]]
-                info = jax.tree_util.tree_map(lambda x: x.reshape((NUM_ENVS,)), info)
+                info = {k: v for k, v in info.items() if k != "shaped_reward"}
+                info = jax.tree_util.tree_map(
+                    lambda x: x.mean(axis=-1) if x.ndim > 1 else x, info
+                )
 
                 transition = MEPTransition(
                     done=done_env,
@@ -294,7 +300,16 @@ def make_train_mep_s2(config):
              actor_hstate, partner_hstate, critic_hstate, _, rng) = final_step
 
             # ---- Update running return for this partner ------------------
-            ep_return = traj.reward.mean()
+            # Use returned_episode_returns (unshaped cumulative return) so that
+            # reward shaping early in training doesn't distort prioritized sampling.
+            ep_returns = traj.info["returned_episode_returns"]  # (T, E)
+            ep_done = traj.info["returned_episode"]             # (T, E) bool
+            n_done = ep_done.sum()
+            ep_return = jnp.where(
+                n_done > 0,
+                (ep_returns * ep_done).sum() / (n_done + 1e-6),
+                running_returns[partner_idx],  # keep old if no episode completed
+            )
             new_ret = running_returns.at[partner_idx].set(
                 0.9 * running_returns[partner_idx] + 0.1 * ep_return
             )
@@ -435,10 +450,17 @@ def make_train_mep_s2(config):
             metric["update_step"] = update_step
             metric["env_step"] = update_step * NUM_STEPS * NUM_ENVS
 
-            jax.debug.callback(
-                lambda m: wandb.log({f"mep_s2/{k}": float(v) for k, v in m.items()}),
-                metric,
-            )
+            def _log_s2(m):
+                flat = {}
+                for k, v in m.items():
+                    if isinstance(v, dict):
+                        for kk, vv in v.items():
+                            flat[f"{k}/{kk}"] = float(vv)
+                    else:
+                        flat[k] = float(v)
+                wandb.log({f"mep_s2/{k}": v for k, v in flat.items()})
+
+            jax.debug.callback(_log_s2, metric)
 
             runner_state = (
                 actor_state, critic_state,

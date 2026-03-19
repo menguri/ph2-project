@@ -93,22 +93,22 @@ run_e3t() {
 # 9. Counter Circuit (Original)
 run_e3t "5,6" "counter_circuit" ""
 
-# 6. Asymmetric Advantages (Original)
-run_e3t "5,6" "asymm_advantages" ""
+# # 6. Asymmetric Advantages (Original)
+# run_e3t "5,6" "asymm_advantages" ""
 
-EPSILON=0.2
+# EPSILON=0.2
 
-# # 5. Cramped Room (Original)
-run_e3t "5,6" "cramped_room" ""
+# # # 5. Cramped Room (Original)
+# run_e3t "5,6" "cramped_room" ""
 
-# # 7. Coordination Ring (Original)
-run_e3t "5,6" "coord_ring" ""
+# # # 7. Coordination Ring (Original)
+# run_e3t "5,6" "coord_ring" ""
 
-# # 8. Forced Coordination (Original)
-run_e3t "5,6" "forced_coord" ""
+# # # 8. Forced Coordination (Original)
+# run_e3t "5,6" "forced_coord" ""
 
-# 9. Counter Circuit (Original)
-run_e3t "5,6" "counter_circuit" ""
+# # 9. Counter Circuit (Original)
+# run_e3t "5,6" "counter_circuit" ""
 
-# 6. Asymmetric Advantages (Original)
-run_e3t "5,6" "asymm_advantages" ""
+# # 6. Asymmetric Advantages (Original)
+# run_e3t "5,6" "asymm_advantages" ""

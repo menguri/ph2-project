@@ -105,7 +105,11 @@ def single_run_with_viz(config):
     # 체크포인트 디버그/저장
     # ---------------------------
     print(f"[CKPTDBG] NUM_CHECKPOINTS after run = {config.get('NUM_CHECKPOINTS')}")
-    if config.get("NUM_CHECKPOINTS", 0) > 0:
+    _alg = config.get("ALG_NAME", "")
+    if _alg in ("MEP_S1", "MEP_S2"):
+        # MEP는 run.py에서 직접 디스크 저장 완료. 표준 ckpt 블록 건너뜀.
+        pass
+    elif config.get("NUM_CHECKPOINTS", 0) > 0:
         print("[CKPTDBG] 체크포인트 버퍼에서 파라미터 추출 시작")
         checkpoints = out["runner_state"][1]
         sample_leaf = jax.tree_util.tree_leaves(checkpoints)[0]
