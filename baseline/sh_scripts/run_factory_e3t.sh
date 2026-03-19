@@ -15,9 +15,10 @@ NENVS=64
 NSTEPS=128
 
 # E3T Specific Settings
-EPSILON=0.3
+# 본래 0.3 / 0.8 <-> counter circuit 0.2 / 1.0
+EPSILON=0.2
 USE_PM=True
-PRED_COEF=0.8
+PRED_COEF=1.0
 
 # Function to run experiment
 run_e3t() {

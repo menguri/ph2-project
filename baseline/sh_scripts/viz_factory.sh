@@ -23,8 +23,14 @@ echo "Eval max steps: ${EVAL_MAX_STEPS}"
 # ./run_visualize.sh --gpu 7 --dir runs/20260318-114338_bsnlsfpp_counter_circuit_sp --cross --num_seeds 5 --no_viz 
 # ./run_visualize.sh --gpu 7 --dir runs/20260318-114338_utvei1oo_forced_coord_sp --cross --num_seeds 5 --no_viz 
 # ./run_visualize.sh --gpu 7 --dir runs/20260318-114339_xf0xbxqn_coord_ring_sp --cross --num_seeds 5 --no_viz 
-./run_visualize.sh --gpu 7 --dir runs/20260318-132110_ec6j3u94_cramped_room_e3t --cross --num_seeds 5 --no_viz 
-./run_visualize.sh --gpu 7 --dir runs/20260318-135324_qz31y2p7_coord_ring_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-143046_a7jkrv7z_forced_coord_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-162728_oblfaxqs_counter_circuit_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-172626_mwnsh5iu_asymm_advantages_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-183059_ckpw0iz8_cramped_room_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-190800_cl2v8fke_coord_ring_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-195049_dedgawoz_forced_coord_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-203253_4yqsdm2k_counter_circuit_e3t --cross --num_seeds 5 --no_viz 
+./run_visualize.sh --gpu 7 --dir runs/20260318-213131_86ngbe47_asymm_advantages_e3t --cross --num_seeds 5 --no_viz 
 # wait
 # ./run_visualize.sh --gpu 0 --dir runs/20260309-235315_a229nt2i_counter_circuit_e3t --cross --num_seeds 5 &
 # ./run_visualize.sh --gpu 1 --dir runs/20260310-011253_fao1ejiu_asymm_advantages_fcp --cross --num_seeds 5 & 

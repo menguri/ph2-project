@@ -9,7 +9,7 @@ MEP_POPULATION_SIZE: 5
 MEP_ENTROPY_ALPHA: 0.01
 
 NUM_SEEDS: 1
-NUM_CHECKPOINTS: 0  # MEP S1 saves its own population checkpoints
+NUM_CHECKPOINTS: 3  # init / mid / final per population member
 
 model:
   "LR": 0.0007

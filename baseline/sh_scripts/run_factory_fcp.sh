@@ -11,7 +11,7 @@ cd "$(dirname "$0")" || exit 1
 # Common Configuration
 EXP="rnn-fcp"
 ENV_DEVICE="cpu"
-NENVS=128
+NENVS=64
 NSTEPS=128
 
 # FCP Specific Settings

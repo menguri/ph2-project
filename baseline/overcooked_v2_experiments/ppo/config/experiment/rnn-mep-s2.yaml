@@ -6,11 +6,11 @@ ALG_NAME: "MEP_S2"
 
 # MEP-specific
 MEP_USE_PRIORITIZED_SAMPLING: True
-MEP_PRIORITIZED_ALPHA: 3.0
+MEP_PRIORITIZED_ALPHA: 0.5
 # MEP_POPULATION_DIR is injected at runtime via CLI: +MEP_POPULATION_DIR=<path>
 
-NUM_SEEDS: 1
-NUM_CHECKPOINTS: 0  # MEP S2 checkpoint saving handled separately if needed
+NUM_SEEDS: 10
+NUM_CHECKPOINTS: 0
 
 model:
   "LR": 0.0007

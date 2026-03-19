@@ -118,12 +118,13 @@ def load_fcp_populations(population_dir: Path):
 
 def load_mep_population(population_dir: Path):
     """
-    MEP S1이 저장한 population 디렉토리에서 N개 actor params를 로드한다.
-    각 member는 mep_population/member_{i}/actor_params.pkl 에 저장된다.
+    MEP S1이 저장한 population 디렉토리에서 actor params를 로드한다.
+    각 member는 init / mid / final 3개 체크포인트를 저장한다.
+    N members × 3 ckpts = N×3 policies (stacked pytree, leaf shape (N*3, ...)).
 
     Returns
     -------
-    stacked_params : PyTree with leaf shape (N, ...)
+    stacked_params : PyTree with leaf shape (N*3, ...)
     """
     population_dir = Path(population_dir)
     if not population_dir.exists():
@@ -136,14 +137,18 @@ def load_mep_population(population_dir: Path):
     if not member_dirs:
         raise ValueError(f"No member_* dirs found in {population_dir}")
 
+    _CKPT_NAMES = ["ckpt_init_actor.pkl", "ckpt_mid_actor.pkl", "ckpt_final_actor.pkl"]
     params_list = []
     for md in member_dirs:
-        pkl = md / "actor_params.pkl"
-        if not pkl.exists():
-            raise ValueError(f"Missing actor_params.pkl in {md}")
-        with open(pkl, "rb") as f:
-            params_list.append(pickle.load(f))
-    print(f"[MEP] Loaded {len(params_list)} population members from {population_dir}")
+        for ckpt_name in _CKPT_NAMES:
+            pkl = md / ckpt_name
+            if not pkl.exists():
+                raise ValueError(f"Missing {ckpt_name} in {md}")
+            with open(pkl, "rb") as f:
+                params_list.append(pickle.load(f))
+
+    n_policies = len(params_list)
+    print(f"[MEP] Loaded {n_policies} policies ({len(member_dirs)} members × 3 ckpts) from {population_dir}")
 
     stacked = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *params_list)
     return stacked
@@ -162,32 +167,71 @@ def single_run(config):
         with jax.disable_jit(False):
             out = jax.jit(train_fn)(rng)
 
-        # Save N actor checkpoints to RUN_BASE_DIR/mep_population/member_{i}/
-        pop_params = out["pop_actor_params"]   # leaf shape (N, ...)
-        N = jax.tree_util.tree_leaves(pop_params)[0].shape[0]
+        # Save N members × 3 checkpoints (init/mid/final) per member
+        # pop_actor_ckpts leaf shape: (N, 3, ...)
+        pop_ckpts = out["pop_actor_ckpts"]
+        N = jax.tree_util.tree_leaves(pop_ckpts)[0].shape[0]
+        _CKPT_NAMES = ["ckpt_init_actor.pkl", "ckpt_mid_actor.pkl", "ckpt_final_actor.pkl"]
         run_base_dir = Path(config["RUN_BASE_DIR"])
         pop_dir = run_base_dir / "mep_population"
         pop_dir.mkdir(parents=True, exist_ok=True)
         for i in range(N):
-            member_params = jax.tree_util.tree_map(lambda x: x[i], pop_params)
             member_dir = pop_dir / f"member_{i}"
             member_dir.mkdir(exist_ok=True)
-            with open(member_dir / "actor_params.pkl", "wb") as f:
-                pickle.dump(member_params, f)
-        print(f"[MEP S1] Saved {N} population members to {pop_dir}")
+            for slot, ckpt_name in enumerate(_CKPT_NAMES):
+                member_ckpt = jax.tree_util.tree_map(lambda x: x[i, slot], pop_ckpts)
+                with open(member_dir / ckpt_name, "wb") as f:
+                    pickle.dump(member_ckpt, f)
+        print(f"[MEP S1] Saved {N} members × 3 ckpts to {pop_dir}")
         return out
 
     # ----------------------------------------------------------------
-    # MEP_S2: adaptive agent training
+    # MEP_S2: adaptive agent training (multi-seed, same as standard training)
     # ----------------------------------------------------------------
     if alg_name == "MEP_S2":
         from overcooked_v2_experiments.ppo.mep.mep_s2 import make_train_mep_s2
         pop_dir = Path(config["MEP_POPULATION_DIR"])
+        if not Path(pop_dir).exists():
+            raise ValueError(
+                f"[MEP S2] Population dir not found: {pop_dir}\n"
+                "Run MEP Stage 1 first (./sh_scripts/run_factory_mep_s1.sh) "
+                "or provide --pop-dir."
+            )
         pop_params = load_mep_population(pop_dir)
         train_fn = make_train_mep_s2(config)
-        rng = jax.random.PRNGKey(config["SEED"])
+
+        num_seeds = config["NUM_SEEDS"]
         with jax.disable_jit(False):
-            out = jax.jit(lambda r: train_fn(r, population=pop_params))(rng)
+            rng = jax.random.PRNGKey(config["SEED"])
+            rngs = jax.random.split(rng, num_seeds)
+            rngs = jax.device_put(rngs, jax.devices("cpu")[0])
+
+            num_devices = get_num_devices()
+            print(f"[MEP S2] num_seeds={num_seeds}, num_devices={num_devices}")
+
+            def _train_s2(rng_s):
+                return train_fn(rng_s, population=pop_params)
+
+            if num_devices <= 1:
+                train_jit = jax.jit(_train_s2)
+                if num_seeds == 1:
+                    out = train_jit(rngs[0])
+                else:
+                    out = jax.vmap(train_jit)(rngs)
+            else:
+                if num_seeds == num_devices:
+                    out = jax.pmap(_train_s2)(rngs)
+                elif num_seeds % num_devices == 0:
+                    seeds_per_device = num_seeds // num_devices
+                    rngs_2d = rngs.reshape((num_devices, seeds_per_device, *rngs.shape[1:]))
+                    out = jax.pmap(jax.vmap(_train_s2))(rngs_2d)
+                    out = jax.tree_util.tree_map(
+                        lambda x: x.reshape((num_seeds, *x.shape[2:])), out
+                    )
+                else:
+                    print(f"[warn] num_seeds({num_seeds}) % num_devices({num_devices}) != 0; fallback to vmap")
+                    train_jit = jax.jit(_train_s2)
+                    out = jax.vmap(train_jit)(rngs)
         return out
 
     # ----------------------------------------------------------------

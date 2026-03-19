@@ -24,7 +24,6 @@ import pickle
 from models.rnn import ScannedRNN
 import matplotlib.pyplot as plt
 from jaxmarl.environments.overcooked_v2.overcooked import ObservationType
-from jaxmarl.environments.overcooked.layouts import overcooked_layouts
 from overcooked_v2_experiments.ppo.utils.stablock import (
     expand_blocked_states,
     initialize_blocked_states,
@@ -71,57 +70,9 @@ def unbatchify(x: jnp.ndarray, agent_list, num_envs, num_actors):
     return {a: x[i] for i, a in enumerate(agent_list)}
 
 
-def _should_use_old_overcooked(config: Dict[str, Any], env_config: Dict[str, Any]):
-    # SA(state augmentation)는 기존 OvercookedV2 경로를 유지한다.
-    if "NUM_ITERATIONS" in config:
-        return False, "state_augmentation"
-
-    explicit_old = bool(config.get("OLD_OVERCOOKED", False))
-    if explicit_old:
-        return True, "explicit_flag"
-
-    if bool(config.get("DISABLE_OLD_OVERCOOKED_AUTO", False)):
-        return False, "auto_disabled"
-
-    layout_name = env_config.get("ENV_KWARGS", {}).get("layout", None)
-    if isinstance(layout_name, str) and layout_name in overcooked_layouts:
-        return True, "auto_layout_match"
-
-    return False, "default_v2"
-
-
 def _prepare_env_spec(config: Dict[str, Any], env_config: Dict[str, Any]):
     env_name = str(env_config.get("ENV_NAME", "overcooked_v2"))
     env_kwargs = dict(env_config.get("ENV_KWARGS", {}))
-
-    use_old, reason = _should_use_old_overcooked(config, env_config)
-    if use_old:
-        if env_name != "overcooked":
-            print(
-                f"[ENV] Routing to overcooked(v1) ({reason}); "
-                f"ignoring ENV_NAME='{env_name}'."
-            )
-        env_name = "overcooked"
-
-    if env_name == "overcooked":
-        allowed = {"layout", "random_reset", "max_steps"}
-        dropped = sorted(set(env_kwargs.keys()) - allowed)
-        if dropped:
-            print(
-                "[ENV] overcooked(v1) selected; dropping OV2-only kwargs:",
-                ", ".join(dropped),
-            )
-            env_kwargs = {k: v for k, v in env_kwargs.items() if k in allowed}
-
-        layout_name = env_kwargs.get("layout", "cramped_room")
-        if isinstance(layout_name, str):
-            if layout_name not in overcooked_layouts:
-                raise ValueError(
-                    f"Unknown overcooked(v1) layout '{layout_name}'. "
-                    f"Available: {sorted(overcooked_layouts.keys())}"
-                )
-            env_kwargs["layout"] = overcooked_layouts[layout_name]
-
     return env_name, env_kwargs
 
 
@@ -194,12 +145,6 @@ def make_train(
     stablock_heavy_penalty = float(config.get("STABLOCK_HEAVY_PENALTY", 10.0))
     stablock_no_block_prob = config.get("STABLOCK_NO_BLOCK_PROB", None)
     env_name, env_kwargs = _prepare_env_spec(config, env_config)
-    is_overcooked_v1 = env_name == "overcooked"
-    if is_overcooked_v1 and stablock_enabled:
-        raise ValueError(
-            "Stablock is implemented for overcooked_v2 state APIs. "
-            "Use overcooked_v2 engine for Stablock runs."
-        )
     # PH2 joint-match controls
     ph2_match_schedule = bool(config.get("PH2_MATCH_SCHEDULE", False))
     ph2_role = str(config.get("PH2_ROLE", "")).strip().lower()
@@ -312,18 +257,9 @@ def make_train(
         env = LogWrapper(env, replace_info=False)
 
     def _extract_pos_axes(log_env_state):
-        if is_overcooked_v1:
-            # overcooked(v1) batched state: (E, A, 2) -> convert to (A, E)
-            agent_pos = log_env_state.env_state.agent_pos
-            pos_x = jnp.swapaxes(agent_pos[..., 0], 0, 1)
-            pos_y = jnp.swapaxes(agent_pos[..., 1], 0, 1)
-            return pos_y, pos_x
         return log_env_state.env_state.agents.pos.y, log_env_state.env_state.agents.pos.x
 
     def _extract_global_full_obs(log_env_state):
-        if is_overcooked_v1:
-            full = jax.vmap(env.get_obs)(log_env_state.env_state)
-            return full[env.agents[0]].astype(jnp.float32)
         full = jax.vmap(env.get_obs_default)(log_env_state.env_state)
         return full[:, 0].astype(jnp.float32)
 
