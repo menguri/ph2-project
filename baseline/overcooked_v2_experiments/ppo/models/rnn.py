@@ -52,7 +52,7 @@ class ActorCriticRNN(ActorCriticBase):
         return ScannedRNN.initialize_carry(batch_size, hidden_size)
 
     @nn.compact
-    def __call__(self, hidden, x, train=False, use_prediction=False):
+    def __call__(self, hidden, x, train=False, use_prediction=False, actor_only=False):
         rnn_state = hidden
 
         obs, dones = x
@@ -92,6 +92,10 @@ class ActorCriticRNN(ActorCriticBase):
         )(actor_mean)
 
         pi = distrax.Categorical(logits=actor_mean)
+
+        if actor_only:
+            dummy_value = jnp.zeros(embedding.shape[:-1])
+            return rnn_state, pi, dummy_value, pred_logits
 
         critic = nn.Dense(
             self.config["FC_DIM_SIZE"],

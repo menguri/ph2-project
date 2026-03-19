@@ -111,11 +111,11 @@ TARGET_SIGMA=2.0
 TARGET_MAX_COUNT=1
 
 
-echo "[PH2-SWEEP] layout=counter_circuit"
-run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# echo "[PH2-SWEEP] layout=counter_circuit"
+# run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-echo "[PH2-SWEEP] layout=asymm_advantages"
-run_ph2 "$SWEEP_GPUS" "asymm_advantages" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# echo "[PH2-SWEEP] layout=asymm_advantages"
+# run_ph2 "$SWEEP_GPUS" "asymm_advantages" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
 echo "[PH2-SWEEP] layout=cramped_room"
 run_ph2 "$SWEEP_GPUS" "cramped_room" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"

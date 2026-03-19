@@ -232,6 +232,33 @@ def single_run(config):
                     print(f"[warn] num_seeds({num_seeds}) % num_devices({num_devices}) != 0; fallback to vmap")
                     train_jit = jax.jit(_train_s2)
                     out = jax.vmap(train_jit)(rngs)
+
+        # Save checkpoints: run_{s}/ckpt_0, ckpt_1, ckpt_final (orbax format)
+        num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
+        if num_checkpoints > 0:
+            actor_ckpts = out["actor_ckpts"]
+            sample_leaf = jax.tree_util.tree_leaves(actor_ckpts)[0]
+            # num_seeds==1: shape (num_checkpoints, ...) — no seed axis
+            # num_seeds > 1: shape (num_seeds, num_checkpoints, ...)
+            has_seed_axis = sample_leaf.shape[0] == num_seeds and num_seeds > 1
+
+            for s in range(num_seeds):
+                # extract (num_checkpoints, ...) for this seed
+                if has_seed_axis:
+                    seed_ckpts = jax.tree_util.tree_map(lambda x: x[s], actor_ckpts)
+                else:
+                    seed_ckpts = actor_ckpts
+                # save non-final slots (0 .. num_checkpoints-2)
+                for slot in range(num_checkpoints - 1):
+                    params = jax.tree_util.tree_map(lambda x: x[slot], seed_ckpts)
+                    store_checkpoint(config, params, s, slot, final=False)
+                # save last slot as ckpt_final
+                params_final = jax.tree_util.tree_map(
+                    lambda x: x[num_checkpoints - 1], seed_ckpts
+                )
+                store_checkpoint(config, params_final, s, num_checkpoints - 1, final=True)
+            print(f"[MEP S2] Saved {num_seeds} seeds × {num_checkpoints} ckpts to {config['RUN_BASE_DIR']}")
+
         return out
 
     # ----------------------------------------------------------------

@@ -83,6 +83,7 @@ def get_rollout(
     ph1_sigma: float = 1.0,
     max_rollout_steps=None,
     env_device=None,  # None | "cpu" | "gpu"
+    use_jit=True,
 ) -> PolicyRollout:
     init_hstate, _get_actions = init_rollout(policies, env)
     ph1_enabled = "PH1" in algorithm
@@ -538,7 +539,7 @@ def get_rollout(
         cumulative_reward_seq = jnp.cumsum(step_reward_seq)
         ph1_distance_seq = jnp.stack(ph1_distance_seq_list)
         ph1_penalty_seq = jnp.stack(ph1_penalty_seq_list)
-    else:
+    elif use_jit:
         carry, (
             state_seq,
             actions_seq,
@@ -550,6 +551,34 @@ def get_rollout(
             ph1_distance_seq,
             ph1_penalty_seq,
         ) = jax.lax.scan(_perform_step, carry, keys)
+        cumulative_reward_seq = jnp.cumsum(step_reward_seq)
+    else:
+        outputs = []
+        for k in keys:
+            carry, out = _perform_step(carry, k)
+            outputs.append(out)
+        (
+            state_seq_list,
+            actions_seq_list,
+            prediction_correct_seq_list,
+            prediction_mask_seq_list,
+            value_seq_list,
+            pos_seq_list,
+            step_reward_seq_list,
+            ph1_distance_seq_list,
+            ph1_penalty_seq_list,
+        ) = zip(*outputs)
+        def _stack_tree(seq):
+            return jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *seq)
+        state_seq = _stack_tree(state_seq_list)
+        actions_seq = _stack_tree(actions_seq_list)
+        prediction_correct_seq = jnp.stack(prediction_correct_seq_list)
+        prediction_mask_seq = jnp.stack(prediction_mask_seq_list)
+        value_seq = jnp.stack(value_seq_list)
+        pos_seq = jnp.stack(pos_seq_list)
+        step_reward_seq = jnp.stack(step_reward_seq_list)
+        ph1_distance_seq = jnp.stack(ph1_distance_seq_list)
+        ph1_penalty_seq = jnp.stack(ph1_penalty_seq_list)
         cumulative_reward_seq = jnp.cumsum(step_reward_seq)
 
     total_reward = carry[3]  # Index 3 is total_reward

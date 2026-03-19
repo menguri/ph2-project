@@ -60,17 +60,17 @@ run_mep_s2() {
 # S2: multi-GPU (multi-seed pmap+vmap)
 # -----------------------------------------------------------------------------
 # S1_GPU="7"
-S2_GPUS="5,7"
+S2_GPUS="6,7"
 
 echo "[MEP] layout=cramped_room"
 # run_mep_s1 "$S1_GPU" "cramped_room"
-POP_DIR="${RUNS_BASE}/20260319-034649_ztpeud5n_cramped_room_m1/mep_population"
-run_mep_s2 "$S2_GPUS" "cramped_room" "$POP_DIR"
+# POP_DIR="${RUNS_BASE}/20260319-034649_ztpeud5n_cramped_room_m1/mep_population"
+# run_mep_s2 "$S2_GPUS" "cramped_room" "$POP_DIR"
 
 echo "[MEP] layout=asymm_advantages"
 # run_mep_s1 "$S1_GPU" "asymm_advantages"
-POP_DIR="${RUNS_BASE}/20260319-051106_05r4fmok_asymm_advantages_m1/mep_population"
-run_mep_s2 "$S2_GPUS" "asymm_advantages" "$POP_DIR"
+# POP_DIR="${RUNS_BASE}/20260319-051106_05r4fmok_asymm_advantages_m1/mep_population"
+# run_mep_s2 "$S2_GPUS" "asymm_advantages" "$POP_DIR"
 
 # echo "[MEP] layout=coord_ring"
 # # run_mep_s1 "$S1_GPU" "coord_ring"

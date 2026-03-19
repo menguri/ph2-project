@@ -13,14 +13,13 @@ class PolicyRollout:
     prediction_accuracy: chex.Array = None  # (num_agents,)
 
 
-def init_rollout(policies: List[AbstractPolicy], env):
+def init_rollout(policies: List[AbstractPolicy], env, use_jit=True):
     num_agents = env.num_agents
 
     assert len(policies) == num_agents
 
     init_hstate = {f"agent_{i}": policies[i].init_hstate(1) for i in range(num_agents)}
 
-    @jax.jit
     def _get_actions(obs, done, hstate, key):
         sample_keys = jax.random.split(key, num_agents)
 
@@ -46,18 +45,20 @@ def init_rollout(policies: List[AbstractPolicy], env):
 
         return actions, next_hstates, all_extras
 
+    if use_jit:
+        _get_actions = jax.jit(_get_actions)
+
     return init_hstate, _get_actions
 
 
-def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO") -> PolicyRollout:
-    init_hstate, _get_actions = init_rollout(policies, env)
+def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True) -> PolicyRollout:
+    init_hstate, _get_actions = init_rollout(policies, env, use_jit=use_jit)
 
     key, key_r = jax.random.split(key, 2)
     obs, state = env.reset(key_r)
 
     e3t_like = algorithm in ("E3T", "STL") or "E3T" in algorithm or "STL" in algorithm
 
-    @jax.jit
     def _perform_step(carry, key):
         obs, state, done, total_reward, hstate = carry
 
@@ -105,9 +106,23 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO") -> PolicyRol
         0.0,
         init_hstate,
     )
-    carry, (state_seq, actions_seq, prediction_correct_seq, prediction_mask_seq) = jax.lax.scan(
-        _perform_step, carry, keys
-    )
+
+    if use_jit:
+        carry, (state_seq, actions_seq, prediction_correct_seq, prediction_mask_seq) = jax.lax.scan(
+            _perform_step, carry, keys
+        )
+    else:
+        state_seqs, actions_seqs, pred_correct_seqs, pred_mask_seqs = [], [], [], []
+        for k in keys:
+            carry, (s, a, pc, pm) = _perform_step(carry, k)
+            state_seqs.append(s)
+            actions_seqs.append(a)
+            pred_correct_seqs.append(pc)
+            pred_mask_seqs.append(pm)
+        state_seq = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *state_seqs)
+        actions_seq = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *actions_seqs)
+        prediction_correct_seq = jnp.stack(pred_correct_seqs)
+        prediction_mask_seq = jnp.stack(pred_mask_seqs)
 
     total_reward = carry[3]
 

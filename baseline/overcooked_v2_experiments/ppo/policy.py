@@ -57,6 +57,7 @@ class PPOPolicy(AbstractPolicy):
         use_prediction = bool(self.config.get("USE_PREDICTION", True))
         model_type = self.config.get("model", {}).get("TYPE", "")
         use_pred_flag = (alg_name == "E3T") and use_prediction and (model_type == "RNN")
+        actor_only_flag = alg_name in ("MEP_S1", "MEP_S2")
 
         if use_pred_flag:
             outputs = self.network.apply(
@@ -64,6 +65,13 @@ class PPOPolicy(AbstractPolicy):
                 hstate,
                 ac_in,
                 use_prediction=True,
+            )
+        elif actor_only_flag:
+            outputs = self.network.apply(
+                params,
+                hstate,
+                ac_in,
+                actor_only=True,
             )
         else:
             outputs = self.network.apply(
@@ -94,7 +102,6 @@ class PPOPolicy(AbstractPolicy):
 
     def init_hstate(self, batch_size, key=None):
         # assert batch_size == 1 or self.with_batching
-        print("Initializing hstate with batch size", batch_size)
         return initialize_carry(self.config, batch_size)
 
 

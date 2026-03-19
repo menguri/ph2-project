@@ -121,6 +121,7 @@ SEEDS_EXPLICIT="0"
 ITERATIONS_OVERRIDE=$NUM_ITERATIONS
 
 FCP_DIR=""                    # FCP population 디렉토리(선택)
+MEP_POP_DIR=""                # MEP population 디렉토리(선택)
 ENV_DEVICE=""                 # env를 CPU/GPU 어디에 둘지: cpu|gpu (기본: 자동)
 CAST_OBS_BF16="0"             # 관측을 bf16으로 캐스팅하여 메모리 절감
 MODEL_NUM_ENVS_OVERRIDE=""    # model.NUM_ENVS override
@@ -143,6 +144,7 @@ while [[ $# -gt 0 ]]; do
     --tags)       TAGS="$2"; shift 2;;  # "a,b" 또는 "a b"
     --iters|--iterations) ITERATIONS_OVERRIDE="$2"; shift 2;;
     --fcp)        FCP_DIR="$2"; shift 2;;  # 예: --fcp runs/fcp_populations/grounded_coord_simple
+    --mep-pop-dir) MEP_POP_DIR="$2"; shift 2;;  # MEP S2 population 디렉토리
     --cpu)        export JAX_PLATFORMS=cpu; shift 1;;
     --env-device) ENV_DEVICE="$2"; shift 2;;     # cpu|gpu
     --bf16-obs)   CAST_OBS_BF16="1"; shift 1;;
@@ -293,8 +295,8 @@ else
   echo "[INFO] NUM_ITERATIONS override not applied (must be integer > 1)."
 fi
 
-# NUM_SEEDS 처리: FCP 실험은 cfg 기본 1, --seeds로만 override
-if [[ "$EXPERIMENT" == "rnn-fcp" || -n "$FCP_DIR" ]]; then
+# NUM_SEEDS 처리: FCP/MEP S2는 cfg 기본 1, --seeds로만 override
+if [[ "$EXPERIMENT" == "rnn-fcp" || -n "$FCP_DIR" || -n "$MEP_POP_DIR" ]]; then
   if [[ "$SEEDS_EXPLICIT" == "1" ]]; then
     PY_ARGS+=("NUM_SEEDS=${NUM_SEEDS}")
   fi
@@ -306,6 +308,11 @@ fi
 if [[ -n "$FCP_DIR" ]]; then
   PY_ARGS+=("+FCP=${FCP_DIR}")
   PY_ARGS+=("+FCP_DEVICE=${FCP_DEVICE}")
+fi
+
+# MEP population 디렉토리 override
+if [[ -n "$MEP_POP_DIR" ]]; then
+  PY_ARGS+=("+MEP_POPULATION_DIR=${MEP_POP_DIR}")
 fi
 
 # env 그룹이 original일 때만 layout override

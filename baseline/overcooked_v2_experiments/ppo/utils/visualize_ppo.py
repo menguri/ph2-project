@@ -248,7 +248,10 @@ def visualize_ppo_policy(
                     jit_cache[jit_key] = _viz_impl
             
             # Execute
-            print(f"[EVAL] Running {jit_key} for {first_level}/{second_level}")
+            if no_viz:
+                print(f"[EVAL] Running {first_level}/{second_level}")
+            else:
+                print(f"[VIZ] Pairing: {first_level} / {second_level}")
             viz_result = jit_cache[jit_key](pairing)
             results_structure[first_level][second_level] = viz_result
     
@@ -273,7 +276,7 @@ def visualize_ppo_policy(
                 total_reward = viz.total_reward
                 pred_acc = viz.prediction_accuracy
 
-                if not no_viz:
+                if not no_viz and frame_seq is not None:
                     viz_dir = run_base_dir / first_level / second_level
                     os.makedirs(viz_dir, exist_ok=True)
                     viz_filename = viz_dir / f"{annotation}.gif"
@@ -310,24 +313,25 @@ def visualize_ppo_policy(
             
             rows.append(mean_row)
 
-    # 7) CSV로 요약 저장
-    summery_name = "reward_summary_cross.csv" if cross else "reward_summary_sp.csv"
-    summery_file = run_base_dir / summery_name
-    with open(summery_file, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        fieldnames = [labels[0], labels[1], "annotation", "total_reward"]
-        for i in range(num_actors):
-            fieldnames.append(f"pred_acc_agent_{i}")
-            
-        writer.writerow(fieldnames)
-        for row in rows:
-            writer.writerow(row)
+    # 7) CSV로 요약 저장 (viz 모드에서는 스킵)
+    if no_viz:
+        summery_name = "reward_summary_cross.csv" if cross else "reward_summary_sp.csv"
+        summery_file = run_base_dir / summery_name
+        with open(summery_file, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            fieldnames = [labels[0], labels[1], "annotation", "total_reward"]
+            for i in range(num_actors):
+                fieldnames.append(f"pred_acc_agent_{i}")
 
-    print(f"Summary written to {summery_file}")
+            writer.writerow(fieldnames)
+            for row in rows:
+                writer.writerow(row)
 
-    # 8) cross-play면 교차플레이 매트릭스도 그림
-    if cross:
-        visualize_cross_play_matrix(summery_file)
+        print(f"Summary written to {summery_file}")
+
+        # 8) cross-play면 교차플레이 매트릭스도 그림
+        if cross:
+            visualize_cross_play_matrix(summery_file)
 
 
 if __name__ == "__main__":

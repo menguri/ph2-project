@@ -370,47 +370,54 @@ def eval_pairing(
             disable_auto=disable_old_overcooked_auto,
         )
 
-        def _rollout_seed_body(carry, key):
-            rollout = get_rollout(
+        keys = jax.random.split(key, num_seeds)
+        annotations = [f"seed-{i}" for i in range(num_seeds)]
+
+        if no_viz:
+            # JIT + lax.scan으로 배치 실행
+            def _rollout_seed_body(carry, key):
+                rollout = get_rollout(
+                    policies,
+                    env,
+                    key,
+                    algorithm=algorithm,
+                    stablock_enabled=stablock_enabled,
+                    ph1_forced_tilde_state=ph1_forced_tilde_state,
+                    use_jit=True,
+                )
+                return carry, rollout
+            _, rollouts = jax.lax.scan(_rollout_seed_body, None, keys)
+        else:
+            # viz 모드: seed 1개만 JIT으로 롤아웃, 렌더링은 Python 루프
+            rollout_viz = get_rollout(
                 policies,
                 env,
-                key,
+                keys[0],
                 algorithm=algorithm,
                 stablock_enabled=stablock_enabled,
                 ph1_forced_tilde_state=ph1_forced_tilde_state,
+                use_jit=True,
             )
-            return carry, rollout
-
-        keys = jax.random.split(key, num_seeds)
-        # lax.scan을 사용하여 롤아웃을 순차적으로 실행합니다.
-        _, rollouts = jax.lax.scan(_rollout_seed_body, None, keys)
-        annotations = [f"seed-{i}" for i in range(num_seeds)]
+            rollouts = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, 0), rollout_viz)
+            annotations = ["seed-0"]
 
 
     if no_viz:
         frame_seqs = [None] * len(annotations)
     else:
         agent_view_size = env_kwargs.get("agent_view_size", None)
-        
-        # 완전히 순차적으로 처리하여 메모리 문제 해결
-        frame_seqs = []
-        for i in range(len(annotations)):
-            # 각 시드의 state_seq를 개별적으로 렌더링
-            state_seq_i = jax.tree_util.tree_map(lambda x: x[i], rollouts.state_seq)
-            
-            # render_sequence 대신 각 타임스텝을 하나씩 렌더링
-            frames = []
-            num_steps = jax.tree_util.tree_leaves(state_seq_i)[0].shape[0]
-            for t in range(num_steps):
-                state_t = jax.tree_util.tree_map(lambda x: x[t], state_seq_i)
-                render_engine = "overcooked_v2" if all_recipes else engine_name
-                frame = render_state_frame(state_t, render_engine, agent_view_size)
-                # GPU 메모리에서 CPU로 즉시 전송하여 메모리 절약
-                frames.append(np.array(frame))
-            
-            # NumPy로 스택하여 GPU 메모리 부담 감소
-            frame_seq = np.stack(frames)
-            frame_seqs.append(frame_seq)
+
+        # seed-0 한 개만 렌더링
+        frame_seqs = [None] * len(annotations)
+        state_seq_0 = jax.tree_util.tree_map(lambda x: x[0], rollouts.state_seq)
+        frames = []
+        num_steps = jax.tree_util.tree_leaves(state_seq_0)[0].shape[0]
+        for t in range(num_steps):
+            state_t = jax.tree_util.tree_map(lambda x: x[t], state_seq_0)
+            render_engine = "overcooked_v2" if all_recipes else engine_name
+            frame = render_state_frame(state_t, render_engine, agent_view_size)
+            frames.append(np.array(frame))
+        frame_seqs[0] = np.stack(frames)
 
     return {
         annotation: PolicyVizualization(

@@ -159,8 +159,10 @@ def make_train_mep_s2(config):
         )
         last_done = jnp.zeros((NUM_ENVS,), dtype=jnp.bool_)
 
-        # Running returns per population member (for prioritized sampling)
-        running_returns = jnp.zeros((N,))
+        # Running returns per pairing (2*N: ego=agents[0] × N, ego=agents[1] × N)
+        # idx 0..N-1:   ego plays as agents[0], partner = pop[idx]
+        # idx N..2N-1:  ego plays as agents[1], partner = pop[idx-N]
+        running_returns = jnp.zeros((2 * N,))
 
         # Checkpoint buffer: (num_checkpoints, ...)
         checkpoint_steps = jnp.linspace(
@@ -193,19 +195,29 @@ def make_train_mep_s2(config):
                 rng,
             ) = runner_state
 
-            # -- Partner selection (prioritized or uniform) --
+            # -- Partner selection: rank-based over 2*N pairings --
+            # idx 0..N-1:   ego = agents[0], partner = pop[idx]
+            # idx N..2*N-1: ego = agents[1], partner = pop[idx-N]
             rng, _rng = jax.random.split(rng)
             if use_prioritized:
-                logits = -running_returns / prioritized_alpha
+                # Rank-based: lower return → harder partner → higher rank → higher prob
+                # inv_returns large for low-return (hard) partners
+                inv_returns = 1.0 / (jnp.maximum(running_returns, 0.0) + 1e-6)
+                ranks = (jnp.argsort(jnp.argsort(inv_returns)) + 1).astype(jnp.float32)
+                probs = jnp.power(ranks, prioritized_alpha)
+                probs = probs / probs.sum()
+                partner_idx = jax.random.categorical(_rng, jnp.log(probs + 1e-8))
             else:
-                logits = jnp.zeros((N,))
-            partner_idx = jax.random.categorical(_rng, logits)
+                partner_idx = jax.random.randint(_rng, (), 0, 2 * N)
+
+            # Ego role: 0 → ego plays as agents[0]; 1 → ego plays as agents[1]
+            ego_role = jnp.where(partner_idx < N, 0, 1)
+            pop_idx = jnp.where(partner_idx < N, partner_idx, partner_idx - N)
 
             partner_params = jax.tree_util.tree_map(
-                lambda x: x[partner_idx], pop_actor_params
+                lambda x: x[pop_idx], pop_actor_params
             )
-            # Reset partner hstate at each update step so stale hidden state
-            # from a previous (different) partner does not carry over.
+            # Reset partner hstate so stale carry from a previous partner does not leak.
             partner_hstate = MAPPOActorRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
 
             # ---- ROLLOUT ------------------------------------------------
@@ -216,8 +228,12 @@ def make_train_mep_s2(config):
                     update_step, rng,
                 ) = step_state
 
-                ego_obs_t = last_obs[env.agents[0]]      # (E, H, W, C)
-                partner_obs_t = last_obs[env.agents[1]]  # (E, H, W, C)
+                agent0_obs_t = last_obs[env.agents[0]]  # (E, H, W, C)
+                agent1_obs_t = last_obs[env.agents[1]]  # (E, H, W, C)
+                # Route obs based on ego_role (captured from outer scope)
+                ego_obs_t     = jnp.where(ego_role == 0, agent0_obs_t, agent1_obs_t)
+                partner_obs_t = jnp.where(ego_role == 0, agent1_obs_t, agent0_obs_t)
+                # Centralized critic always sees (ego_obs, partner_obs)
                 global_obs_t = jnp.concatenate([ego_obs_t, partner_obs_t], axis=-1)
                 done_t = last_done  # (E,)
 
@@ -249,8 +265,8 @@ def make_train_mep_s2(config):
                 partner_action = partner_pi.sample(seed=_rng2).squeeze(0)
 
                 env_act = {
-                    env.agents[0]: ego_action,
-                    env.agents[1]: partner_action,
+                    env.agents[0]: jnp.where(ego_role == 0, ego_action, partner_action),
+                    env.agents[1]: jnp.where(ego_role == 0, partner_action, ego_action),
                 }
                 rng, _rng3 = jax.random.split(rng)
                 obsv, env_state, reward, done, info = jax.vmap(env.step)(
@@ -315,8 +331,10 @@ def make_train_mep_s2(config):
             )
 
             # ---- GAE + PPO UPDATE ----------------------------------------
-            ego_obs_last = last_obs[env.agents[0]]
-            partner_obs_last = last_obs[env.agents[1]]
+            a0_last = last_obs[env.agents[0]]
+            a1_last = last_obs[env.agents[1]]
+            ego_obs_last     = jnp.where(ego_role == 0, a0_last, a1_last)
+            partner_obs_last = jnp.where(ego_role == 0, a1_last, a0_last)
             global_last = jnp.concatenate([ego_obs_last, partner_obs_last], axis=-1)
             _, last_val = critic_network.apply(
                 critic_state.params,
