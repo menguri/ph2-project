@@ -3,9 +3,6 @@
 # Change to script directory
 cd "$(dirname "$0")" || exit 1
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-if [[ -z "$REPO_ROOT" || ! -d "$REPO_ROOT/overcooked_v2_experiments" ]]; then
-  REPO_ROOT="/home/mlic/mingukang/ex-overcookedv2/experiments-stablock"
-fi
 
 # ==============================================================================
 # STA-PH1 Experiment Factory Script

@@ -2,9 +2,6 @@
 
 cd "$(dirname "$0")" || exit 1
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-if [[ -z "$REPO_ROOT" || ! -d "$REPO_ROOT/overcooked_v2_experiments" ]]; then
-  REPO_ROOT="/home/mlic/mingukang/ex-overcookedv2/experiments-stablock"
-fi
 
 # -----------------------------------------------------------------------------
 # PH2 Experiment Factory
@@ -35,7 +32,7 @@ done
 : "${PH1_SIGMA:=2.0}"
 : "${PH1_DIST_THRESH:=0.1}"
 : "${PH1_POOL_SIZE:=128}"
-: "${PH1_NORMAL_PROB:=0.5}"
+: "${PH1_NORMAL_PROB:=0.0}"
 : "${PH1_MULTI_PENALTY_ENABLED:=True}"
 : "${PH1_MULTI_PENALTY_SINGLE_WEIGHT:=1.0}"
 : "${PH1_MULTI_PENALTY_OTHER_WEIGHT:=1.0}"
@@ -111,11 +108,11 @@ TARGET_SIGMA=2.0
 TARGET_MAX_COUNT=1
 
 
-# echo "[PH2-SWEEP] layout=counter_circuit"
-# run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+echo "[PH2-SWEEP] layout=counter_circuit"
+run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-# echo "[PH2-SWEEP] layout=asymm_advantages"
-# run_ph2 "$SWEEP_GPUS" "asymm_advantages" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+echo "[PH2-SWEEP] layout=asymm_advantages"
+run_ph2 "$SWEEP_GPUS" "asymm_advantages" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
 echo "[PH2-SWEEP] layout=cramped_room"
 run_ph2 "$SWEEP_GPUS" "cramped_room" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
@@ -127,3 +124,24 @@ echo "[PH2-SWEEP] layout=forced_coord"
 run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
 echo "[PH2-SWEEP] all OV1 layout jobs finished."
+
+SWEEP_GPUS="0,1,2,3,4"
+TARGET_OMEGA=10.0
+TARGET_SIGMA=2.0
+TARGET_MAX_COUNT=3
+
+
+echo "[PH2-SWEEP] layout=counter_circuit"
+run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=asymm_advantages"
+run_ph2 "$SWEEP_GPUS" "asymm_advantages" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=cramped_room"
+run_ph2 "$SWEEP_GPUS" "cramped_room" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=coord_ring"
+run_ph2 "$SWEEP_GPUS" "coord_ring" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+echo "[PH2-SWEEP] layout=forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"

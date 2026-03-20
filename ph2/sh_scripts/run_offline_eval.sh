@@ -4,15 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-if [[ -z "$REPO_ROOT" || ! -d "$REPO_ROOT/overcooked_v2_experiments" ]]; then
-  REPO_ROOT="/home/mlic/mingukang/ex-overcookedv2/experiments-stablock"
-fi
 
 MODE="${1:-}"
 RUN_BASE_DIR="${2:-}"
 if [[ -z "$MODE" || -z "$RUN_BASE_DIR" ]]; then
   echo "Usage: $0 <ph1|ph2> <run_base_dir>"
-  echo "Example: $0 ph1 /home/mlic/mingukang/ex-overcookedv2/experiments-stablock/runs/20260216-123000_xxxxx"
+  echo "Example: $0 ph1 /home/mlic/mingukang/ph2-project/ph2/runs/20260216-123000_xxxxx"
   exit 1
 fi
 
