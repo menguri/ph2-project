@@ -29,6 +29,7 @@ from .environments import (
     OvercookedV2,
     CoinGame,
     JaxNav,
+    ToyCoop,
 )
 
 
@@ -117,6 +118,10 @@ def make(env_id: str, **env_kwargs):
     elif env_id == "jaxnav":
         env = JaxNav(**env_kwargs)
 
+    # 10. ToyCoop (Dual Destination)
+    elif env_id == "ToyCoop":
+        env = ToyCoop(**env_kwargs)
+
     return env
 
 registered_envs = [
@@ -150,4 +155,5 @@ registered_envs = [
     "overcooked_v2",
     "coin_game",
     "jaxnav",
+    "ToyCoop",
 ]

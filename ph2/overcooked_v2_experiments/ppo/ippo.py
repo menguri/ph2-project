@@ -255,6 +255,10 @@ def make_train(
         env = LogWrapper(env, replace_info=False)
 
     def _extract_pos_axes(log_env_state):
+        # ToyCoop: state.agent_pos (NUM_ENVS, 2, 2) → [x, y] 형태
+        if env_name == "ToyCoop":
+            pos = log_env_state.env_state.agent_pos
+            return pos[:, :, 1], pos[:, :, 0]  # y, x
         return log_env_state.env_state.agents.pos.y, log_env_state.env_state.agents.pos.x
 
     def _extract_global_full_obs(log_env_state):

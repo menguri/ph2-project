@@ -78,11 +78,15 @@ def visualize_ppo_policy(
     env_layout = env_kwargs.get("layout")
     env_kwargs_no_layout = copy.deepcopy(env_kwargs)
     env_kwargs_no_layout.pop("layout", None)
+    # ToyCoop 등 layout 없는 환경 감지
+    _env_name = config["env"].get("ENV_NAME", "overcooked_v2")
+    _env_name_override = _env_name if _env_name == "ToyCoop" else None
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,
         old_overcooked=False,
         disable_auto=True,
+        env_name_override=_env_name_override,
     )
 
     num_actors = env.num_agents

@@ -87,7 +87,13 @@ def get_rollout(
 ) -> PolicyRollout:
     init_hstate, _get_actions = init_rollout(policies, env)
     ph1_enabled = "PH1" in algorithm
-    env_name = "overcooked_v2" if hasattr(env, "get_obs_default") else "overcooked"
+    # ToyCoop은 name 속성으로 구분
+    if hasattr(env, 'name') and env.name == "ToyCoop":
+        env_name = "ToyCoop"
+    elif hasattr(env, "get_obs_default"):
+        env_name = "overcooked_v2"
+    else:
+        env_name = "overcooked"
 
     # PH1 uses the same predictor-conditioned execution path as E3T during eval.
     e3t_like = (

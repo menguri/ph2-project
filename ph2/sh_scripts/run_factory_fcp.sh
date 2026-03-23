@@ -123,3 +123,7 @@ run_fcp() {
 
 # # 11. Counter Circuit (Original) - No FCP path
 run_fcp "0,1,2,3,4" "counter_circuit" ""
+
+# --- ToyCoop (Dual Destination) ---
+# ToyCoop은 rnn-fcp-toycoop experiment config 사용 (MLP encoder)
+# EXP="rnn-fcp-toycoop" NENVS=512 NSTEPS=100 run_fcp "0,1" "toy_coop" ""

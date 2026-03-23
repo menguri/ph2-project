@@ -13,7 +13,7 @@ if [[ "$USE_CT" == "1" ]]; then
   EXP="rnn-ct"
 fi
 # SHARED_PREDICTION: USE_SHARED=1 이면 spec/ind가 CT + predictor 파라미터 공유
-: "${USE_SHARED:=1}"
+: "${USE_SHARED:=0}"
 ENV_DEVICE="gpu"
 NENVS=64
 NUM_SEEDS=5
@@ -191,38 +191,60 @@ run_ph2() {
 # CT v1 / v2 비교 실험: grounded_coord_simple (OV2), counter_circuit (OV1)
 # GPU: 0,1,2,3,4
 # =============================================================================
-SWEEP_GPUS="1,2,3,4,6"
+SWEEP_GPUS="2,3,4,6,7"
 
-# --- grounded_coord_simple: CT v1 ---
-USE_CT=1
-TRANSFORMER_V2=0
-EXP="rnn-ct"
-echo "[PH2-CT-v1] grounded_coord_simple"
-run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-wait
-# --- grounded_coord_simple: CT v2 ---
-USE_CT=1
-TRANSFORMER_V2=1
-EXP="rnn-ct"
-echo "[PH2-CT-v2] grounded_coord_simple"
-run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-wait
-# --- grounded_coord_simple: original ---
+# # --- grounded_coord_simple: CT v1 ---
+# USE_CT=1
+# TRANSFORMER_V2=0
+# EXP="rnn-ct"
+# echo "[PH2-CT-v1] grounded_coord_simple"
+# run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# wait
+# # --- grounded_coord_simple: CT v2 ---
+# USE_CT=1
+# TRANSFORMER_V2=1
+# EXP="rnn-ct"
+# echo "[PH2-CT-v2] grounded_coord_simple"
+# run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# wait
+# # --- grounded_coord_simple: original ---
+# USE_CT=0
+# TRANSFORMER_V2=0
+# EXP="rnn-ph2"
+# echo "[PH2-CT-original] grounded_coord_simple"
+# run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# # --- counter_circuit: CT v1 ---
+# USE_CT=1
+# TRANSFORMER_V2=0
+# EXP="rnn-ct"
+# echo "[PH2-CT-v1] counter_circuit"
+# run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# wait
+# # --- counter_circuit: CT v2 ---
+# USE_CT=1
+# TRANSFORMER_V2=1
+# EXP="rnn-ct"
+# echo "[PH2-CT-v2] counter_circuit"
+# run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+# =============================================================================
+# ToyCoop (Dual Destination) — MLP encoder, full obs
+# EXP를 rnn-ph2-toycoop 으로 변경하여 MLP 사용
+# =============================================================================
+EXP="rnn-ph2-toycoop"
 USE_CT=0
-TRANSFORMER_V2=0
-EXP="rnn-ph2"
-echo "[PH2-CT-original] grounded_coord_simple"
-run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-# --- counter_circuit: CT v1 ---
+NENVS=512
+NSTEPS=100
+echo "[PH2] toy_coop"
+run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+# =============================================================================
+# ToyCoop (Dual Destination) — MLP encoder, full obs
+# EXP를 rnn-ph2-toycoop 으로 변경하여 MLP 사용
+# =============================================================================
+EXP="rnn-ph2-toycoop"
 USE_CT=1
-TRANSFORMER_V2=0
-EXP="rnn-ct"
-echo "[PH2-CT-v1] counter_circuit"
-run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-wait
-# --- counter_circuit: CT v2 ---
-USE_CT=1
-TRANSFORMER_V2=1
-EXP="rnn-ct"
-echo "[PH2-CT-v2] counter_circuit"
-run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+NENVS=512
+NSTEPS=100
+echo "[PH2] toy_coop"
+run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"

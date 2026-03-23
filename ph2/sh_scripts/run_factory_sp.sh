@@ -40,5 +40,9 @@ run_sp() {
 run_sp "0" "grounded_coord_simple" ""
 run_sp "1" "counter_circuit" ""  
 # run_sp "5,6" "coord_ring" "" 
-# run_sp "5,6" "forced_coord" "" 
-# run_sp "1,2,4,5,6" "counter_circuit" "" 
+# run_sp "5,6" "forced_coord" ""
+# run_sp "1,2,4,5,6" "counter_circuit" ""
+
+# --- ToyCoop (Dual Destination) ---
+# ToyCoop은 별도 experiment config 사용 (MLP encoder, CEC 하이퍼파라미터)
+# run_sp "0,1" "toy_coop" "" "--exp rnn-sp-toycoop"

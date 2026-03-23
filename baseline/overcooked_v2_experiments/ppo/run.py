@@ -288,7 +288,7 @@ def single_run(config):
     bc_policy = None
     if "BC" in config:
         print("Training with BC")
-        layout_name = config["env"]["ENV_KWARGS"]["layout"]
+        layout_name = config["env"]["ENV_KWARGS"].get("layout", config["env"].get("ENV_NAME", "unknown"))
         split = "all"
         run_id = 1
         print(f"Loading BC policy from {layout_name}-{split}-{run_id}")

@@ -276,10 +276,9 @@ def make_train(
     ind_cfg["PH1_EVAL_ENABLED"] = bool(ckpt_cadence_cfg.get("PH1_EVAL_ENABLED", False))
 
     # Blocked-target input policy:
-    # - spec: configurable (disabled when CT is on — CT uses blocked encoder only in loss, not as policy input)
+    # - spec: configurable via PH2_SPEC_USE_BLOCKED_INPUT (기본 True)
     # - ind : always disabled
-    _ct_on = bool(cfg.get("TRANSFORMER_ACTION", False))
-    spec_cfg["LEARNER_USE_BLOCKED_INPUT"] = False if _ct_on else bool(cfg.get("PH2_SPEC_USE_BLOCKED_INPUT", True))
+    spec_cfg["LEARNER_USE_BLOCKED_INPUT"] = bool(cfg.get("PH2_SPEC_USE_BLOCKED_INPUT", True))
     ind_cfg["LEARNER_USE_BLOCKED_INPUT"] = False
     # Population partner forward path must match each partner architecture.
     spec_cfg["POPULATION_USE_PARTNER_PRED_INPUT"] = True

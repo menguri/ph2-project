@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jaxmarl
 from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 from jaxmarl.viz.overcooked_v2_visualizer import OvercookedV2Visualizer
+from jaxmarl.viz.toy_coop_jitted_visualizer import render_state as toy_coop_render_state
 
 
 def get_recipe_identifier(ingredients: List[int]) -> int:
@@ -27,9 +28,6 @@ def resolve_old_overcooked_flags(config: Dict[str, Any]) -> Tuple[bool, bool]:
         disable_auto = disable_auto or bool(
             config["alg"].get("DISABLE_OLD_OVERCOOKED_AUTO", False)
         )
-    # If the checkpoint was trained with the overcooked_v2 engine, disable auto-detection
-    # so that layouts like "cramped_room" (which also exist in overcooked v1) are not
-    # incorrectly routed to the v1 engine during eval.
     env_cfg = config.get("env", {})
     if isinstance(env_cfg, dict):
         env_name = env_cfg.get("ENV_NAME", config.get("ENV_NAME", ""))
@@ -43,16 +41,15 @@ def resolve_eval_engine(
     env_kwargs: Dict[str, Any],
     old_overcooked: bool = False,
     disable_auto: bool = False,
+    env_name_override: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
+    # ToyCoop 등 layout 없는 환경은 직접 지정
+    if env_name_override == "ToyCoop":
+        tc_kwargs = {k: v for k, v in env_kwargs.items() if k != "layout"}
+        return "ToyCoop", tc_kwargs
+
     kwargs = dict(env_kwargs)
     kwargs["layout"] = layout
-
-    # Always route evaluation to overcooked_v2.
-    # NOTE:
-    # - We intentionally ignore `old_overcooked` / `disable_auto` flags here.
-    # - This prevents layout-name based auto-routing to overcooked(v1), which can
-    #   cause observation-shape mismatches against v2-trained checkpoints.
-
     return "overcooked_v2", kwargs
 
 
@@ -61,7 +58,14 @@ def make_eval_env(
     env_kwargs: Dict[str, Any],
     old_overcooked: bool = False,
     disable_auto: bool = False,
+    env_name_override: Optional[str] = None,
 ):
+    # ToyCoop 등 layout 없는 환경은 env_name_override로 직접 지정
+    if env_name_override == "ToyCoop":
+        tc_kwargs = {k: v for k, v in env_kwargs.items() if k != "layout"}
+        env = jaxmarl.make("ToyCoop", **tc_kwargs)
+        return env, "ToyCoop", tc_kwargs
+
     env_name, resolved_kwargs = resolve_eval_engine(
         layout=layout,
         env_kwargs=env_kwargs,
@@ -76,6 +80,7 @@ def extract_global_full_obs(env, state, env_name: str):
     if env_name == "overcooked":
         obs = env.get_obs(state)
         return obs[env.agents[0]].astype(jnp.float32)
+    # ToyCoop, overcooked_v2 모두 get_obs_default 지원
     return env.get_obs_default(state)[0].astype(jnp.float32)
 
 
@@ -84,13 +89,15 @@ def extract_pos_yx(state, env_name: str):
         pos_x = state.agent_pos[:, 0]
         pos_y = state.agent_pos[:, 1]
         return pos_y, pos_x
+    if env_name == "ToyCoop":
+        pos_x = state.agent_pos[:, 0]
+        pos_y = state.agent_pos[:, 1]
+        return pos_y, pos_x
     return state.agents.pos.y, state.agents.pos.x
 
 
 def render_state_frame(state, env_name: str, agent_view_size: Optional[int] = None):
     if env_name == "overcooked":
-        # For classic overcooked(v1), always render full-view equivalent.
-        # Ignore OV2 partial-view configs (e.g. agent_view_size=2).
         avs = 5
         padding = max(1, avs - 2)
         h, w = int(state.maze_map.shape[0]), int(state.maze_map.shape[1])
@@ -103,6 +110,10 @@ def render_state_frame(state, env_name: str, agent_view_size: Optional[int] = No
             agent_dir_idx=state.agent_dir_idx,
             agent_inv=state.agent_inv,
         )
+
+    if env_name == "ToyCoop":
+        img = toy_coop_render_state(state)
+        return np.asarray(img)
 
     viz = OvercookedV2Visualizer()
     return np.asarray(viz._render_state(state, agent_view_size))

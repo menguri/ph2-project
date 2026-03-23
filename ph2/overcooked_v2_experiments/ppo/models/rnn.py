@@ -6,7 +6,34 @@ import flax.linen as nn
 import distrax
 from flax.linen.initializers import constant, orthogonal
 from .abstract import ActorCriticBase
-from .common import CNN
+from .common import CNN, MLP
+
+
+class _FlattenMLP(nn.Module):
+    """obs를 flatten 후 MLP에 통과시키는 래퍼. ToyCoop 등 작은 환경용."""
+    hidden_size: int = 128
+    output_size: int = 128
+    activation: type = nn.relu
+    name: str = "shared_encoder"
+
+    @nn.compact
+    def __call__(self, x, train=False):
+        # (B, H, W, C) → (B, H*W*C) 또는 이미 flat인 경우 그대로
+        if x.ndim > 2:
+            x = x.reshape((x.shape[0], -1))
+        x = nn.Dense(
+            features=self.hidden_size,
+            kernel_init=orthogonal(jnp.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+        x = nn.Dense(
+            features=self.output_size,
+            kernel_init=orthogonal(jnp.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+        return x
 from .e3t import PartnerPredictor
 from .cycle_transformer import CycleTransformerModule
 
@@ -57,6 +84,24 @@ class ActorCriticRNN(ActorCriticBase):
     def _action_prediction_enabled(self) -> bool:
         return bool(self.config.get("ACTION_PREDICTION", True))
 
+    def _build_shared_encoder(self, activation):
+        """CNN 또는 MLP 인코더를 config["OBS_ENCODER"]에 따라 생성.
+        기본값 "CNN" — 기존 OvercookedV2 코드에 영향 없음."""
+        encoder_type = self.config.get("OBS_ENCODER", "CNN").upper()
+        if encoder_type == "MLP":
+            return _FlattenMLP(
+                hidden_size=self.config["FC_DIM_SIZE"],
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                activation=activation,
+                name="shared_encoder",
+            )
+        else:
+            return CNN(
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                activation=activation,
+                name="shared_encoder",
+            )
+
     @nn.compact
     def encode_obs(self, obs):
         """
@@ -68,11 +113,7 @@ class ActorCriticRNN(ActorCriticBase):
         else:
             activation = nn.tanh
 
-        embed_model = CNN(
-            output_size=self.config["GRU_HIDDEN_DIM"],
-            activation=activation,
-            name="shared_encoder",
-        )
+        embed_model = self._build_shared_encoder(activation)
         shared_ln = nn.LayerNorm(name="shared_encoder_ln")
 
         # Encode current observation
@@ -103,11 +144,20 @@ class ActorCriticRNN(ActorCriticBase):
         else:
             activation = nn.tanh
 
-        blocked_model = CNN(
-            output_size=self.config["GRU_HIDDEN_DIM"],
-            activation=activation,
-            name="blocked_encoder",
-        )
+        encoder_type = self.config.get("OBS_ENCODER", "CNN").upper()
+        if encoder_type == "MLP":
+            blocked_model = _FlattenMLP(
+                hidden_size=self.config.get("FC_DIM_SIZE", 128),
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                activation=activation,
+                name="blocked_encoder",
+            )
+        else:
+            blocked_model = CNN(
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                activation=activation,
+                name="blocked_encoder",
+            )
         blocked_ln = nn.LayerNorm(name="blocked_encoder_ln")
 
         if blocked_states.ndim == 5:
@@ -147,16 +197,18 @@ class ActorCriticRNN(ActorCriticBase):
         else:
             activation = nn.tanh
 
-        embed_model = CNN(
-            output_size=self.config["GRU_HIDDEN_DIM"],
-            activation=activation,
-            name="shared_encoder",
-        )
+        embed_model = self._build_shared_encoder(activation)
         shared_ln = nn.LayerNorm(name="shared_encoder_ln")
 
         # Encode current observation
-        # embedding shape: (T, B, H, W, C) -> (T, B, D)
-        obs_emb = shared_ln(jax.vmap(embed_model)(obs))
+        # embedding shape: CNN → (T, B, H, W, C) -> (T, B, D)
+        #                  MLP → (T, B, D_flat) -> (T, B, D)
+        if obs.ndim == 5:
+            # (T, B, H, W, C) — CNN or MLP with flatten
+            obs_emb = shared_ln(jax.vmap(embed_model)(obs))
+        else:
+            # (T, B, D_flat) — already flat
+            obs_emb = shared_ln(jax.vmap(embed_model)(obs))
         embedding = obs_emb
 
         # -------------------------------------------------------------------
@@ -197,6 +249,7 @@ class ActorCriticRNN(ActorCriticBase):
                 activation=self.config.get("ACTIVATION", "relu"),
                 v2=_transformer_v2,
                 state_shape=_state_shape if _transformer_v2 else (),
+                obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
                 name="cycle_transformer",
             )
 
@@ -415,6 +468,7 @@ class ActorCriticRNN(ActorCriticBase):
             activation=self.config.get("ACTIVATION", "relu"),
             v2=_transformer_v2,
             state_shape=_state_shape if _transformer_v2 else (),
+            obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
             name="cycle_transformer",  # must match name in __call__
         )
         if obs.ndim == 5:
@@ -449,6 +503,7 @@ class ActorCriticRNN(ActorCriticBase):
             activation=self.config.get("ACTIVATION", "relu"),
             v2=_transformer_v2,
             state_shape=_state_shape if _transformer_v2 else (),
+            obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
             name="cycle_transformer",  # must match name in __call__
         )
         return module(obs_windows, padding_masks)

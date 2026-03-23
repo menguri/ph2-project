@@ -8,7 +8,7 @@ cd "$(dirname "$0")" || exit 1
 # Default values
 GPU_IDX=5
 NUM_SEEDS=10
-SEED=42
+SEED=1
 ALL_CKPT=false
 CROSS=false
 ALL=false

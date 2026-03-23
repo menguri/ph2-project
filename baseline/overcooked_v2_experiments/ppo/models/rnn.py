@@ -11,6 +11,31 @@ from .common import CNN, MLP
 from .e3t import PartnerPredictor
 
 
+class _FlattenMLP(nn.Module):
+    """obs를 flatten 후 MLP에 통과시키는 래퍼. ToyCoop 등 작은 환경용."""
+    hidden_size: int = 128
+    output_size: int = 128
+    activation: type = nn.relu
+
+    @nn.compact
+    def __call__(self, x, train=False):
+        if x.ndim > 2:
+            x = x.reshape((x.shape[0], -1))
+        x = nn.Dense(
+            features=self.hidden_size,
+            kernel_init=orthogonal(jnp.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+        x = nn.Dense(
+            features=self.output_size,
+            kernel_init=orthogonal(jnp.sqrt(2)),
+            bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+        return x
+
+
 class ScannedRNN(nn.Module):
     @functools.partial(
         nn.scan,
@@ -62,10 +87,19 @@ class ActorCriticRNN(ActorCriticBase):
         else:
             activation = nn.tanh
 
-        embed_model = CNN(
-            output_size=self.config["GRU_HIDDEN_DIM"],
-            activation=activation,
-        )
+        # OBS_ENCODER: "MLP" 이면 _FlattenMLP 사용 (ToyCoop 등), 기본값 "CNN"
+        encoder_type = self.config.get("OBS_ENCODER", "CNN").upper()
+        if encoder_type == "MLP":
+            embed_model = _FlattenMLP(
+                hidden_size=self.config.get("FC_DIM_SIZE", 128),
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                activation=activation,
+            )
+        else:
+            embed_model = CNN(
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                activation=activation,
+            )
 
         embedding = jax.vmap(embed_model)(obs)
         embedding = nn.LayerNorm()(embedding)

@@ -37,6 +37,24 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from .common import CNN
+from flax.linen.initializers import constant, orthogonal
+
+
+class _CTFlattenMLP(nn.Module):
+    """CT 전용 FlattenMLP — obs를 flatten 후 Dense 통과."""
+    hidden_size: int = 128
+    output_size: int = 128
+    activation: type = nn.relu
+
+    @nn.compact
+    def __call__(self, x, train=False):
+        if x.ndim > 2:
+            x = x.reshape((x.shape[0], -1))
+        x = nn.Dense(features=self.hidden_size, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+        x = self.activation(x)
+        x = nn.Dense(features=self.output_size, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+        x = self.activation(x)
+        return x
 
 
 class CausalTransformerEncoder(nn.Module):
@@ -98,14 +116,21 @@ class CycleTransformerModule(nn.Module):
     activation: str = "relu"  # matches global ACTIVATION config
     v2: bool = False           # CT v2: pixel space state reconstruction
     state_shape: tuple = ()    # (H, W, C_full) required when v2=True
+    obs_encoder_type: str = "CNN"  # "CNN" or "MLP" — ToyCoop 등 작은 환경용
 
     def setup(self):
         act = nn.relu if self.activation == "relu" else nn.tanh
+
+        def _make_encoder(name_suffix=""):
+            if self.obs_encoder_type.upper() == "MLP":
+                return _CTFlattenMLP(hidden_size=self.d_obs, output_size=self.d_obs, activation=act)
+            return CNN(output_size=self.d_obs, activation=act)
+
         # CT-own obs encoder: raw obs → obs_emb (used as window input, trainable via CT losses)
-        self.ct_obs_encoder = CNN(output_size=self.d_obs, activation=act)
+        self.ct_obs_encoder = _make_encoder()
         self.ct_obs_encoder_ln = nn.LayerNorm()
         # CT-own state encoder: raw obs/s_hat → state_emb (fixed random projection)
-        self.ct_state_encoder = CNN(output_size=self.d_obs, activation=act)
+        self.ct_state_encoder = _make_encoder()
         self.ct_state_encoder_ln = nn.LayerNorm()
         # Causal Transformer
         self.encoder = CausalTransformerEncoder(

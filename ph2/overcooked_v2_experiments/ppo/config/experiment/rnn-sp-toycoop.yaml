@@ -1,0 +1,18 @@
+# @package _global_
+# ToyCoop (Dual Destination) 환경 전용 Self-Play config.
+# CNN 대신 MLP 인코더 사용, CEC와 유사한 하이퍼파라미터.
+defaults:
+  - override /model: rnn
+
+model:
+  OBS_ENCODER: "MLP"
+  LR: 0.0003
+  NUM_ENVS: 512
+  NUM_STEPS: 100
+  NUM_MINIBATCHES: 2
+  UPDATE_EPOCHS: 4
+  TOTAL_TIMESTEPS: 1e7
+  ENT_COEF: 0.005
+  VF_COEF: 1.0
+  MAX_GRAD_NORM: 0.5
+  CLIP_EPS: 0.2

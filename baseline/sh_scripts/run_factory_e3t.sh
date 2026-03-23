@@ -62,53 +62,38 @@ run_e3t() {
 # Usage: run_e3t <GPUS> <ENV_GROUP> <LAYOUT>
 # ==============================================================================
 
-# 1. Grounded Coord Simple
-# run_e3t "5,6" "coord_ring" ""
-# run_e3t "3,4,5,6,7" "grounded_coord_simple" ""
-
-# # # 2. Grounded Coord Ring
-# run_e3t "0,1,3,4,5" "grounded_coord_ring" ""
-
-# # # # 3. Demo Cook Simple
-# run_e3t "0,1,3,4,5" "demo_cook_simple" ""
-
-# # # 4. Demo Cook Wide
-# run_e3t "0,1,2,3,4" "demo_cook_wide" ""
-
-# # # 5. Test Time Simple
-# run_e3t "0,1,3,4,5" "test_time_simple" ""
-
-# # 6. Test Time Wide
-# run_e3t "5,6" "test_time_wide" ""
-
 # # # 5. Cramped Room (Original)
-# run_e3t "5,6" "cramped_room" ""
+# run_e3t "0,1" "cramped_room" ""
 
 # # # 7. Coordination Ring (Original)
-# run_e3t "5,6" "coord_ring" ""
+# run_e3t "0,1" "coord_ring" ""
 
 # # # 8. Forced Coordination (Original)
-# run_e3t "5,6" "forced_coord" ""
-
-# 9. Counter Circuit (Original)
-run_e3t "5,6" "counter_circuit" ""
-
-# # 6. Asymmetric Advantages (Original)
-# run_e3t "5,6" "asymm_advantages" ""
-
-# EPSILON=0.2
-
-# # # 5. Cramped Room (Original)
-# run_e3t "5,6" "cramped_room" ""
-
-# # # 7. Coordination Ring (Original)
-# run_e3t "5,6" "coord_ring" ""
-
-# # # 8. Forced Coordination (Original)
-# run_e3t "5,6" "forced_coord" ""
+# run_e3t "0,1" "forced_coord" ""
 
 # # 9. Counter Circuit (Original)
-# run_e3t "5,6" "counter_circuit" ""
+# run_e3t "0,1" "counter_circuit" ""
 
 # # 6. Asymmetric Advantages (Original)
-# run_e3t "5,6" "asymm_advantages" ""
+# run_e3t "0,1" "asymm_advantages" ""
+
+# # 1. Grounded Coord Simple
+# run_e3t "0,1" "grounded_coord_simple" ""
+
+# # # 2. Grounded Coord Ring
+# run_e3t "0,1" "grounded_coord_ring" ""
+
+# # # # 3. Demo Cook Simple
+# run_e3t "0,1" "demo_cook_simple" ""
+
+# # # 4. Demo Cook Wide
+# run_e3t "0,1" "demo_cook_wide" ""
+
+# # # 5. Test Time Simple
+# run_e3t "0,1" "test_time_simple" ""
+
+# # 6. Test Time Wide
+# run_e3t "0,1" "test_time_wide" ""
+
+--- ToyCoop (Dual Destination) ---
+EXP="rnn-e3t-toycoop" NENVS=512 NSTEPS=100 run_e3t "0,1" "toy_coop" ""

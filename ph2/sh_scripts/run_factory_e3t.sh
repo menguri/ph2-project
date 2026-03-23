@@ -115,3 +115,7 @@ run_e3t "3,4,5,6,7" "counter_circuit" ""
 
 # # 9. Counter Circuit (Original)
 # run_e3t "5,6" "counter_circuit" "" "1"
+
+# --- ToyCoop (Dual Destination) ---
+# ToyCoop은 rnn-e3t-toycoop experiment config 사용 (MLP encoder)
+# EXP="rnn-e3t-toycoop" NENVS=512 NSTEPS=100 run_e3t "0,1" "toy_coop" ""

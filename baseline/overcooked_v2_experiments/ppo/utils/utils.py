@@ -37,7 +37,7 @@ def _infer_run_suffix(config) -> str:
 
 def build_default_run_name(config) -> str:
     agent_view_size = config["env"]["ENV_KWARGS"].get("agent_view_size", None)
-    layout_name = config["env"]["ENV_KWARGS"]["layout"]
+    layout_name = config["env"]["ENV_KWARGS"].get("layout", config["env"].get("ENV_NAME", "unknown"))
     model_name = config["model"]["TYPE"]
 
     avs_str = f"avs-{agent_view_size}" if agent_view_size is not None else "avs-full"
@@ -49,7 +49,7 @@ def build_default_run_name(config) -> str:
 def get_run_base_dir(run_id: str, config) -> str:
     optional_prefix = config.get("OPTIONAL_PREFIX", "")
 
-    layout_name = config["env"]["ENV_KWARGS"]["layout"]
+    layout_name = config["env"]["ENV_KWARGS"].get("layout", config["env"].get("ENV_NAME", "unknown"))
 
     results_dir = "runs"
     if optional_prefix != "":

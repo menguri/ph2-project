@@ -1,0 +1,6 @@
+"ENV_NAME": "ToyCoop"
+"ENV_KWARGS":
+  "random_reset": false
+  "max_steps": 100
+  "partial_obs": false
+  "incentivize_strat": 2

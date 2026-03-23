@@ -20,7 +20,7 @@ SEEDS=10
 
 # Population annealing settings for FCP mixed training
 : "${POP_ANNEAL_ENABLE:=0}"
-: "${POP_ANNEAL_HORIZON:=30000000}"
+: "${POP_ANNEAL_HORIZON:=1000000}"
 : "${POP_ANNEAL_BEGIN:=0}"
 
 # Function to get FCP path based on env
@@ -120,35 +120,20 @@ run_fcp() {
 # Execution List (Uncomment lines to run)
 # ==============================================================================
 
-# # 1. Grounded Coord Simple
-# run_fcp "0,4,5,6,7" "grounded_coord_simple" ""
+# --- OV1 Layouts ---
+# run_fcp "1,2,3,6,7" "cramped_room" ""
+# run_fcp "1,2,3,6,7" "asymm_advantages" ""
+# run_fcp "1,2,3,6,7" "coord_ring" ""
+# run_fcp "1,2,3,6,7" "forced_coord" ""
+# run_fcp "1,2,3,6,7" "counter_circuit" ""
 
-# 2. Grounded Coord Ring
-# run_fcp "0,1,2,3,4" "grounded_coord_ring" ""
+# # --- OV2 Layouts ---
+# run_fcp "1,2,3,6,7" "grounded_coord_simple" ""
+# run_fcp "1,2,3,6,7" "grounded_coord_ring" ""
+# run_fcp "1,2,3,6,7" "demo_cook_simple" ""
+# run_fcp "1,2,3,6,7" "demo_cook_wide" ""
+# run_fcp "1,2,3,6,7" "test_time_simple" ""
+# run_fcp "1,2,3,6,7" "test_time_wide" ""
 
-# # 3. Demo Cook Simple
-# run_fcp "0,1,2,3,4" "demo_cook_simple" ""
-
-# # 4. Demo Cook Wide
-# run_fcp "0,1,2,3,4" "demo_cook_wide" ""
-
-# # 5. Test Time Simple
-# run_fcp "0,1,2,3,4" "test_time_simple" ""
-
-# # 6. Test Time Wide
-# run_fcp "0,1,2,3,4" "test_time_wide" ""
-
-# # 8. Asymmetric Advantages (Original)
-run_fcp "2,3,4,5,6" "asymm_advantages" ""
-
-# 9. Coordination Ring (Original)
-run_fcp "2,3,4,5,6" "coord_ring" ""
-
-# # 10. Forced Coordination (Original)
-run_fcp "2,3,4,5,6" "forced_coord" ""
-
-# # 7. Cramped Room (Original)
-run_fcp "2,3,4,5,6" "cramped_room" ""
-
-# 11. Counter Circuit (Original)
-run_fcp "2,3,4,5,6" "counter_circuit" ""
+# --- ToyCoop (Dual Destination) ---
+EXP="rnn-fcp-toycoop" NENVS=512 NSTEPS=100 run_fcp "0,1" "toy_coop" ""

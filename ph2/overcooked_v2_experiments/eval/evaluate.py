@@ -175,15 +175,20 @@ def eval_pairing(
     disable_old_overcooked_auto = True
 
     env_kwargs = copy.deepcopy(env_kwargs)
+    # ToyCoop 환경 감지: layout_name이 "ToyCoop" 이거나 env_kwargs에 layout이 없는 경우
+    _env_name_override = None
+    if layout_name == "ToyCoop" or (not layout_name and "layout" not in env_kwargs):
+        _env_name_override = "ToyCoop"
     engine_name, _resolved_probe_kwargs = resolve_eval_engine(
         layout_name,
         env_kwargs,
         old_overcooked=old_overcooked,
         disable_auto=disable_old_overcooked_auto,
+        env_name_override=_env_name_override,
     )
-    if engine_name != "overcooked_v2":
+    if engine_name not in ("overcooked_v2", "ToyCoop"):
         raise RuntimeError(
-            f"Eval engine must be overcooked_v2, got '{engine_name}'"
+            f"Eval engine must be overcooked_v2 or ToyCoop, got '{engine_name}'"
         )
 
     if value_analysis:
@@ -194,6 +199,7 @@ def eval_pairing(
             env_kwargs,
             old_overcooked=old_overcooked,
             disable_auto=disable_old_overcooked_auto,
+            env_name_override=_env_name_override,
         )
 
         key, key_init = jax.random.split(key)
@@ -265,6 +271,7 @@ def eval_pairing(
             env_kwargs,
             old_overcooked=old_overcooked,
             disable_auto=disable_old_overcooked_auto,
+            env_name_override=_env_name_override,
         )
 
         key, key_init = jax.random.split(key)
@@ -368,6 +375,7 @@ def eval_pairing(
             env_kwargs,
             old_overcooked=old_overcooked,
             disable_auto=disable_old_overcooked_auto,
+            env_name_override=_env_name_override,
         )
 
         keys = jax.random.split(key, num_seeds)

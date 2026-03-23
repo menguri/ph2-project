@@ -272,6 +272,10 @@ def make_train(
         env = LogWrapper(env, replace_info=False)
 
     def _extract_pos_axes(log_env_state):
+        # ToyCoop: state.agent_pos (2,2) → [x, y] 형태
+        if env_name == "ToyCoop":
+            pos = log_env_state.env_state.agent_pos  # (NUM_ENVS, 2, 2)
+            return pos[:, :, 1], pos[:, :, 0]  # y, x
         return log_env_state.env_state.agents.pos.y, log_env_state.env_state.agents.pos.x
 
     def _extract_global_full_obs(log_env_state):
@@ -1439,9 +1443,10 @@ def make_train(
                 current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
 
                 # CT recon target용 full global obs 추출 (transformer_action=True일 때만)
-                # OV1: agent 0 full obs를 tile → OV2: 각 actor 자신의 시점 full obs
+                # OV1: agent 0 full obs를 tile → OV2/ToyCoop: 각 actor 자신의 시점 full obs
                 if transformer_action:
-                    if is_partial_obs:
+                    if is_partial_obs or env_name == "ToyCoop":
+                        # ToyCoop: full obs이지만 ego/other 채널 swap되므로 per-actor 사용
                         _global_obs = _extract_global_full_obs_per_actor(env_state)
                     else:
                         _agent0_full = _extract_global_full_obs(env_state)   # (NUM_ENVS, H, W, C_full)
@@ -1716,6 +1721,7 @@ def make_train(
                         ct_recon_loss = 0.0
                         ct_action_loss = 0.0
                         ct_cycle_loss = 0.0
+                        ct_recon_per_channel = jnp.zeros(1)
 
                         if transformer_action:
                             W = transformer_window_size

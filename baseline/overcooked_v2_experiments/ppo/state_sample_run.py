@@ -60,7 +60,7 @@ def state_sample_run(config):
     assert num_iterations > 0
 
     model_name = config["model"]["TYPE"]
-    layout_name = config["env"]["ENV_KWARGS"]["layout"]
+    layout_name = config["env"]["ENV_KWARGS"].get("layout", config["env"].get("ENV_NAME", "unknown"))
     agent_view_size = config["env"]["ENV_KWARGS"].get("agent_view_size", None)
     avs_str = f"avs-{agent_view_size}" if agent_view_size is not None else "avs-full"
     run_name = f"sa_{layout_name}_{model_name}_{avs_str}"

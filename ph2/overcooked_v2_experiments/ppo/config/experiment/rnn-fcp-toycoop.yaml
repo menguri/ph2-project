@@ -1,0 +1,20 @@
+# @package _global_
+# ToyCoop (Dual Destination) 환경 전용 FCP config.
+defaults:
+  - override /model: rnn
+
+NUM_SEEDS: 1
+
+model:
+  OBS_ENCODER: "MLP"
+  LR: 0.0003
+  NUM_ENVS: 512
+  NUM_STEPS: 100
+  NUM_MINIBATCHES: 2
+  UPDATE_EPOCHS: 4
+  TOTAL_TIMESTEPS: 1e7
+  ENT_COEF: 0.005
+  VF_COEF: 1.0
+  MAX_GRAD_NORM: 0.5
+  CLIP_EPS: 0.2
+  GAE_LAMBDA: 0.9

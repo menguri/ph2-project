@@ -2,6 +2,12 @@ from pathlib import Path
 import hydra
 import sys
 import os
+
+# baseline의 overcooked_v2_experiments가 ph2보다 우선 import되도록 경로 삽입
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_baseline_root = os.path.dirname(os.path.dirname(os.path.dirname(_DIR)))
+sys.path.insert(0, _baseline_root)
+
 import jax
 import jax.numpy as jnp
 from omegaconf import OmegaConf
@@ -26,8 +32,9 @@ print("[MAINDBG] =========================")
 DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(DIR))
 
-# NaN 디버그 옵션
-jax.config.update("jax_debug_nans", True)
+# NaN 디버그 옵션 — 환경변수 JAX_DEBUG_NANS=0 으로 비활성화 가능
+import os as _os
+jax.config.update("jax_debug_nans", _os.environ.get("JAX_DEBUG_NANS", "1") != "0")
 
 
 def single_run_with_viz(config):
@@ -43,7 +50,7 @@ def single_run_with_viz(config):
 
     # 이름 구성: 모델/레이아웃 정보는 항상 준비하고, CLI에서 wandb.name을 넘기면 이를 우선 사용 (예: rnn-sp-uc)
     model_name = config["model"]["TYPE"]
-    layout_name = config["env"]["ENV_KWARGS"]["layout"]
+    layout_name = config["env"]["ENV_KWARGS"].get("layout", config["env"].get("ENV_NAME", "unknown"))
     agent_view_size = config["env"]["ENV_KWARGS"].get("agent_view_size", None)
     avs_str = f"avs-{agent_view_size}" if agent_view_size is not None else "avs-full"
 
