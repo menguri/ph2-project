@@ -10,7 +10,39 @@ from flax.training.train_state import TrainState
 from .ippo_ph2_core import make_train as make_train_core
 from .policy import PPOPolicy
 
-_SHARED_PREDICTOR_KEYS = ("shared_predictor", "shared_state_predictor")
+_SHARED_PREDICTOR_KEYS = ("shared_predictor", "shared_state_predictor", "cycle_transformer")
+
+
+def detect_checkpoint_ct_mode(train_state_or_params) -> bool:
+    """체크포인트가 CT(CycleTransformer) 모드로 훈련된 것인지 자동 감지.
+
+    params 트리에 "cycle_transformer" 키 유무로 판단:
+      - 있으면 → TRANSFORMER_ACTION=True 모드
+      - 없으면 → ACTION_PREDICTION 모드 (PartnerPredictor)
+
+    Args:
+        train_state_or_params: TrainState, 또는 params dict (FrozenDict/dict)
+
+    Returns:
+        bool: CT 모드이면 True, ACTION_PREDICTION 모드이면 False
+
+    Note:
+        store.py의 load_checkpoint()는 (config, params)를 같이 반환하므로,
+        저장된 config["TRANSFORMER_ACTION"]을 바로 쓰는 것이 더 직접적이다.
+        이 함수는 config 없이 params만 있을 때 사용한다.
+    """
+    # TrainState에서 params 추출
+    if hasattr(train_state_or_params, "params"):
+        params = train_state_or_params.params
+    else:
+        params = train_state_or_params
+
+    # FrozenDict 또는 일반 dict → state_dict로 정규화
+    state_dict = serialization.to_state_dict(params)
+
+    # params["params"]["cycle_transformer"] 존재 여부로 판단
+    inner = state_dict.get("params", state_dict)
+    return "cycle_transformer" in inner
 
 
 def _resolve_num_updates(model_cfg: Dict[str, Any]) -> int:
@@ -244,9 +276,10 @@ def make_train(
     ind_cfg["PH1_EVAL_ENABLED"] = bool(ckpt_cadence_cfg.get("PH1_EVAL_ENABLED", False))
 
     # Blocked-target input policy:
-    # - spec: configurable
-    # - ind : always disabled (learner/population 모두 blocked target 미사용)
-    spec_cfg["LEARNER_USE_BLOCKED_INPUT"] = bool(cfg.get("PH2_SPEC_USE_BLOCKED_INPUT", True))
+    # - spec: configurable (disabled when CT is on — CT uses blocked encoder only in loss, not as policy input)
+    # - ind : always disabled
+    _ct_on = bool(cfg.get("TRANSFORMER_ACTION", False))
+    spec_cfg["LEARNER_USE_BLOCKED_INPUT"] = False if _ct_on else bool(cfg.get("PH2_SPEC_USE_BLOCKED_INPUT", True))
     ind_cfg["LEARNER_USE_BLOCKED_INPUT"] = False
     # Population partner forward path must match each partner architecture.
     spec_cfg["POPULATION_USE_PARTNER_PRED_INPUT"] = True

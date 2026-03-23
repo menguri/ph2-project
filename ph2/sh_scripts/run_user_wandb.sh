@@ -72,6 +72,20 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${PH2_FIXED_IND_PROB:=}"
 : "${PH2_EPSILON:=}"
 : "${ACTION_PREDICTION:=}"
+: "${CYCLE_LOSS_ENABLED:=}"
+: "${CYCLE_LOSS_COEF:=}"
+: "${LATENT_MODE:=}"
+: "${SHARED_PREDICTION:=}"
+# CycleTransformer (CT) 파라미터
+: "${TRANSFORMER_ACTION:=}"
+: "${TRANSFORMER_WINDOW_SIZE:=}"
+: "${TRANSFORMER_D_C:=}"
+: "${TRANSFORMER_N_HEADS:=}"
+: "${TRANSFORMER_N_LAYERS:=}"
+: "${TRANSFORMER_RECON_COEF:=}"
+: "${TRANSFORMER_PRED_COEF:=}"
+: "${TRANSFORMER_CYCLE_COEF:=}"
+: "${TRANSFORMER_V2:=}"
 
 # XLA_FLAGS: 기본 CUDA data dir 설정
 : "${XLA_FLAGS:=--xla_gpu_cuda_data_dir=${CUDA_HOME:-/usr/local/cuda-12.2}}"
@@ -257,6 +271,19 @@ while [[ $# -gt 0 ]]; do
     --ph2-fixed-ind-prob) PH2_FIXED_IND_PROB="$2"; shift 2;;
     --ph2-epsilon) PH2_EPSILON="$2"; shift 2;;
     --action-prediction) ACTION_PREDICTION="$2"; shift 2;;
+    --cycle-loss-enabled) CYCLE_LOSS_ENABLED="$2"; shift 2;;
+    --cycle-loss-coef) CYCLE_LOSS_COEF="$2"; shift 2;;
+    --latent-mode) LATENT_MODE="$2"; shift 2;;
+    --shared-prediction) SHARED_PREDICTION="$2"; shift 2;;
+    --transformer-action) TRANSFORMER_ACTION="$2"; shift 2;;
+    --transformer-window-size) TRANSFORMER_WINDOW_SIZE="$2"; shift 2;;
+    --transformer-d-c) TRANSFORMER_D_C="$2"; shift 2;;
+    --transformer-n-heads) TRANSFORMER_N_HEADS="$2"; shift 2;;
+    --transformer-n-layers) TRANSFORMER_N_LAYERS="$2"; shift 2;;
+    --transformer-recon-coef) TRANSFORMER_RECON_COEF="$2"; shift 2;;
+    --transformer-pred-coef) TRANSFORMER_PRED_COEF="$2"; shift 2;;
+    --transformer-cycle-coef) TRANSFORMER_CYCLE_COEF="$2"; shift 2;;
+    --transformer-v2) TRANSFORMER_V2="$2"; shift 2;;
     --ph2-*|--PH2-*)
       echo "[ERROR] Unsupported PH2 flag: $1" >&2
       echo "        Supported PH2 flags: --ph2-ratio-stage1/2/3, --ph2-fixed-ind-prob, --ph2-epsilon, --action-prediction" >&2
@@ -556,6 +583,45 @@ if [[ -n "$PH2_EPSILON" ]]; then
 fi
 if [[ -n "$ACTION_PREDICTION" ]]; then
   PY_ARGS+=("ACTION_PREDICTION=$ACTION_PREDICTION")
+fi
+if [[ -n "$CYCLE_LOSS_ENABLED" ]]; then
+  PY_ARGS+=("CYCLE_LOSS_ENABLED=$CYCLE_LOSS_ENABLED")
+fi
+if [[ -n "$CYCLE_LOSS_COEF" ]]; then
+  PY_ARGS+=("CYCLE_LOSS_COEF=$CYCLE_LOSS_COEF")
+fi
+if [[ -n "$LATENT_MODE" ]]; then
+  PY_ARGS+=("LATENT_MODE=$LATENT_MODE")
+fi
+if [[ -n "$SHARED_PREDICTION" ]]; then
+  PY_ARGS+=("SHARED_PREDICTION=$SHARED_PREDICTION")
+fi
+if [[ -n "$TRANSFORMER_ACTION" ]]; then
+  PY_ARGS+=("TRANSFORMER_ACTION=$TRANSFORMER_ACTION")
+fi
+if [[ -n "$TRANSFORMER_WINDOW_SIZE" ]]; then
+  PY_ARGS+=("TRANSFORMER_WINDOW_SIZE=$TRANSFORMER_WINDOW_SIZE")
+fi
+if [[ -n "$TRANSFORMER_D_C" ]]; then
+  PY_ARGS+=("TRANSFORMER_D_C=$TRANSFORMER_D_C")
+fi
+if [[ -n "$TRANSFORMER_N_HEADS" ]]; then
+  PY_ARGS+=("TRANSFORMER_N_HEADS=$TRANSFORMER_N_HEADS")
+fi
+if [[ -n "$TRANSFORMER_N_LAYERS" ]]; then
+  PY_ARGS+=("TRANSFORMER_N_LAYERS=$TRANSFORMER_N_LAYERS")
+fi
+if [[ -n "$TRANSFORMER_RECON_COEF" ]]; then
+  PY_ARGS+=("TRANSFORMER_RECON_COEF=$TRANSFORMER_RECON_COEF")
+fi
+if [[ -n "$TRANSFORMER_PRED_COEF" ]]; then
+  PY_ARGS+=("TRANSFORMER_PRED_COEF=$TRANSFORMER_PRED_COEF")
+fi
+if [[ -n "$TRANSFORMER_CYCLE_COEF" ]]; then
+  PY_ARGS+=("TRANSFORMER_CYCLE_COEF=$TRANSFORMER_CYCLE_COEF")
+fi
+if [[ -n "$TRANSFORMER_V2" ]]; then
+  PY_ARGS+=("TRANSFORMER_V2=$TRANSFORMER_V2")
 fi
 
 # E3T epsilon override (rnn-ph1.yaml에 정의됨)

@@ -5,6 +5,7 @@ import itertools
 import jax.numpy as jnp
 import jax
 import copy
+import numpy as np
 from datetime import datetime
 from pathlib import Path
 import chex
@@ -29,10 +30,12 @@ from overcooked_v2_experiments.utils.utils import (
     mini_batch_pmap,          # 지금은 안 쓰지만, 기존 인터페이스 유지용으로 둠
     scanned_mini_batch_map,
 )
-from overcooked_v2_experiments.eval.evaluate import eval_pairing
+from overcooked_v2_experiments.eval.evaluate import eval_pairing, PolicyVizualization
 from overcooked_v2_experiments.eval.policy import PolicyPairing
+from overcooked_v2_experiments.eval.rollout import get_rollout
 from overcooked_v2_experiments.eval.utils import (
     make_eval_env,
+    render_state_frame,
 )
 
 
@@ -75,7 +78,7 @@ def visualize_ppo_policy(
     env_layout = env_kwargs.get("layout")
     env_kwargs_no_layout = copy.deepcopy(env_kwargs)
     env_kwargs_no_layout.pop("layout", None)
-    env, _env_name, _resolved_kwargs = make_eval_env(
+    env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,
         old_overcooked=False,
@@ -294,61 +297,101 @@ def visualize_ppo_policy(
             
             if jit_key not in jit_cache:
                 print(f"Compiling JIT for pair: {jit_key}")
-                
-                # Define function to JIT
-                # We capture current_configs and alg_arg in closure
-                
-                def _viz_impl(pairing_params):
-                    policies = []
-                    for i in range(num_actors):
-                        # pairing_params is a PolicyPairing object, which is a PyTree.
-                        # When flattened/unflattened by JAX, it behaves like a list of policies.
-                        # However, here pairing_params is passed directly.
-                        # PolicyPairing stores policies in self.policies list.
-                        # But wait, pairing_params passed to _viz_impl is likely the PPOParams structure 
-                        # if we look at how it was constructed in all_params.
-                        
-                        # In self-play: PolicyPairing.from_single_policy(PPOParams, num_actors)
-                        # In cross-play: PolicyPairing(PPOParams_0, PPOParams_1)
-                        
-                        # So pairing_params[i] should give us the PPOParams for agent i.
-                        agent_params = pairing_params[i]
-                        
-                        # Create policy with captured config
-                        policies.append(PPOPolicy(agent_params.params, current_configs[i]))
-                    
-                    policy_pairing = PolicyPairing(*policies)
-                    
-                    env_kwargs_no_layout = copy.deepcopy(env_kwargs)
-                    layout_name = env_kwargs_no_layout.pop("layout")
 
-                    return eval_pairing(
-                        policy_pairing,
-                        layout_name,
-                        key,
-                        env_kwargs=env_kwargs_no_layout,
-                        num_seeds=num_seeds,
-                        all_recipes=num_seeds is None,
-                        no_viz=no_viz,
-                        algorithm=alg_arg,
-                        stablock_enabled=list(current_stablock_fp),
-                        latent_analysis=latent_analysis,
-                        value_analysis=value_analysis,
-                        old_overcooked=False,
-                        disable_old_overcooked_auto=True,
-                    )
-                
+                is_simple_viz = not no_viz and not latent_analysis and not value_analysis
+
                 if no_viz and not latent_analysis and not value_analysis:
+                    # no_viz: eval_pairing 전체를 JIT (rollout만, 렌더링 없음)
+                    def _viz_impl(pairing_params):
+                        policies = [
+                            PPOPolicy(pairing_params[i].params, current_configs[i])
+                            for i in range(num_actors)
+                        ]
+                        policy_pairing = PolicyPairing(*policies)
+                        _ekw = copy.deepcopy(env_kwargs)
+                        _layout = _ekw.pop("layout")
+                        return eval_pairing(
+                            policy_pairing,
+                            _layout,
+                            key,
+                            env_kwargs=_ekw,
+                            num_seeds=num_seeds,
+                            all_recipes=num_seeds is None,
+                            no_viz=True,
+                            algorithm=alg_arg,
+                            stablock_enabled=list(current_stablock_fp),
+                            old_overcooked=False,
+                            disable_old_overcooked_auto=True,
+                        )
                     jit_cache[jit_key] = jax.jit(_viz_impl)
+                elif is_simple_viz:
+                    # viz: rollout만 JIT, 렌더링은 Python 루프에서 별도 처리
+                    def _rollout_impl(pairing_params):
+                        policies = [
+                            PPOPolicy(pairing_params[i].params, current_configs[i])
+                            for i in range(num_actors)
+                        ]
+                        policy_pairing = PolicyPairing(*policies)
+                        return get_rollout(
+                            policy_pairing,
+                            env,
+                            key,
+                            algorithm=alg_arg,
+                            stablock_enabled=list(current_stablock_fp),
+                            use_jit=True,
+                        )
+                    jit_cache[jit_key] = jax.jit(_rollout_impl)
                 else:
+                    # latent_analysis / value_analysis: Python 루프 필요, JIT 없음
+                    def _viz_impl(pairing_params):
+                        policies = [
+                            PPOPolicy(pairing_params[i].params, current_configs[i])
+                            for i in range(num_actors)
+                        ]
+                        policy_pairing = PolicyPairing(*policies)
+                        _ekw = copy.deepcopy(env_kwargs)
+                        _layout = _ekw.pop("layout")
+                        return eval_pairing(
+                            policy_pairing,
+                            _layout,
+                            key,
+                            env_kwargs=_ekw,
+                            num_seeds=num_seeds,
+                            all_recipes=num_seeds is None,
+                            no_viz=no_viz,
+                            algorithm=alg_arg,
+                            stablock_enabled=list(current_stablock_fp),
+                            latent_analysis=latent_analysis,
+                            value_analysis=value_analysis,
+                            old_overcooked=False,
+                            disable_old_overcooked_auto=True,
+                        )
                     jit_cache[jit_key] = _viz_impl
-            
+
             # Execute
             if no_viz:
                 print(f"[EVAL] Running {first_level}/{second_level}")
+                viz_result = jit_cache[jit_key](pairing)
+            elif not latent_analysis and not value_analysis:
+                print(f"[VIZ] Pairing: {first_level} / {second_level}")
+                rollout = jit_cache[jit_key](pairing)
+                # JIT 후 Python 루프에서 렌더링
+                agent_view_size = env_kwargs.get("agent_view_size", None)
+                frames = []
+                num_steps = jax.tree_util.tree_leaves(rollout.state_seq)[0].shape[0]
+                for t in range(num_steps):
+                    state_t = jax.tree_util.tree_map(lambda x: x[t], rollout.state_seq)
+                    frame = render_state_frame(state_t, engine_name, agent_view_size)
+                    frames.append(np.array(frame))
+                viz_result = {"seed-0": PolicyVizualization(
+                    frame_seq=np.stack(frames),
+                    total_reward=float(rollout.total_reward),
+                    prediction_accuracy=rollout.prediction_accuracy,
+                    value_by_partner_pos=None,
+                )}
             else:
                 print(f"[VIZ] Pairing: {first_level} / {second_level}")
-            viz_result = jit_cache[jit_key](pairing)
+                viz_result = jit_cache[jit_key](pairing)
             results_structure[first_level][second_level] = viz_result
     
     # Update all_params with results

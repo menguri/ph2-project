@@ -31,12 +31,12 @@ AUTO_PH2_CROSS_NUM_SEEDS=5
 
 # Optional manual fallback commands (used only when AUTO_DISCOVER_PRESETS=false).
 PRESET_FACTORY_COMMANDS=(
-  "./run_visualize.sh --gpu 6 --dir runs/20260319-063552_g8tf48us_asymm_advantages_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5"
-  # "./run_visualize.sh --gpu 6 --dir runs/20260319-113704_6lre6zzu_cramped_room_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
-  # "./run_visualize.sh --gpu 7 --dir runs/20260318-195558_b186b3gj_asymm_advantages_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
-  # "./run_visualize.sh --gpu 7 --dir runs/20260313-004534_6u0sqroe_forced_coord_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
-  # "./run_visualize.sh --gpu 2 --dir runs/20260306-160646_r5awqode_cramped_room_e3t_ph2_ct0_e0p2_o10_s2 --cross --num_seeds 5"
-  # "./run_visualize.sh --gpu 3 --dir runs/20260306-201807_u99vy5ws_forced_coord_e3t_ph2_ct0_e0p2_o10_s2 --cross --num_seeds 5"
+  "./run_visualize.sh --gpu 6 --dir runs/20260320-062926_ka1sog4j_forced_coord_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
+  # "./run_visualize.sh --gpu 6 --dir runs/20260319-063552_g8tf48us_asymm_advantages_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
+  # "./run_visualize.sh --gpu 7 --dir runs/20260319-113704_6lre6zzu_cramped_room_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
+  # "./run_visualize.sh --gpu 5 --dir runs/20260319-173044_2cqal89h_counter_circuit_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
+  # "./run_visualize.sh --gpu 6 --dir runs/20260319-212256_c6t3m62y_asymm_advantages_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
+  # "./run_visualize.sh --gpu 7 --dir runs/20260320-011705_22s93gxa_cramped_room_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
 )
 
 usage() {

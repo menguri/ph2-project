@@ -14,6 +14,7 @@ from overcooked_v2_experiments.ppo.policy import PPOParams
 from overcooked_v2_experiments.ppo.utils.fcp import FCPWrapperPolicy
 from .ippo import make_train as make_train_ph1
 from .ippo_ph2 import make_train as make_train_ph2
+from .ippo_ph2_core import make_train as make_train_ph2_core
 from .utils.store import (
     load_all_checkpoints,
     store_checkpoint,
@@ -164,7 +165,7 @@ def single_run(config):
             population_config = fcp_population_config
 
         alg_name = str(config_copy.get("ALG_NAME", "")).upper()
-        if "PH2" in alg_name:
+        if "PH2" in alg_name or bool(config_copy.get("TRANSFORMER_ACTION", False)):
             train_func = make_train_ph2(
                 config_copy,
                 population_config=population_config,

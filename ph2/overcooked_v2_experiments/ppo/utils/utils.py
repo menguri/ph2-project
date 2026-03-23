@@ -39,6 +39,8 @@ def _ph_param_suffix(config) -> str:
     - PH1_EPSILON
     - PH1_OMEGA
     - PH1_SIGMA
+    - PH1_MAX_PENALTY_COUNT (k)
+    - TRANSFORMER_ACTION (ct0 / ct1)
     """
     alg_name = str(config.get("ALG_NAME", "")).upper()
     if ("PH1" not in alg_name) and ("PH2" not in alg_name):
@@ -48,7 +50,15 @@ def _ph_param_suffix(config) -> str:
     omega = _float_to_slug(config.get("PH1_OMEGA", None))
     sigma = _float_to_slug(config.get("PH1_SIGMA", None))
 
-    return f"_e{eps}_o{omega}_s{sigma}"
+    # penalty 슬롯 수 (PH1_MAX_PENALTY_COUNT)
+    max_k = config.get("PH1_MAX_PENALTY_COUNT", None)
+    k_str = f"_k{int(max_k)}" if max_k is not None else ""
+
+    # CycleTransformer 활성화 여부
+    ct_on = _as_bool(config.get("TRANSFORMER_ACTION", False))
+    ct_str = "_ct1" if ct_on else "_ct0"
+
+    return f"_e{eps}_o{omega}_s{sigma}{k_str}{ct_str}"
 
 
 def _infer_run_suffix(config) -> str:
@@ -93,6 +103,9 @@ def _infer_run_suffix(config) -> str:
             suffix = "e3d_ph2"
         else:
             suffix = f"{suffix}_ph2"
+        # CycleTransformer 변형: e3t_ph2_ct
+        if "CT" in alg_name:
+            suffix = f"{suffix}_ct"
 
     # [Stablock] 활성화 시 suffix에 stablock 추가
     if config.get("STABLOCK_ENABLED"):

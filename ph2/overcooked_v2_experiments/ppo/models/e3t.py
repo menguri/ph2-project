@@ -4,10 +4,6 @@ from flax.linen.initializers import orthogonal, constant
 
 
 class PartnerPredictor(nn.Module):
-    """
-    Simple MLP that takes a flat embedding (GRU hidden state) and outputs
-    L2-normalised action logits used for partner action prediction.
-    """
     action_dim: int = 6
 
     @nn.compact

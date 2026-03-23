@@ -45,17 +45,36 @@ def init_rollout(policies: List[AbstractPolicy], env, use_jit=True):
 
         return actions, next_hstates, all_extras
 
-    if use_jit:
+    # When use_jit=True, lax.scan handles JIT compilation of the scan body.
+    # Wrapping _get_actions in jax.jit here would create a new JIT object per
+    # init_rollout call (new local function = new id(f) = cache miss), causing
+    # per-pairing recompilation in viz mode.
+    # Only JIT _get_actions when use_jit=False (Python loop mode) to speed up
+    # individual steps.
+    if not use_jit:
         _get_actions = jax.jit(_get_actions)
 
     return init_hstate, _get_actions
 
 
-def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True) -> PolicyRollout:
+def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True, env_device=None) -> PolicyRollout:
     init_hstate, _get_actions = init_rollout(policies, env, use_jit=use_jit)
 
+    # Optional backend pinning for environment interaction.
+    reset_fn = env.reset
+    step_fn = env.step
+    if env_device is not None:
+        dev = str(env_device).strip().lower()
+        backend = "cpu" if dev == "cpu" else ("gpu" if dev in ("gpu", "cuda") else None)
+        if backend is not None:
+            try:
+                reset_fn = jax.jit(env.reset, backend=backend)
+                step_fn = jax.jit(env.step, backend=backend)
+            except Exception:
+                pass  # backend not available; fall back to default
+
     key, key_r = jax.random.split(key, 2)
-    obs, state = env.reset(key_r)
+    obs, state = reset_fn(key_r)
 
     e3t_like = algorithm in ("E3T", "STL") or "E3T" in algorithm or "STL" in algorithm
 
@@ -86,7 +105,7 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True
                     prediction_mask = prediction_mask.at[i].set(1.0)
 
         # STEP ENV
-        next_obs, next_state, reward, next_done, info = env.step(
+        next_obs, next_state, reward, next_done, info = step_fn(
             key_step, state, actions
         )
 

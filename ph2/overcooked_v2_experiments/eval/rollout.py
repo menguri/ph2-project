@@ -141,12 +141,13 @@ def get_rollout(
     step_fn = env.step
     if env_device is not None:
         dev = str(env_device).strip().lower()
-        if dev == "cpu":
-            reset_fn = jax.jit(env.reset, backend="cpu")
-            step_fn = jax.jit(env.step, backend="cpu")
-        elif dev in ("gpu", "cuda"):
-            reset_fn = jax.jit(env.reset, backend="gpu")
-            step_fn = jax.jit(env.step, backend="gpu")
+        backend = "cpu" if dev == "cpu" else ("gpu" if dev in ("gpu", "cuda") else None)
+        if backend is not None:
+            try:
+                reset_fn = jax.jit(env.reset, backend=backend)
+                step_fn = jax.jit(env.step, backend=backend)
+            except Exception:
+                pass  # backend not available; fall back to default
 
     # 초기 reset 먼저 수행해서 PH1 full-view shape에 맞춘 history를 구성
     key, key_r = jax.random.split(key, 2)

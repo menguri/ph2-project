@@ -1,7 +1,7 @@
 """
 MEP Stage 1: Population training with entropy bonus.
 
-Trains N MAPPO agents jointly. Each agent i's reward is augmented:
+Trains N IPPO agents jointly. Each agent i's reward is augmented:
     R_shaped = R + alpha * (-log(π_pop(a|s)))
     π_pop(a|s) = (1/N) Σ_k π_k(a|s)    [full N-member average]
 
@@ -11,7 +11,6 @@ Paper: "Maximum Entropy Population-Based Training for Zero-Shot Human-AI Coordin
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 from typing import NamedTuple
 from flax.training.train_state import TrainState
@@ -19,18 +18,16 @@ import jaxmarl
 from jaxmarl.wrappers.baselines import OvercookedV2LogWrapper, LogWrapper
 import wandb
 
-from overcooked_v2_experiments.ppo.mep.models import MAPPOActorRNN, MAPPOCentralCriticRNN
+from overcooked_v2_experiments.ppo.models.rnn import ActorCriticRNN
 
 
 class MEPTransition(NamedTuple):
     done: jnp.ndarray         # (NUM_STEPS, NUM_ENVS)
     ego_obs: jnp.ndarray      # (NUM_STEPS, NUM_ENVS, H, W, C)
-    partner_obs: jnp.ndarray  # (NUM_STEPS, NUM_ENVS, H, W, C)
     ego_action: jnp.ndarray   # (NUM_STEPS, NUM_ENVS)
     ego_log_prob: jnp.ndarray # (NUM_STEPS, NUM_ENVS)
     critic_value: jnp.ndarray # (NUM_STEPS, NUM_ENVS)
     reward: jnp.ndarray       # (NUM_STEPS, NUM_ENVS)
-    global_obs: jnp.ndarray   # (NUM_STEPS, NUM_ENVS, H, W, 2C)
     info: dict
 
 
@@ -64,8 +61,7 @@ def make_train_mep_s1(config):
 
     num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
 
-    actor_network = MAPPOActorRNN(action_dim=ACTION_DIM, config=model_config)
-    critic_network = MAPPOCentralCriticRNN(config=model_config)
+    network = ActorCriticRNN(action_dim=ACTION_DIM, config=model_config)
 
     rew_shaping_anneal = optax.linear_schedule(
         init_value=1.0,
@@ -96,8 +92,7 @@ def make_train_mep_s1(config):
             optax.adam(lr_fn, eps=1e-5),
         )
 
-    actor_lr_fn = _make_lr_fn("LR")
-    critic_lr_fn = _make_lr_fn("LR_CRITIC")
+    lr_fn = _make_lr_fn("LR")
 
     def train(rng):
         # ----------------------------------------------------------------
@@ -106,77 +101,55 @@ def make_train_mep_s1(config):
         rng, _rng = jax.random.split(rng)
         sample_obs, _ = jax.vmap(env.reset)(jax.random.split(_rng, NUM_ENVS))
         obs_shape = sample_obs[env.agents[0]].shape[1:]  # (H, W, C)
-        global_obs_shape = (*obs_shape[:-1], obs_shape[-1] * 2)
 
         # ----------------------------------------------------------------
-        # Network init shapes
+        # Network init
         # ----------------------------------------------------------------
-        init_actor_hstate = MAPPOActorRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
-        init_x_actor = (
+        init_hstate = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+        init_x = (
             jnp.zeros((1, NUM_ENVS, *obs_shape)),
             jnp.zeros((1, NUM_ENVS)),
         )
-        init_critic_hstate = MAPPOCentralCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
-        init_x_critic = (
-            jnp.zeros((1, NUM_ENVS, *global_obs_shape)),
-            jnp.zeros((1, NUM_ENVS)),
-        )
 
         # ----------------------------------------------------------------
-        # Create N (actor_state, critic_state) pairs — stacked pytree
+        # Create N train states — stacked pytree with leaf shape (N, ...)
         # ----------------------------------------------------------------
         def _create_member(rng_m):
-            ra, rc = jax.random.split(rng_m)
-            a_params = actor_network.init(ra, init_actor_hstate, init_x_actor)
-            c_params = critic_network.init(rc, init_critic_hstate, init_x_critic)
-            a_state = TrainState.create(
-                apply_fn=actor_network.apply,
-                params=a_params,
-                tx=_make_tx(actor_lr_fn),
+            params = network.init(rng_m, init_hstate, init_x)
+            return TrainState.create(
+                apply_fn=network.apply,
+                params=params,
+                tx=_make_tx(lr_fn),
             )
-            c_state = TrainState.create(
-                apply_fn=critic_network.apply,
-                params=c_params,
-                tx=_make_tx(critic_lr_fn),
-            )
-            return a_state, c_state
 
         rng, _rng = jax.random.split(rng)
-        # vmap _create_member over N random keys → stacked TrainStates
-        pop_actor_states, pop_critic_states = jax.vmap(_create_member)(
-            jax.random.split(_rng, N)
-        )
+        pop_states = jax.vmap(_create_member)(jax.random.split(_rng, N))
 
         # ----------------------------------------------------------------
         # Init N×NUM_ENVS environments
         # ----------------------------------------------------------------
         rng, _rng = jax.random.split(rng)
-        # shape: (N, NUM_ENVS, 2) — PRNGKeys
         all_reset_rngs = jax.random.split(_rng, N * NUM_ENVS).reshape(N, NUM_ENVS, -1)
         pop_obs, pop_env_states = jax.vmap(
             lambda r: jax.vmap(env.reset)(r)
         )(all_reset_rngs)
         pop_done = jnp.zeros((N, NUM_ENVS), dtype=jnp.bool_)
 
-        # Actor hstates: (N, NUM_ENVS, GRU_HIDDEN_DIM)
-        _init_actor_h = MAPPOActorRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
-        pop_actor_hstates = jnp.stack([_init_actor_h] * N)
-        pop_partner_hstates = jnp.stack([_init_actor_h] * N)
-        # Critic hstates: (N, NUM_ENVS, GRU_HIDDEN_DIM)
-        _init_critic_h = MAPPOCentralCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
-        pop_critic_hstates = jnp.stack([_init_critic_h] * N)
+        # hstates: (N, NUM_ENVS, GRU_HIDDEN_DIM)
+        _init_h = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+        pop_actor_hstates = jnp.stack([_init_h] * N)
+        pop_partner_hstates = jnp.stack([_init_h] * N)
 
-        # Checkpoint buffer: stores N actors' params, shape (N, num_checkpoints, ...)
+        # Checkpoint buffer: leaf shape (N, num_checkpoints, ...member_param_shape...)
         checkpoint_steps = jnp.linspace(
             0, NUM_UPDATES, max(num_checkpoints, 1),
             endpoint=True, dtype=jnp.int32,
         )
         if num_checkpoints > 0:
             checkpoint_steps = checkpoint_steps.at[-1].set(NUM_UPDATES)
-        # stacked per-member checkpoint buffer: leaf (N, num_checkpoints, ...)
         ck_buf = jax.tree_util.tree_map(
             lambda p: jnp.zeros((N, max(num_checkpoints, 1)) + p.shape[1:], p.dtype),
-            pop_actor_states.params,
+            pop_states.params,
         )
 
         # ----------------------------------------------------------------
@@ -184,14 +157,12 @@ def make_train_mep_s1(config):
         # ----------------------------------------------------------------
         def _update_step(runner_state, unused):
             (
-                pop_actor_states,
-                pop_critic_states,
+                pop_states,
                 pop_env_states,
                 pop_last_obs,
                 pop_last_done,
                 pop_actor_hstates,
                 pop_partner_hstates,
-                pop_critic_hstates,
                 ck_buf,
                 update_step,
                 rng,
@@ -203,57 +174,47 @@ def make_train_mep_s1(config):
             partner_idxs = (jnp.arange(N) + offset) % N
 
             # All actor params (N stacked) — used as closure in inner fns
-            all_actor_params = pop_actor_states.params
+            all_actor_params = pop_states.params
 
             # ---- ROLLOUT ------------------------------------------------
             def _collect_member(
-                ego_actor_state,
-                ego_critic_state,
+                ego_state,
                 partner_idx,
                 env_state,
                 last_obs,
                 last_done,
                 actor_hstate,
                 partner_hstate,
-                critic_hstate,
                 rng,
             ):
                 def _env_step(step_state, _):
                     (
                         env_state, last_obs, last_done,
-                        actor_hstate, partner_hstate, critic_hstate,
+                        actor_hstate, partner_hstate,
                         update_step, rng,
                     ) = step_state
 
-                    ego_obs_t = last_obs[env.agents[0]]    # (E, H, W, C)
+                    ego_obs_t = last_obs[env.agents[0]]     # (E, H, W, C)
                     partner_obs_t = last_obs[env.agents[1]] # (E, H, W, C)
-                    global_obs_t = jnp.concatenate([ego_obs_t, partner_obs_t], axis=-1)
-                    done_t = last_done  # (E,)
+                    done_t = last_done                       # (E,)
 
-                    # Ego actor
+                    # Ego: actor + critic in one forward pass
                     rng, _rng = jax.random.split(rng)
-                    actor_hstate, ego_pi = actor_network.apply(
-                        ego_actor_state.params,
+                    actor_hstate, ego_pi, crit_val, _ = network.apply(
+                        ego_state.params,
                         actor_hstate,
                         (ego_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
                     )
                     ego_action = ego_pi.sample(seed=_rng).squeeze(0)   # (E,)
                     ego_log_prob = ego_pi.log_prob(ego_action[jnp.newaxis]).squeeze(0)
-
-                    # Centralized critic
-                    critic_hstate, crit_val = critic_network.apply(
-                        ego_critic_state.params,
-                        critic_hstate,
-                        (global_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
-                    )
-                    crit_val = crit_val.squeeze(0)  # (E,)
+                    crit_val = crit_val.squeeze(0)                      # (E,)
 
                     # Partner actor (frozen)
                     partner_params = jax.tree_util.tree_map(
                         lambda x: x[partner_idx], all_actor_params
                     )
                     rng, _rng2 = jax.random.split(rng)
-                    partner_hstate, partner_pi = actor_network.apply(
+                    partner_hstate, partner_pi, _, _ = network.apply(
                         partner_params,
                         partner_hstate,
                         (partner_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
@@ -280,9 +241,6 @@ def make_train_mep_s1(config):
                         reward, info["shaped_reward"],
                     )
                     ego_reward = reward[env.agents[0]]  # (E,)
-                    # Drop shaped_reward from logged info (already consumed above).
-                    # Keeping it would waste (N, T, E) trajectory memory per agent.
-                    # Remaining entries: (NUM_ENVS,) scalars or (NUM_ENVS, 2) per-agent
                     info = {k: v for k, v in info.items() if k != "shaped_reward"}
                     info = jax.tree_util.tree_map(
                         lambda x: x.mean(axis=-1) if x.ndim > 1 else x, info
@@ -291,17 +249,15 @@ def make_train_mep_s1(config):
                     transition = MEPTransition(
                         done=done_env,
                         ego_obs=ego_obs_t,
-                        partner_obs=partner_obs_t,
                         ego_action=ego_action,
                         ego_log_prob=ego_log_prob,
                         critic_value=crit_val,
                         reward=ego_reward,
-                        global_obs=global_obs_t,
                         info=info,
                     )
                     step_state = (
                         env_state, obsv, done_env,
-                        actor_hstate, partner_hstate, critic_hstate,
+                        actor_hstate, partner_hstate,
                         update_step, rng,
                     )
                     return step_state, transition
@@ -309,39 +265,39 @@ def make_train_mep_s1(config):
                 final_state, traj = jax.lax.scan(
                     _env_step,
                     (env_state, last_obs, last_done,
-                     actor_hstate, partner_hstate, critic_hstate,
+                     actor_hstate, partner_hstate,
                      update_step, rng),
                     None,
                     NUM_STEPS,
                 )
-                (fe, fo, fd, fah, fph, fch, _, _) = final_state
-                return traj, (fe, fo, fd, fah, fph, fch)
+                (fe, fo, fd, fah, fph, _, _) = final_state
+                return traj, (fe, fo, fd, fah, fph)
 
             rng, _rng = jax.random.split(rng)
             all_traj, finals = jax.vmap(
-                _collect_member, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                _collect_member, in_axes=(0, 0, 0, 0, 0, 0, 0, 0)
             )(
-                pop_actor_states, pop_critic_states, partner_idxs,
+                pop_states, partner_idxs,
                 pop_env_states, pop_last_obs, pop_last_done,
-                pop_actor_hstates, pop_partner_hstates, pop_critic_hstates,
+                pop_actor_hstates, pop_partner_hstates,
                 jax.random.split(_rng, N),
             )
             # all_traj leaf shapes: (N, NUM_STEPS, NUM_ENVS, ...)
             (pop_env_states, pop_last_obs, pop_last_done,
-             pop_actor_hstates, pop_partner_hstates, pop_critic_hstates) = finals
+             pop_actor_hstates, pop_partner_hstates) = finals
 
             # ---- ENTROPY BONUS ------------------------------------------
-            # jax.lax.map (not vmap) over N members/actors → sequential forward
-            # passes, so peak conv batch = T*E (not N*T*E). Avoids OOM on
-            # large layouts where vmap(vmap(...)) would batch N²×T×E together.
+            # jax.lax.map (not vmap) over N members → sequential forward
+            # passes, peak memory = T*E per forward pass. Avoids OOM on
+            # large layouts where vmap(vmap(...)) batches N²×T×E together.
 
             def compute_bonus(args):
-                """Return -log π_pop(a|s) for member i. Shape: (NUM_STEPS, NUM_ENVS)."""
+                """Return -log π_pop(a|s) for member i. Shape: (T, E)."""
                 ego_obs_i, ego_done_i, ego_act_i = args
-                init_h = MAPPOActorRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+                init_h = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
 
                 def fwd_k(ak_params):
-                    _, pi = actor_network.apply(
+                    _, pi, _, _ = network.apply(
                         ak_params, init_h, (ego_obs_i, ego_done_i)
                     )
                     return pi.probs  # (T, E, A)
@@ -364,23 +320,20 @@ def make_train_mep_s1(config):
 
             # ---- GAE + PPO UPDATE per member ----------------------------
             def _update_member(
-                ego_actor_state,
-                ego_critic_state,
+                ego_state,
                 traj_i,            # MEPTransition with shapes (T, E, ...)
                 shaped_reward_i,   # (T, E)
                 last_obs_i,        # {"agent_0": (E, H, W, C), ...}
                 last_done_i,       # (E,)
-                critic_hstate_i,   # (E, hidden)
                 rng_m,
             ):
-                # ---- Last value for GAE bootstrap ----
+                # ---- Last value for GAE bootstrap (fresh hstate) ----
                 ego_obs_last = last_obs_i[env.agents[0]]
-                partner_obs_last = last_obs_i[env.agents[1]]
-                global_last = jnp.concatenate([ego_obs_last, partner_obs_last], axis=-1)
-                _, last_val = critic_network.apply(
-                    ego_critic_state.params,
-                    critic_hstate_i,
-                    (global_last[jnp.newaxis], last_done_i[jnp.newaxis]),
+                init_h = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+                _, _, last_val, _ = network.apply(
+                    ego_state.params,
+                    init_h,
+                    (ego_obs_last[jnp.newaxis], last_done_i[jnp.newaxis]),
                 )
                 last_val = last_val.squeeze(0)  # (E,)
 
@@ -406,11 +359,8 @@ def make_train_mep_s1(config):
                 targets = advantages + traj_i.critic_value  # (T, E)
 
                 # ---- PPO minibatch update ----
-                # Following ippo.py: shuffle over ENV axis, reshape into minibatches,
-                # then scan over pre-built minibatch arrays (no dynamic indexing).
                 mb_size = NUM_ENVS // NUM_MINIBATCHES
-                init_actor_h = MAPPOActorRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
-                init_critic_h = MAPPOCentralCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+                init_h_mb = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
 
                 def _split_minibatches(x):
                     """(T, E, ...) or (1, E, ...) → (NMB, T or 1, MB_SIZE, ...)"""
@@ -422,21 +372,17 @@ def make_train_mep_s1(config):
                         1, 0,
                     )
 
-                def _update_minibatch(states, mb):
-                    a_st, c_st = states
-                    # mb is a tuple; each array has leading dim = T (or 1 for hstates)
-                    (mb_ah, mb_ch,
-                     mb_ego_obs, mb_global, mb_done,
+                def _update_minibatch(state, mb):
+                    (mb_ah,
+                     mb_ego_obs, mb_done,
                      mb_action, mb_log_prob, mb_val_old,
                      mb_adv, mb_targets) = mb
 
-                    # hstates: (1, MB_SIZE, hidden) → squeeze time dim
                     mb_ah = mb_ah.squeeze(0)  # (MB_SIZE, hidden)
-                    mb_ch = mb_ch.squeeze(0)  # (MB_SIZE, hidden)
 
-                    def _actor_loss(a_params):
-                        _, pi = actor_network.apply(
-                            a_params, mb_ah, (mb_ego_obs, mb_done)
+                    def _loss(params):
+                        _, pi, value, _ = network.apply(
+                            params, mb_ah, (mb_ego_obs, mb_done)
                         )
                         log_prob_new = pi.log_prob(mb_action)
                         ratio = jnp.exp(log_prob_new - mb_log_prob)
@@ -449,81 +395,76 @@ def make_train_mep_s1(config):
                             * adv_norm
                         )
                         actor_loss = -jnp.minimum(loss1, loss2).mean()
-                        entropy = pi.entropy().mean()
-                        return actor_loss - model_config["ENT_COEF"] * entropy, (actor_loss, entropy)
-
-                    def _critic_loss(c_params):
-                        _, value = critic_network.apply(
-                            c_params, mb_ch, (mb_global, mb_done)
-                        )
                         v_cl = mb_val_old + (value - mb_val_old).clip(
                             -model_config["CLIP_EPS"], model_config["CLIP_EPS"]
                         )
-                        return 0.5 * jnp.maximum(
+                        critic_loss = 0.5 * jnp.maximum(
                             jnp.square(value - mb_targets),
                             jnp.square(v_cl - mb_targets),
                         ).mean()
+                        entropy = pi.entropy().mean()
+                        total = (
+                            actor_loss
+                            + model_config.get("VF_COEF", 0.5) * critic_loss
+                            - model_config["ENT_COEF"] * entropy
+                        )
+                        return total, (actor_loss, critic_loss, entropy)
 
-                    (a_loss, a_aux), ag = jax.value_and_grad(_actor_loss, has_aux=True)(a_st.params)
-                    c_loss, cg = jax.value_and_grad(_critic_loss)(c_st.params)
-                    return (a_st.apply_gradients(grads=ag),
-                            c_st.apply_gradients(grads=cg)), (a_loss, c_loss, a_aux[0], a_aux[1])
+                    (total_loss, aux), grads = jax.value_and_grad(
+                        _loss, has_aux=True
+                    )(state.params)
+                    return state.apply_gradients(grads=grads), (
+                        total_loss, aux[0], aux[1], aux[2]
+                    )
 
                 def _update_epoch(epoch_state, _):
-                    a_state, c_state, rng_e = epoch_state
+                    state, rng_e = epoch_state
                     rng_e, _rng_e = jax.random.split(rng_e)
                     perm = jax.random.permutation(_rng_e, NUM_ENVS)
 
-                    # Shuffle over env axis (axis=1 for traj arrays, axis=0 for hstates)
                     batch = (
-                        jnp.take(init_actor_h, perm, axis=0)[jnp.newaxis],  # (1, E, hid)
-                        jnp.take(init_critic_h, perm, axis=0)[jnp.newaxis], # (1, E, hid)
-                        jnp.take(traj_i.ego_obs, perm, axis=1),             # (T, E, H, W, C)
-                        jnp.take(traj_i.global_obs, perm, axis=1),          # (T, E, H, W, 2C)
-                        jnp.take(traj_i.done, perm, axis=1),                # (T, E)
-                        jnp.take(traj_i.ego_action, perm, axis=1),         # (T, E)
-                        jnp.take(traj_i.ego_log_prob, perm, axis=1),       # (T, E)
-                        jnp.take(traj_i.critic_value, perm, axis=1),       # (T, E)
-                        jnp.take(advantages, perm, axis=1),                 # (T, E)
-                        jnp.take(targets, perm, axis=1),                    # (T, E)
+                        jnp.take(init_h_mb, perm, axis=0)[jnp.newaxis],  # (1, E, hid)
+                        jnp.take(traj_i.ego_obs, perm, axis=1),           # (T, E, H, W, C)
+                        jnp.take(traj_i.done, perm, axis=1),              # (T, E)
+                        jnp.take(traj_i.ego_action, perm, axis=1),       # (T, E)
+                        jnp.take(traj_i.ego_log_prob, perm, axis=1),     # (T, E)
+                        jnp.take(traj_i.critic_value, perm, axis=1),     # (T, E)
+                        jnp.take(advantages, perm, axis=1),               # (T, E)
+                        jnp.take(targets, perm, axis=1),                  # (T, E)
                     )
-                    # Split into (NMB, T or 1, MB_SIZE, ...)
                     minibatches = jax.tree_util.tree_map(_split_minibatches, batch)
 
-                    (a_state, c_state), losses = jax.lax.scan(
-                        _update_minibatch, (a_state, c_state), minibatches
+                    state, losses = jax.lax.scan(
+                        _update_minibatch, state, minibatches
                     )
-                    return (a_state, c_state, rng_e), losses
+                    return (state, rng_e), losses
 
-                (a_state_out, c_state_out, _), all_losses = jax.lax.scan(
+                (state_out, _), all_losses = jax.lax.scan(
                     _update_epoch,
-                    (ego_actor_state, ego_critic_state, rng_m),
+                    (ego_state, rng_m),
                     None,
                     UPDATE_EPOCHS,
                 )
                 # all_losses: (UPDATE_EPOCHS, NUM_MINIBATCHES, ...)
                 total_loss = all_losses[0].mean()
-                critic_loss = all_losses[1].mean()
-                actor_loss = all_losses[2].mean()
+                actor_loss = all_losses[1].mean()
+                critic_loss = all_losses[2].mean()
                 entropy = all_losses[3].mean()
-                return a_state_out, c_state_out, total_loss, critic_loss, actor_loss, entropy
+                return state_out, total_loss, actor_loss, critic_loss, entropy
 
             rng, _rng = jax.random.split(rng)
             (
-                pop_actor_states,
-                pop_critic_states,
+                pop_states,
                 total_losses,
-                critic_losses,
                 actor_losses,
+                critic_losses,
                 entropies,
             ) = jax.vmap(_update_member)(
-                pop_actor_states,
-                pop_critic_states,
+                pop_states,
                 all_traj,
                 shaped_rewards,
                 pop_last_obs,
                 pop_last_done,
-                pop_critic_hstates,
                 jax.random.split(_rng, N),
             )
 
@@ -542,7 +483,7 @@ def make_train_mep_s1(config):
                 )
 
             update_step = update_step + 1
-            ck_buf = _save_ck(ck_buf, pop_actor_states.params, update_step)
+            ck_buf = _save_ck(ck_buf, pop_states.params, update_step)
 
             # ---- WandB metrics -------------------------------------------
             metric = jax.tree_util.tree_map(lambda x: x.mean(), all_traj.info)
@@ -567,14 +508,12 @@ def make_train_mep_s1(config):
             jax.debug.callback(_log, metric)
 
             runner_state = (
-                pop_actor_states,
-                pop_critic_states,
+                pop_states,
                 pop_env_states,
                 pop_last_obs,
                 pop_last_done,
                 pop_actor_hstates,
                 pop_partner_hstates,
-                pop_critic_hstates,
                 ck_buf,
                 update_step,
                 rng,
@@ -584,18 +523,16 @@ def make_train_mep_s1(config):
         # ---- Initial checkpoint at step 0 --------------------------------
         ck_buf = jax.tree_util.tree_map(
             lambda b, p: b.at[:, 0].set(p),
-            ck_buf, pop_actor_states.params,
+            ck_buf, pop_states.params,
         )
 
         init_runner = (
-            pop_actor_states,
-            pop_critic_states,
+            pop_states,
             pop_env_states,
             pop_obs,
             pop_done,
             pop_actor_hstates,
             pop_partner_hstates,
-            pop_critic_hstates,
             ck_buf,
             jnp.int32(0),
             rng,
@@ -610,7 +547,7 @@ def make_train_mep_s1(config):
             # Final actor params for each population member, shape (N, ...)
             "pop_actor_params": final_runner[0].params,
             # Checkpoint buffer: (N, num_checkpoints, ...)
-            "pop_actor_ckpts": final_runner[8],
+            "pop_actor_ckpts": final_runner[6],
         }
 
     return train

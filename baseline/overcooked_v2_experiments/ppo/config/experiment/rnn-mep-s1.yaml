@@ -5,17 +5,18 @@ defaults:
 ALG_NAME: "MEP_S1"
 
 # MEP-specific
-MEP_POPULATION_SIZE: 5
+MEP_POPULATION_SIZE: 4
 MEP_ENTROPY_ALPHA: 0.01
 
 NUM_SEEDS: 1
 NUM_CHECKPOINTS: 3  # init / mid / final per population member
 
 model:
-  "LR": 0.0007
-  "LR_CRITIC": 0.0007
-  "ENT_COEF": 0.01
-  "GAE_LAMBDA": 0.9
+  "LR": 0.0003
+  "ENT_COEF": 0.0
+  # cc => "ENT_COEF": 0.05
+  "VF_COEF": 0.5
+  "GAE_LAMBDA": 0.95
   "NUM_ENVS": 64
   "NUM_STEPS": 128
   "UPDATE_EPOCHS": 4

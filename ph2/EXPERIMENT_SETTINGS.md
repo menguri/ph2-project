@@ -308,3 +308,62 @@ FCP: fcp_populations/<layout_name>  # Pre-trained population path
 2. **Warmup**: 모든 실험에서 학습의 처음 5% 동안 learning rate warmup 적용
 3. **Gradient Clipping**: RNN 계열은 0.25, CNN은 0.5
 4. **FCP 메모리 이슈**: 초기화 시 GPU에서 Conv 연산 → cuDNN workspace 필요 → NUM_ENVS 감소 필요
+
+---
+
+## 6. PH2 (ph2-project/ph2) 전용 변경사항
+
+### 모델 구조 변경 (baseline 대비)
+
+```yaml
+GRU_HIDDEN_DIM: 64    # baseline 128 → ph2 64
+FC_DIM_SIZE: 128      # 유지
+```
+
+### PartnerPredictor 구조
+
+```
+z (64) [stop_gradient]
+  → Dense(64) → relu
+  → Dense(32) → relu  ← h (32-dim, intermediate representation)
+  → Dense(6)  → L2-norm → pred_logits (6-dim, action logits)
+```
+
+- `h` (32-dim): cycle loss target 및 latent mode concat에 사용
+- `pred_logits` (6-dim): 파트너 행동 예측 logits, policy embedding에 concat
+
+### Policy Embedding 차원
+
+| 모드 | 구성 | 총 dim |
+|------|------|--------|
+| 기본 (LATENT_MODE=False) | z(64) + pred_logits(6) | 70 |
+| Latent mode (LATENT_MODE=True) | z(64) + h(32) + pred_logits(6) | 102 |
+
+### Cycle Loss (CYCLE_LOSS_ENABLED=True)
+
+```
+pred_logits (6) → CycleLossDecoder → h_hat (32)
+Loss: MSE(h_hat, stop_gradient(h))
+```
+
+- action logits에서 h를 복원하도록 PartnerPredictor 학습을 regularize
+- gradient 경로: `cycle_loss → decoder → pred_logits → PartnerPredictor`
+- h 자체는 stop_gradient로 고정 (decoder의 reconstruction target)
+
+### 새 config 파라미터
+
+```yaml
+CYCLE_LOSS_ENABLED: false   # cycle loss 활성화 여부
+CYCLE_LOSS_COEF: 0.1        # cycle loss 가중치
+LATENT_MODE: false          # h를 policy embedding에 추가 concat 여부
+```
+
+### 실행 예시
+
+```bash
+# 기본 PH2 (변경사항 포함, cycle/latent 비활성)
+./run_factory_ph2.sh
+
+# Cycle loss + Latent mode 활성화
+CYCLE_LOSS_ENABLED=True CYCLE_LOSS_COEF=0.1 LATENT_MODE=True ./run_factory_ph2.sh
+```

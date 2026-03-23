@@ -59,32 +59,32 @@ run_mep_s2() {
 # S1: single GPU (vmap으로 population 병렬화, multi-GPU 불필요)
 # S2: multi-GPU (multi-seed pmap+vmap)
 # -----------------------------------------------------------------------------
-# S1_GPU="7"
-S2_GPUS="5,7"
+S1_GPU="6"
+S2_GPUS="6,7"
 
 echo "[MEP] layout=cramped_room"
-# run_mep_s1 "$S1_GPU" "cramped_room"
-POP_DIR="${RUNS_BASE}/20260319-034649_ztpeud5n_cramped_room_m1/mep_population"
-run_mep_s2 "$S2_GPUS" "cramped_room" "$POP_DIR"
+run_mep_s1 "$S1_GPU" "cramped_room"
+# POP_DIR="${RUNS_BASE}/20260319-034649_ztpeud5n_cramped_room_m1/mep_population"
+# run_mep_s2 "$S2_GPUS" "cramped_room" "$POP_DIR"
 
 echo "[MEP] layout=asymm_advantages"
-# run_mep_s1 "$S1_GPU" "asymm_advantages"
-POP_DIR="${RUNS_BASE}/20260319-051106_05r4fmok_asymm_advantages_m1/mep_population"
-run_mep_s2 "$S2_GPUS" "asymm_advantages" "$POP_DIR"
+run_mep_s1 "$S1_GPU" "asymm_advantages"
+# POP_DIR="${RUNS_BASE}/20260319-051106_05r4fmok_asymm_advantages_m1/mep_population"
+# run_mep_s2 "$S2_GPUS" "asymm_advantages" "$POP_DIR"
 
-# echo "[MEP] layout=coord_ring"
-# # run_mep_s1 "$S1_GPU" "coord_ring"
-POP_DIR="${RUNS_BASE}/20260319-071343_1gan15ov_coord_ring_m1/mep_population"
-run_mep_s2 "$S2_GPUS" "coord_ring" "$POP_DIR"
-
-# echo "[MEP] layout=forced_coord"
-# # run_mep_s1 "$S1_GPU" "forced_coord"
-POP_DIR="${RUNS_BASE}/20260319-061341_zq0tpuaw_forced_coord_m1/mep_population"
-run_mep_s2 "$S2_GPUS" "forced_coord" "$POP_DIR"
+echo "[MEP] layout=coord_ring"
+run_mep_s1 "$S1_GPU" "coord_ring"
+# POP_DIR="${RUNS_BASE}/20260319-071343_1gan15ov_coord_ring_m1/mep_population"
+# run_mep_s2 "$S2_GPUS" "coord_ring" "$POP_DIR"
 
 # echo "[MEP] layout=counter_circuit"
-# # run_mep_s1 "$S1_GPU" "counter_circuit"
-POP_DIR="${RUNS_BASE}/20260319-061416_864d6ntb_counter_circuit_m1/mep_population"
-run_mep_s2 "$S2_GPUS" "counter_circuit" "$POP_DIR"
+# run_mep_s1 "6" "counter_circuit" &
+# POP_DIR="${RUNS_BASE}/20260320-072007_v34ebc7q_counter_circuit_m1/mep_population"
+# run_mep_s2 "$S2_GPUS" "counter_circuit" "$POP_DIR"
+
+# echo "[MEP] layout=forced_coord" & 
+# run_mep_s1 "7" "forced_coord" &
+# POP_DIR="${RUNS_BASE}/20260319-061341_zq0tpuaw_forced_coord_m1/mep_population"
+# run_mep_s2 "$S2_GPUS" "forced_coord" "$POP_DIR"
 
 # echo "[MEP] all layout jobs finished."

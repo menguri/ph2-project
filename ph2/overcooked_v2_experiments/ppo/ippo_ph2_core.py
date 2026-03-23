@@ -58,6 +58,7 @@ class Transition(NamedTuple):
     prev_action: jnp.ndarray
     partner_prediction: jnp.ndarray
     hstate: any
+    global_obs: jnp.ndarray   # (NUM_ACTORS, H, W, C_full) — CT recon 타겟용 full global state
 
 
 def batchify(x: dict, agent_list, num_actors):
@@ -125,6 +126,20 @@ def make_train(
         config.get("PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS", -1)
     )
     abort_on_nan = bool(config.get("ABORT_ON_NAN", True))
+
+    # CycleTransformer settings
+    transformer_action = bool(config.get("TRANSFORMER_ACTION", False))
+    transformer_v2 = bool(config.get("TRANSFORMER_V2", False))
+    transformer_window_size = int(config.get("TRANSFORMER_WINDOW_SIZE", 16))
+    transformer_d_c = int(config.get("TRANSFORMER_D_C", 128))
+    transformer_recon_coef = float(config.get("TRANSFORMER_RECON_COEF", 1.0))
+    transformer_pred_coef = float(config.get("TRANSFORMER_PRED_COEF", 1.0))
+    transformer_cycle_coef = float(config.get("TRANSFORMER_CYCLE_COEF", 0.5))
+    # OV1 vs OV2 감지: env kwargs에 agent_view_size 있으면 partial obs (OV2)
+    # OV2 → CT recon target은 per-actor full obs (get_obs_default 활용)
+    # OV1 → agent 0의 full obs를 모든 actor에 동일하게 사용 (PH1 pool과 동일)
+    _env_kwargs = env_config.get("ENV_KWARGS", {})
+    is_partial_obs = "agent_view_size" in _env_kwargs
 
     # E3T 설정 로드
     alg_name = config.get("ALG_NAME", "SP")
@@ -263,6 +278,23 @@ def make_train(
         full = jax.vmap(env.get_obs_default)(log_env_state.env_state)
         return full[:, 0].astype(jnp.float32)
 
+    def _extract_global_full_obs_per_actor(log_env_state):
+        """OV2용: 각 actor 자신의 시점에서 full global obs 반환.
+
+        agent 0의 obs: self=agent0, other=agent1
+        agent 1의 obs: self=agent1, other=agent0
+        CT recon target이 ego 자신의 시점에서 full state를 재구성하도록 한다.
+        반환 순서는 obs_batch와 동일: [agent0_env0..N, agent1_env0..N]
+
+        Returns:
+            (NUM_ACTORS, H, W, C_full) — obs_batch와 동일한 actor 순서
+        """
+        full = jax.vmap(env.get_obs_default)(log_env_state.env_state)
+        # full: (NUM_ENVS, num_agents, H, W, C_full)
+        agent0_full = full[:, 0].astype(jnp.float32)  # (NUM_ENVS, H, W, C_full)
+        agent1_full = full[:, 1].astype(jnp.float32)  # (NUM_ENVS, H, W, C_full)
+        return jnp.concatenate([agent0_full, agent1_full], axis=0)  # (NUM_ACTORS, H, W, C_full)
+
     # Wrap reset/step with backend-specific jits if ENV_DEVICE explicitly set.
     reset_fn = env.reset
     step_fn = env.step
@@ -385,6 +417,16 @@ def make_train(
         else:
             ph1_block_shape = None
 
+        # CT v2: pixel decoder가 full global state shape을 알아야 함 → config에 주입
+        # ph1_block_shape가 없으면 직접 추출 (ph1_enabled=False 케이스)
+        if transformer_action and transformer_v2:
+            _v2_state_shape = (
+                ph1_block_shape
+                if ph1_block_shape is not None
+                else _extract_global_full_obs(env_state).shape[1:]
+            )
+            config["TRANSFORMER_STATE_SHAPE"] = list(_v2_state_shape)
+
         # INIT NETWORK
         network = get_actor_critic(config)
 
@@ -443,6 +485,44 @@ def make_train(
             partner_prediction=dummy_partner_prediction,
             blocked_states=dummy_blocked_states,
         )
+
+        if transformer_action:
+            # Main network.init() calls encode_only in the CT branch, which initializes:
+            #   ct_obs_encoder*, encoder (CausalTransformerEncoder), state_fc/ln, action_*
+            # Missing after main init (not called by encode_only):
+            #   cycle_hidden, cycle_out  ← only called in __call__ (full forward)
+            #   ct_state_encoder*        ← only called in ct_encode_state
+            # Initialize both separately and merge into params["cycle_transformer"].
+            from flax.core import freeze, unfreeze
+            _W = int(config.get("TRANSFORMER_WINDOW_SIZE", 16))
+            _D_obs = int(model_config["GRU_HIDDEN_DIM"])
+            # 1) Full CT forward init (adds cycle_hidden, cycle_out)
+            _dummy_ct_windows = jnp.zeros((1, _W, _D_obs), dtype=jnp.float32)
+            _ct_full_vars = network.init(
+                _rng, _dummy_ct_windows, method=network.cycle_transformer_forward
+            )
+            # 2) CT state encoder init (adds ct_state_encoder, ct_state_encoder_ln)
+            # ct_state_encoder는 full global state shape을 입력받음 (OV2에서 state_shape ≠ full obs shape)
+            # ph1_block_shape = get_obs_default() 출력 shape (full grid, C_full channels)
+            # ph1_enabled=False이면 여기서 직접 추출
+            if ph1_block_shape is not None:
+                _ct_state_shape = ph1_block_shape
+            else:
+                _ct_state_shape = _extract_global_full_obs(env_state).shape[1:]
+            _dummy_obs_ct = jnp.zeros(
+                (1, model_config["NUM_ENVS"]) + _ct_state_shape, dtype=jnp.float32
+            )
+            _ct_state_vars = network.init(_rng, _dummy_obs_ct, method=network.ct_encode_state)
+            # Merge both into params["cycle_transformer"] (only add missing keys)
+            _np = unfreeze(network_params)
+            _ct_existing = set(_np["params"]["cycle_transformer"].keys())
+            for k, v in unfreeze(_ct_full_vars)["params"]["cycle_transformer"].items():
+                if k not in _ct_existing:
+                    _np["params"]["cycle_transformer"][k] = v
+            for k, v in unfreeze(_ct_state_vars)["params"]["cycle_transformer"].items():
+                if k not in _ct_existing:
+                    _np["params"]["cycle_transformer"][k] = v
+            network_params = freeze(_np)
 
         if model_config["ANNEAL_LR"]:
             tx = optax.chain(
@@ -1358,6 +1438,17 @@ def make_train(
                 # action (원본 정책 샘플)을 기준으로 계산 (action_for_env는 epsilon 혼합 후 값)
                 current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
 
+                # CT recon target용 full global obs 추출 (transformer_action=True일 때만)
+                # OV1: agent 0 full obs를 tile → OV2: 각 actor 자신의 시점 full obs
+                if transformer_action:
+                    if is_partial_obs:
+                        _global_obs = _extract_global_full_obs_per_actor(env_state)
+                    else:
+                        _agent0_full = _extract_global_full_obs(env_state)   # (NUM_ENVS, H, W, C_full)
+                        _global_obs = jnp.tile(_agent0_full, [2, 1, 1, 1])   # (NUM_ACTORS, H, W, C_full)
+                else:
+                    _global_obs = jnp.zeros_like(obs_batch)  # dummy — CT 코드 실행 안 됨
+
                 transition = Transition(
                     jnp.tile(done["__all__"], env.num_agents),
                     action.squeeze(),
@@ -1373,6 +1464,7 @@ def make_train(
                     last_action,
                     combined_prediction,
                     hstate,
+                    _global_obs,
                 )
 
                 env_step_state = (
@@ -1615,11 +1707,134 @@ def make_train(
                                     train_mask,
                                 )
 
-                        # print("value shape", value.shape)
-                        # print("targets shape", targets.shape)
-                        # print("pi shape", pi.logits.shape)
-
                         log_prob = pi.log_prob(traj_batch.action)
+
+                        # --------------------------------------------------
+                        # CycleTransformer auxiliary losses
+                        # (only when transformer_action=True; zero otherwise)
+                        # --------------------------------------------------
+                        ct_recon_loss = 0.0
+                        ct_action_loss = 0.0
+                        ct_cycle_loss = 0.0
+
+                        if transformer_action:
+                            W = transformer_window_size
+                            D_obs = model_config["GRU_HIDDEN_DIM"]
+
+                            # CT obs emb from rerun (T, B, D_obs) — CT's own encoder output
+                            # stop_gradient 제거: CT loss가 ct_obs_encoder까지 gradient를 흘려 학습시킴
+                            ct_obs_emb_seq = rerun_extras["ct_obs_emb"]
+                            done_seq = traj_batch.done  # (T, B) bool
+                            T_dim = ct_obs_emb_seq.shape[0]
+                            B_dim = ct_obs_emb_seq.shape[1]
+
+                            # Reconstruct obs_window sequence from zeros using CT obs emb
+                            def _window_step_loss(carry, inputs):
+                                obs_window, step_idx = carry
+                                ct_obs_emb_t, done_t = inputs
+                                obs_window = jnp.where(
+                                    done_t[:, None, None],
+                                    jnp.zeros_like(obs_window),
+                                    obs_window,
+                                )
+                                step_idx = jnp.where(
+                                    done_t, jnp.zeros_like(step_idx), step_idx
+                                )
+                                obs_window = jnp.roll(obs_window, shift=-1, axis=1)
+                                obs_window = obs_window.at[:, -1, :].set(ct_obs_emb_t)
+                                slots = jnp.arange(W)
+                                valid_from = W - 1 - jnp.minimum(step_idx, W - 1)
+                                padding_mask = slots[None, :] >= valid_from[:, None]
+                                return (obs_window, step_idx + 1), (obs_window, padding_mask)
+
+                            init_w = jnp.zeros((B_dim, W, D_obs))
+                            init_si = jnp.zeros(B_dim, dtype=jnp.int32)
+                            _, (obs_windows_seq, pad_masks_seq) = jax.lax.scan(
+                                _window_step_loss,
+                                (init_w, init_si),
+                                (ct_obs_emb_seq, done_seq),
+                            )
+                            # obs_windows_seq: (T, B, W, D_obs)
+                            # pad_masks_seq:   (T, B, W)
+
+                            obs_windows_flat = obs_windows_seq.reshape(T_dim * B_dim, W, D_obs)
+                            pad_masks_flat = pad_masks_seq.reshape(T_dim * B_dim, W)
+
+                            # Full forward: (C, state_out, a_hat, C_prime)
+                            # v1: state_out = z_hat (N, D_obs)
+                            # v2: state_out = s_hat (N, H, W, C_full)
+                            C_flat, state_out_flat, a_hat_flat, C_prime_flat = network.apply(
+                                params,
+                                obs_windows_flat,
+                                pad_masks_flat,
+                                method=network.cycle_transformer_forward,
+                            )
+                            C = C_flat.reshape(T_dim, B_dim, -1)
+                            a_hat = a_hat_flat.reshape(T_dim, B_dim, -1)
+                            C_prime = C_prime_flat.reshape(T_dim, B_dim, -1)
+
+                            valid_mask = ~traj_batch.done  # (T, B)
+
+                            if transformer_v2:
+                                # v2: pixel space reconstruction
+                                # state_out_flat = s_hat (N, H, W, C_full)
+                                _v2_shape = tuple(config.get("TRANSFORMER_STATE_SHAPE", []))
+                                H_v2, W_v2, C_v2 = _v2_shape
+                                s_hat = state_out_flat.reshape(T_dim, B_dim, H_v2, W_v2, C_v2)
+                                # recon target: global_obs 그대로 (no ct_state_encoder)
+                                recon_target_v2 = jax.lax.stop_gradient(traj_batch.global_obs)
+                                # (T, B, H, W, C_full)
+
+                                # L_recon: MSE per pixel, mean over spatial dims
+                                recon_diff_v2 = (s_hat - recon_target_v2) ** 2
+                                # (T, B, H, W, C_full)
+                                recon_diff_scalar = jnp.mean(recon_diff_v2, axis=(-3, -2, -1))
+                                # (T, B)
+                                ct_recon_loss = _masked_mean(recon_diff_scalar, valid_mask)
+
+                                # per-channel loss: mean over T, B, H, W → (C_full,)
+                                # valid step만 포함 (valid_mask 적용)
+                                valid_mask_v2 = valid_mask[:, :, None, None, None]
+                                recon_diff_masked = jnp.where(valid_mask_v2, recon_diff_v2, 0.0)
+                                n_valid = jnp.sum(valid_mask).clip(1)
+                                ct_recon_per_channel = (
+                                    jnp.sum(recon_diff_masked, axis=(0, 1, 2, 3)) / n_valid
+                                )  # (C_full,)
+                            else:
+                                # v1: latent space reconstruction
+                                z_hat = state_out_flat.reshape(T_dim, B_dim, D_obs)
+                                # recon target: ct_state_encoder(global_obs) → D_obs latent
+                                # ct_state_encoder params는 gradient 없음 (고정 random projection)
+                                recon_target = jax.lax.stop_gradient(
+                                    network.apply(
+                                        params,
+                                        jax.lax.stop_gradient(traj_batch.global_obs),
+                                        method=network.ct_encode_state,
+                                    )
+                                )  # (T, B, D_obs)
+
+                                recon_diff = jnp.mean(
+                                    (z_hat - recon_target) ** 2, axis=-1
+                                )  # (T, B)
+                                ct_recon_loss = _masked_mean(recon_diff, valid_mask)
+                                ct_recon_per_channel = jnp.zeros(1)  # v1: dummy
+
+                            # L_action: CE(a_hat, partner_action)
+                            ct_action_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
+                                logits=a_hat,
+                                labels=traj_batch.partner_action.astype(jnp.int32),
+                            )  # (T, B)
+                            ct_action_loss = _masked_mean(ct_action_loss_vec, valid_mask)
+
+                            # L_cycle: MSE(C_prime, sg(C))
+                            cycle_diff = jnp.mean(
+                                (C_prime - jax.lax.stop_gradient(C)) ** 2, axis=-1
+                            )  # (T, B)
+                            ct_cycle_loss = _masked_mean(cycle_diff, valid_mask)
+
+                            ct_recon_loss = ct_recon_loss * transformer_recon_coef
+                            ct_action_loss = ct_action_loss * transformer_pred_coef
+                            ct_cycle_loss = ct_cycle_loss * transformer_cycle_coef
 
                         # def safe_mean(x, mask):
                         #     x_safe = jnp.where(mask, x, 0.0)
@@ -1675,6 +1890,9 @@ def make_train(
                             + model_config["VF_COEF"] * value_loss
                             - model_config["ENT_COEF"] * entropy
                             + pred_loss
+                            + ct_recon_loss
+                            + ct_action_loss
+                            + ct_cycle_loss
                         )
 
                         return total_loss, (
@@ -1686,6 +1904,10 @@ def make_train(
                             pred_accuracy,
                             state_pred_z_loss,
                             state_pred_action_loss,
+                            ct_recon_loss,
+                            ct_action_loss,
+                            ct_cycle_loss,
+                            ct_recon_per_channel,  # v2: (C_full,), v1: zeros(1)
                         )
 
                     def _perform_update():
@@ -1711,9 +1933,13 @@ def make_train(
 
                     def _no_op():
                         # jax.debug.print("No update")
+                        # ct_recon_per_channel: v2=(C_full,), v1=zeros(1) — shape 일관성 유지
+                        _dummy_per_ch = jnp.zeros(
+                            config.get("TRANSFORMER_STATE_SHAPE", [0, 0, 1])[-1]  # C_full (마지막 차원)
+                        ) if transformer_v2 else jnp.zeros(1)
                         return (train_state, mb_rng), (
                             0.0,
-                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, _dummy_per_ch),
                         )
 
                     # jax.debug.print(
@@ -1869,6 +2095,10 @@ def make_train(
                 pred_accuracy,
                 state_pred_z_loss,
                 state_pred_action_loss,
+                ct_recon_loss,
+                ct_action_loss,
+                ct_cycle_loss,
+                ct_recon_per_channel,  # v2: (C_full,), v1: zeros(1)
             ) = aux_data
 
             # PPO 학습 손실 메트릭 추가
@@ -1881,6 +2111,16 @@ def make_train(
             metric["pred_accuracy"] = pred_accuracy # 파트너 행동 예측 정확도
             metric["state_pred_z_loss"] = state_pred_z_loss
             metric["state_pred_action_loss"] = state_pred_action_loss
+            metric["ct_recon_loss"] = ct_recon_loss
+            metric["ct_action_loss"] = ct_action_loss
+            metric["ct_cycle_loss"] = ct_cycle_loss
+            # v2: per-channel recon loss 로깅 (각 채널별 재구성 품질 확인용)
+            # ct_recon_per_channel shape after scan: (UPDATE_EPOCHS, NUM_MINIBATCHES, C_full)
+            # → epoch/minibatch 차원 평균 후 채널별로 로깅
+            if transformer_v2:
+                _per_ch_mean = ct_recon_per_channel.mean(axis=(0, 1))  # (C_full,)
+                for _ch_i in range(_per_ch_mean.shape[0]):
+                    metric[f"ct_recon_ch{_ch_i}"] = _per_ch_mean[_ch_i]
             metric["ph1_beta_current"] = ph1_beta_current
             metric["ph1_beta_progress"] = ph1_beta_progress
 

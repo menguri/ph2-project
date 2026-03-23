@@ -8,6 +8,7 @@ from flax.linen.initializers import constant, orthogonal
 from .abstract import ActorCriticBase
 from .common import CNN
 from .e3t import PartnerPredictor
+from .cycle_transformer import CycleTransformerModule
 
 
 class ScannedRNN(nn.Module):
@@ -158,6 +159,91 @@ class ActorCriticRNN(ActorCriticBase):
         obs_emb = shared_ln(jax.vmap(embed_model)(obs))
         embedding = obs_emb
 
+        # -------------------------------------------------------------------
+        # CycleTransformer branch  (transformer_action=True only)
+        # When False, this block is fully skipped → zero impact on existing code.
+        # -------------------------------------------------------------------
+        transformer_action = self.config.get("TRANSFORMER_ACTION", False)
+        _ct_z_hat_sg = None   # (T, B, D_obs)  — set below if enabled
+        _ct_a_hat_sg = None   # (T, B, A)
+        _new_obs_window = None
+        _new_step_idx = None
+        ct_obs_emb_raw = None  # (T, B, D_obs) CT obs emb for _loss_fn
+
+        if transformer_action:
+            W = int(self.config.get("TRANSFORMER_WINDOW_SIZE", 16))
+            D_c = int(self.config.get("TRANSFORMER_D_C", 128))
+            D_obs = int(self.config["GRU_HIDDEN_DIM"])
+
+            # Unpack window state from hidden (added by initialize_carry when CT enabled)
+            if isinstance(hidden, tuple) and len(hidden) == 3:
+                _, obs_window_init, step_idx_init = hidden
+            else:
+                # Fallback: start from zeros (e.g. fine-tuning from old checkpoint)
+                batch_size = obs.shape[1]
+                obs_window_init = jnp.zeros((batch_size, W, D_obs))
+                step_idx_init = jnp.zeros(batch_size, dtype=jnp.int32)
+
+            T_dim, B_dim = obs.shape[:2]
+            _transformer_v2 = bool(self.config.get("TRANSFORMER_V2", False))
+            _state_shape = tuple(self.config.get("TRANSFORMER_STATE_SHAPE", []))
+            cycle_module = CycleTransformerModule(
+                d_model=D_c,
+                d_obs=D_obs,
+                action_dim=self.action_dim,
+                window_size=W,
+                n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
+                n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
+                activation=self.config.get("ACTIVATION", "relu"),
+                v2=_transformer_v2,
+                state_shape=_state_shape if _transformer_v2 else (),
+                name="cycle_transformer",
+            )
+
+            # CT obs encoder: independent from shared_encoder, trainable via CT losses.
+            # rollout window 빌드에는 stop_gradient 적용 → policy gradient가 ct_obs_encoder에 흐르지 않음.
+            # _loss_fn의 window 재구성 경로에서는 stop_gradient 없이 CT loss gradient가 흐름.
+            ct_obs_emb_raw = jax.vmap(cycle_module.encode_obs)(obs)  # (T, B, D_obs)
+            sg_ct_obs_emb = jax.lax.stop_gradient(ct_obs_emb_raw)
+
+            def _window_step(carry, inputs):
+                obs_window, step_idx = carry
+                ct_obs_emb_t, done_t = inputs
+
+                # Reset window and counter at episode boundaries
+                obs_window = jnp.where(
+                    done_t[:, None, None], jnp.zeros_like(obs_window), obs_window
+                )
+                step_idx = jnp.where(done_t, jnp.zeros_like(step_idx), step_idx)
+
+                # Shift window left and write current CT obs embedding at the end
+                obs_window = jnp.roll(obs_window, shift=-1, axis=1)
+                obs_window = obs_window.at[:, -1, :].set(ct_obs_emb_t)
+
+                # Padding mask: True = valid slot
+                slots = jnp.arange(W)
+                valid_from = W - 1 - jnp.minimum(step_idx, W - 1)
+                padding_mask = slots[None, :] >= valid_from[:, None]  # (B, W)
+
+                return (obs_window, step_idx + 1), (obs_window, padding_mask)
+
+            (
+                _new_obs_window,
+                _new_step_idx,
+            ), (obs_windows_seq, pad_masks_seq) = jax.lax.scan(
+                _window_step,
+                (obs_window_init, step_idx_init),
+                (sg_ct_obs_emb, dones),
+            )
+            # obs_windows_seq: (T, B, W, D_obs),  pad_masks_seq: (T, B, W)
+
+            z_hat_sg_flat, a_hat_sg_flat = cycle_module.encode_only(
+                obs_windows_seq.reshape(T_dim * B_dim, W, D_obs),
+                pad_masks_seq.reshape(T_dim * B_dim, W),
+            )
+            _ct_z_hat_sg = z_hat_sg_flat.reshape(T_dim, B_dim, D_obs)
+            _ct_a_hat_sg = a_hat_sg_flat.reshape(T_dim, B_dim, self.action_dim)
+
         # [STA-PH1] blocked_states가 이미지(상태/관측)인 경우 인코딩
         # NOTE: blocked target is expected to be a *global full* state, which may
         # have different channel count from the execution observation.
@@ -248,12 +334,18 @@ class ActorCriticRNN(ActorCriticBase):
         rnn_in = (embedding, dones)
         rnn_state, embedding = ScannedRNN()(rnn_state, rnn_in)
 
-        # Action-prediction: compute pred_logits from GRU output with stop_gradient
+        # Action-prediction: compute pred_logits from GRU output
+        # When transformer_action=True, CycleTransformer replaces PartnerPredictor.
         pred_logits = None
-        if self._action_prediction_enabled():
-            pred_logits = PartnerPredictor(action_dim=self.action_dim, name="predictor")(
-                jax.lax.stop_gradient(embedding)
+        if transformer_action:
+            # Concatenate z + sg(ẑ) + sg(â) as policy input
+            embedding = jnp.concatenate(
+                [embedding, _ct_z_hat_sg, _ct_a_hat_sg], axis=-1
             )
+            pred_logits = _ct_a_hat_sg  # used for logging (already stopped)
+        elif self._action_prediction_enabled():
+            z_sg = jax.lax.stop_gradient(embedding)
+            pred_logits = PartnerPredictor(action_dim=self.action_dim, name="predictor")(z_sg)
             embedding = jnp.concatenate([embedding, pred_logits], axis=-1)
 
         actor_mean = nn.Dense(
@@ -281,9 +373,82 @@ class ActorCriticRNN(ActorCriticBase):
         # [STA-PH1] Return extras
         extras = {
             "obs_emb": obs_emb,
+            # CT obs embedding (CT-own encoder output, used in _loss_fn for window rebuild)
+            "ct_obs_emb": ct_obs_emb_raw if transformer_action else None,
             "blocked_emb": blocked_emb,
             "blocked_emb_slots": blocked_emb_slots,
             "pred_logits": pred_logits,
         }
 
-        return rnn_state, pi, jnp.squeeze(critic, axis=-1), extras
+        # Build new hidden state
+        if transformer_action:
+            new_hidden = (rnn_state, _new_obs_window, _new_step_idx)
+        else:
+            new_hidden = rnn_state
+
+        return new_hidden, pi, jnp.squeeze(critic, axis=-1), extras
+
+    @nn.compact
+    def ct_encode_state(self, obs):
+        """CT state encoder forward — v1 전용 recon target 계산용.
+
+        v2에서는 recon target이 raw global_obs (pixel space)이므로 이 메서드를 호출하지 않음.
+        Uses CT-own ct_state_encoder (independent of blocked_encoder).
+        Parameters shared via name="cycle_transformer".
+
+        Args:
+            obs: (T, B, H, W, C) or (B, H, W, C) raw observations (full global state)
+        Returns:
+            (T, B, D_obs) or (B, D_obs) state embedding
+        """
+        D_c = int(self.config.get("TRANSFORMER_D_C", 128))
+        D_obs = int(self.config["GRU_HIDDEN_DIM"])
+        _transformer_v2 = bool(self.config.get("TRANSFORMER_V2", False))
+        _state_shape = tuple(self.config.get("TRANSFORMER_STATE_SHAPE", []))
+        ct_module = CycleTransformerModule(
+            d_model=D_c,
+            d_obs=D_obs,
+            action_dim=self.action_dim,
+            window_size=int(self.config.get("TRANSFORMER_WINDOW_SIZE", 16)),
+            n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
+            n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
+            activation=self.config.get("ACTIVATION", "relu"),
+            v2=_transformer_v2,
+            state_shape=_state_shape if _transformer_v2 else (),
+            name="cycle_transformer",  # must match name in __call__
+        )
+        if obs.ndim == 5:
+            return jax.vmap(ct_module.encode_state)(obs)
+        return ct_module.encode_state(obs)
+
+    @nn.compact
+    def cycle_transformer_forward(self, obs_windows, padding_masks=None):
+        """Full CycleTransformer forward for auxiliary loss computation in _loss_fn.
+
+        Uses the same module name as in __call__ so parameters are shared.
+        Only called when transformer_action=True.
+
+        Args:
+            obs_windows:   (N, W, D_obs) where N = T*B (flattened time*batch)
+            padding_masks: (N, W) bool, True = valid slot (may be None)
+        Returns:
+            (C, z_hat, a_hat, C_prime) each of shape (N, ...)
+        """
+        W = int(self.config.get("TRANSFORMER_WINDOW_SIZE", 16))
+        D_c = int(self.config.get("TRANSFORMER_D_C", 128))
+        D_obs = int(self.config["GRU_HIDDEN_DIM"])
+        _transformer_v2 = bool(self.config.get("TRANSFORMER_V2", False))
+        _state_shape = tuple(self.config.get("TRANSFORMER_STATE_SHAPE", []))
+        module = CycleTransformerModule(
+            d_model=D_c,
+            d_obs=D_obs,
+            action_dim=self.action_dim,
+            window_size=W,
+            n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
+            n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
+            activation=self.config.get("ACTIVATION", "relu"),
+            v2=_transformer_v2,
+            state_shape=_state_shape if _transformer_v2 else (),
+            name="cycle_transformer",  # must match name in __call__
+        )
+        return module(obs_windows, padding_masks)

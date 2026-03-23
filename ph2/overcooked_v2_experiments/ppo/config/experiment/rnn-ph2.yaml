@@ -59,3 +59,9 @@ PH2_FIXED_IND_PROB: 0.5
 # If True, spec/ind share the action predictor ("shared_predictor") parameters.
 # Default False preserves legacy PH2 behavior and checkpoint compatibility.
 SHARED_PREDICTION: false
+# Cycle loss: decoder(pred_logits) -> z_hat vs stop_grad(z), MSE
+CYCLE_LOSS_ENABLED: false
+CYCLE_LOSS_COEF: 0.1
+# Latent mode: concat both h (64-dim) and action_logits (6-dim) to policy embedding
+# embedding dim: 128+64+6=198 (ON) vs 128+6=134 (OFF, default)
+LATENT_MODE: false
