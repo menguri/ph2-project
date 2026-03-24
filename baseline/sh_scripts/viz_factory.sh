@@ -34,10 +34,10 @@ echo "Eval max steps: ${EVAL_MAX_STEPS}"
 # wait
 # # FCP OV2 batch 3
 # ./run_visualize.sh --gpu 2 --dir runs/20260323-060544_8ce7gix_test_time_wide_fcp --cross --num_seeds 5 --no_viz --max_steps "${EVAL_MAX_STEPS}" &
-./run_visualize.sh --gpu 4 --dir runs/20260324-051804_bvnrpzc3_ToyCoop_sp --cross --num_seeds 5 --no_viz &
-./run_visualize.sh --gpu 5 --dir runs/20260324-053044_1ezzwzf0_ToyCoop_e3t --cross --num_seeds 5 --no_viz &
-./run_visualize.sh --gpu 6 --dir runs/20260324-055134_2xyd3s4t_ToyCoop_fcp --cross --num_seeds 5 --no_viz &
-wait
+./run_visualize.sh --gpu 4 --dir runs/20260324-064615_za0916e8_ToyCoop_fcp --cross --num_seeds 5 --no_viz &
+# ./run_visualize.sh --gpu 5 --dir runs/20260324-053044_1ezzwzf0_ToyCoop_e3t --cross --num_seeds 5 --no_viz &
+# ./run_visualize.sh --gpu 6 --dir runs/20260324-055134_2xyd3s4t_ToyCoop_fcp --cross --num_seeds 5 --no_viz &
+# wait
 # ./run_visualize.sh --gpu 7 --dir runs/20260318-143046_a7jkrv7z_forced_coord_e3t --cross --num_seeds 5 --no_viz &
 # wait
 # # e3t batch 2

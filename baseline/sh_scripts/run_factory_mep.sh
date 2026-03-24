@@ -87,4 +87,35 @@ run_mep_s1 "$S1_GPU" "coord_ring"
 # POP_DIR="${RUNS_BASE}/20260319-061341_zq0tpuaw_forced_coord_m1/mep_population"
 # run_mep_s2 "$S2_GPUS" "forced_coord" "$POP_DIR"
 
+# --- OV2 Layouts ---
+# echo "[MEP] layout=grounded_coord_simple"
+# run_mep_s1 "$S1_GPU" "grounded_coord_simple"
+# POP_DIR=""
+# run_mep_s2 "$S2_GPUS" "grounded_coord_simple" "$POP_DIR"
+
+# echo "[MEP] layout=grounded_coord_ring"
+# run_mep_s1 "$S1_GPU" "grounded_coord_ring"
+# POP_DIR=""
+# run_mep_s2 "$S2_GPUS" "grounded_coord_ring" "$POP_DIR"
+
+# echo "[MEP] layout=demo_cook_simple"
+# run_mep_s1 "$S1_GPU" "demo_cook_simple"
+# POP_DIR=""
+# run_mep_s2 "$S2_GPUS" "demo_cook_simple" "$POP_DIR"
+
+# echo "[MEP] layout=demo_cook_wide"
+# run_mep_s1 "$S1_GPU" "demo_cook_wide"
+# POP_DIR=""
+# run_mep_s2 "$S2_GPUS" "demo_cook_wide" "$POP_DIR"
+
+# echo "[MEP] layout=test_time_simple"
+# run_mep_s1 "$S1_GPU" "test_time_simple"
+# POP_DIR=""
+# run_mep_s2 "$S2_GPUS" "test_time_simple" "$POP_DIR"
+
+# echo "[MEP] layout=test_time_wide"
+# run_mep_s1 "$S1_GPU" "test_time_wide"
+# POP_DIR=""
+# run_mep_s2 "$S2_GPUS" "test_time_wide" "$POP_DIR"
+
 # echo "[MEP] all layout jobs finished."
