@@ -58,6 +58,7 @@ def make_train_mep_s1(config):
     GRU_HIDDEN_DIM = model_config["GRU_HIDDEN_DIM"]
 
     model_config["NUM_UPDATES"] = NUM_UPDATES
+    model_config["ACTION_DIM"] = ACTION_DIM
 
     num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
 

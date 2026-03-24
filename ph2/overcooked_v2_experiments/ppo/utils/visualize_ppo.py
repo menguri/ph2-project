@@ -90,6 +90,32 @@ def visualize_ppo_policy(
     )
 
     num_actors = env.num_agents
+
+    # 환경의 실제 ACTION_DIM을 모든 config에 주입 (체크포인트에 없을 수 있음)
+    _action_dim = env.action_space(env.agents[0]).n
+    for _cfg in configs.values():
+        if isinstance(_cfg, dict) and "model" in _cfg:
+            _cfg["model"]["ACTION_DIM"] = _action_dim
+    if config and isinstance(config, dict) and "model" in config:
+        config["model"]["ACTION_DIM"] = _action_dim
+
+    # CT v2: TRANSFORMER_STATE_SHAPE가 누락된 기존 체크포인트 대응
+    # env를 reset해서 full global obs shape을 추론
+    def _inject_ct_state_shape(cfg):
+        if not cfg.get("TRANSFORMER_V2", False):
+            return
+        if cfg.get("TRANSFORMER_STATE_SHAPE"):
+            return
+        _rng = jax.random.PRNGKey(0)
+        _obs, _state = env.reset(_rng)
+        _full_obs = env.get_obs_default(_state)  # (num_agents, H, W, C)
+        cfg["TRANSFORMER_STATE_SHAPE"] = list(_full_obs[0].shape)
+
+    _inject_ct_state_shape(config)
+    for _cfg in configs.values():
+        if isinstance(_cfg, dict):
+            _inject_ct_state_shape(_cfg)
+
     run_keys = list(all_params.keys())
 
     def _get_stablock(cfg):
@@ -313,7 +339,7 @@ def visualize_ppo_policy(
                         ]
                         policy_pairing = PolicyPairing(*policies)
                         _ekw = copy.deepcopy(env_kwargs)
-                        _layout = _ekw.pop("layout")
+                        _layout = _ekw.pop("layout", _env_name if _env_name == "ToyCoop" else None)
                         return eval_pairing(
                             policy_pairing,
                             _layout,
@@ -354,7 +380,7 @@ def visualize_ppo_policy(
                         ]
                         policy_pairing = PolicyPairing(*policies)
                         _ekw = copy.deepcopy(env_kwargs)
-                        _layout = _ekw.pop("layout")
+                        _layout = _ekw.pop("layout", _env_name if _env_name == "ToyCoop" else None)
                         return eval_pairing(
                             policy_pairing,
                             _layout,

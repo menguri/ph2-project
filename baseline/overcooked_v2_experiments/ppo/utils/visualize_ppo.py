@@ -80,6 +80,15 @@ def visualize_ppo_policy(
     )
 
     num_actors = env.num_agents
+
+    # 환경의 실제 ACTION_DIM을 모든 config에 주입 (체크포인트에 없을 수 있음)
+    _action_dim = env.action_space(env.agents[0]).n
+    for _cfg in configs.values():
+        if isinstance(_cfg, dict) and "model" in _cfg:
+            _cfg["model"]["ACTION_DIM"] = _action_dim
+    if config and isinstance(config, dict) and "model" in config:
+        config["model"]["ACTION_DIM"] = _action_dim
+
     run_keys = list(all_params.keys())
 
     # 3) cross-play 모드: 서로 다른 run 조합으로 PolicyPairing 구성
@@ -218,7 +227,7 @@ def visualize_ppo_policy(
                         ]
                         policy_pairing = PolicyPairing(*policies)
                         _ekw = copy.deepcopy(env_kwargs)
-                        _layout = _ekw.pop("layout")
+                        _layout = _ekw.pop("layout", _env_name if _env_name == "ToyCoop" else None)
                         return eval_pairing(
                             policy_pairing,
                             _layout,

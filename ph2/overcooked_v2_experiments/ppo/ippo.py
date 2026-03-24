@@ -151,6 +151,7 @@ def make_train(
 
     ACTION_DIM = env.action_space(env.agents[0]).n
 
+    model_config["ACTION_DIM"] = ACTION_DIM
     model_config["NUM_ACTORS"] = env.num_agents * model_config["NUM_ENVS"]
     model_config["NUM_UPDATES"] = (
         model_config["TOTAL_TIMESTEPS"]
@@ -482,6 +483,9 @@ def make_train(
                 assert (
                     population_config is not None
                 ), "population_config cannot be None if population is not a policy"
+                # population 체크포인트에 ACTION_DIM이 없을 수 있으므로 현재 환경 값 주입
+                if "ACTION_DIM" not in population_config.get("model", {}):
+                    population_config.setdefault("model", {})["ACTION_DIM"] = ACTION_DIM
                 population_network = get_actor_critic(population_config)
                 init_population_hstate = initialize_carry(
                     population_config, model_config["NUM_ACTORS"]

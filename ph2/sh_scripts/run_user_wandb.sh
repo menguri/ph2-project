@@ -289,6 +289,7 @@ while [[ $# -gt 0 ]]; do
       echo "        Supported PH2 flags: --ph2-ratio-stage1/2/3, --ph2-fixed-ind-prob, --ph2-epsilon, --action-prediction" >&2
       exit 1
       ;;
+    --random-reset) RANDOM_RESET_OVERRIDE="$2"; shift 2;;
     *)            echo "[WARN] Unknown arg: $1"; shift 1;;
   esac
 done
@@ -597,31 +598,36 @@ if [[ -n "$SHARED_PREDICTION" ]]; then
   PY_ARGS+=("SHARED_PREDICTION=$SHARED_PREDICTION")
 fi
 if [[ -n "$TRANSFORMER_ACTION" ]]; then
-  PY_ARGS+=("TRANSFORMER_ACTION=$TRANSFORMER_ACTION")
+  PY_ARGS+=("++TRANSFORMER_ACTION=$TRANSFORMER_ACTION")
 fi
 if [[ -n "$TRANSFORMER_WINDOW_SIZE" ]]; then
-  PY_ARGS+=("TRANSFORMER_WINDOW_SIZE=$TRANSFORMER_WINDOW_SIZE")
+  PY_ARGS+=("++TRANSFORMER_WINDOW_SIZE=$TRANSFORMER_WINDOW_SIZE")
 fi
 if [[ -n "$TRANSFORMER_D_C" ]]; then
-  PY_ARGS+=("TRANSFORMER_D_C=$TRANSFORMER_D_C")
+  PY_ARGS+=("++TRANSFORMER_D_C=$TRANSFORMER_D_C")
 fi
 if [[ -n "$TRANSFORMER_N_HEADS" ]]; then
-  PY_ARGS+=("TRANSFORMER_N_HEADS=$TRANSFORMER_N_HEADS")
+  PY_ARGS+=("++TRANSFORMER_N_HEADS=$TRANSFORMER_N_HEADS")
 fi
 if [[ -n "$TRANSFORMER_N_LAYERS" ]]; then
-  PY_ARGS+=("TRANSFORMER_N_LAYERS=$TRANSFORMER_N_LAYERS")
+  PY_ARGS+=("++TRANSFORMER_N_LAYERS=$TRANSFORMER_N_LAYERS")
 fi
 if [[ -n "$TRANSFORMER_RECON_COEF" ]]; then
-  PY_ARGS+=("TRANSFORMER_RECON_COEF=$TRANSFORMER_RECON_COEF")
+  PY_ARGS+=("++TRANSFORMER_RECON_COEF=$TRANSFORMER_RECON_COEF")
 fi
 if [[ -n "$TRANSFORMER_PRED_COEF" ]]; then
-  PY_ARGS+=("TRANSFORMER_PRED_COEF=$TRANSFORMER_PRED_COEF")
+  PY_ARGS+=("++TRANSFORMER_PRED_COEF=$TRANSFORMER_PRED_COEF")
 fi
 if [[ -n "$TRANSFORMER_CYCLE_COEF" ]]; then
-  PY_ARGS+=("TRANSFORMER_CYCLE_COEF=$TRANSFORMER_CYCLE_COEF")
+  PY_ARGS+=("++TRANSFORMER_CYCLE_COEF=$TRANSFORMER_CYCLE_COEF")
 fi
 if [[ -n "$TRANSFORMER_V2" ]]; then
-  PY_ARGS+=("TRANSFORMER_V2=$TRANSFORMER_V2")
+  PY_ARGS+=("++TRANSFORMER_V2=$TRANSFORMER_V2")
+fi
+
+# random_reset override (ToyCoop procedural generation)
+if [[ -n "${RANDOM_RESET_OVERRIDE:-}" ]]; then
+  PY_ARGS+=("env.ENV_KWARGS.random_reset=${RANDOM_RESET_OVERRIDE}")
 fi
 
 # E3T epsilon override (rnn-ph1.yaml에 정의됨)

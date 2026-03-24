@@ -60,6 +60,9 @@ get_fcp_path() {
         "test_time_wide")
             echo "fcp_populations/test_time_wide_sp"
             ;;
+        "toy_coop")
+            echo "fcp_populations/toy_coop_sp"
+            ;;
         *)
             echo ""
             ;;

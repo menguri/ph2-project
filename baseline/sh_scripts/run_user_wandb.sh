@@ -157,6 +157,7 @@ while [[ $# -gt 0 ]]; do
     --pop-anneal-begin) POP_ANNEAL_BEGIN_OVERRIDE="$2"; shift 2;;
     --mem-frac)   XLA_PYTHON_CLIENT_MEM_FRACTION="$2"; shift 2;;
     --fcp-device) FCP_DEVICE="$2"; shift 2 ;;
+    --random-reset) RANDOM_RESET_OVERRIDE="$2"; shift 2;;
     --)           shift; break;;
     *)            echo "[WARN] Unknown arg: $1"; shift 1;;
   esac
@@ -355,6 +356,9 @@ if [[ -n "$POP_ANNEAL_HORIZON_OVERRIDE" ]]; then
 fi
 if [[ -n "$POP_ANNEAL_BEGIN_OVERRIDE" ]]; then
   PY_ARGS+=("++POPULATION_ANNEAL_BEGIN=${POP_ANNEAL_BEGIN_OVERRIDE}")
+fi
+if [[ -n "${RANDOM_RESET_OVERRIDE:-}" ]]; then
+  PY_ARGS+=("env.ENV_KWARGS.random_reset=${RANDOM_RESET_OVERRIDE}")
 fi
 
 # ====================================================

@@ -51,6 +51,9 @@ done
 : "${CYCLE_LOSS_COEF:=0.1}"
 : "${LATENT_MODE:=False}"
 
+# ToyCoop random_reset (procedural generation)
+: "${RANDOM_RESET:=false}"
+
 # CycleTransformer (CT) 파라미터 — USE_CT=1일 때 유효 (rnn-ct.yaml 기본값 오버라이드용)
 : "${TRANSFORMER_RECON_COEF:=1.0}"
 : "${TRANSFORMER_PRED_COEF:=1.0}"
@@ -130,6 +133,9 @@ run_ph2() {
   if [[ "$USE_SHARED" == "1" ]]; then
     cmd+=(--shared-prediction True)
   fi
+  if [[ "$RANDOM_RESET" == "true" ]]; then
+    cmd+=(--random-reset true)
+  fi
 
   echo "Executing: ${cmd[*]}"
   "${cmd[@]}"
@@ -191,7 +197,7 @@ run_ph2() {
 # CT v1 / v2 비교 실험: grounded_coord_simple (OV2), counter_circuit (OV1)
 # GPU: 0,1,2,3,4
 # =============================================================================
-SWEEP_GPUS="2,3,4,6,7"
+SWEEP_GPUS="3,4,5,6,7"
 
 # # --- grounded_coord_simple: CT v1 ---
 # USE_CT=1
@@ -229,22 +235,40 @@ SWEEP_GPUS="2,3,4,6,7"
 
 # =============================================================================
 # ToyCoop (Dual Destination) — MLP encoder, full obs
-# EXP를 rnn-ph2-toycoop 으로 변경하여 MLP 사용
+# RANDOM_RESET 기본값은 스크립트 상단에서 설정 (true/false)
 # =============================================================================
+
+# ToyCoop 공통: 10시드, MLP, env_device=cpu
+NUM_SEEDS=5
+NENVS=512
+NSTEPS=100
+
+# --- ToyCoop CT=0, random_reset (기본값 따름) ---
 EXP="rnn-ph2-toycoop"
 USE_CT=0
-NENVS=512
-NSTEPS=100
-echo "[PH2] toy_coop"
+echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
 run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-# =============================================================================
-# ToyCoop (Dual Destination) — MLP encoder, full obs
-# EXP를 rnn-ph2-toycoop 으로 변경하여 MLP 사용
-# =============================================================================
+# --- ToyCoop CT=1, random_reset (기본값 따름) ---
 EXP="rnn-ph2-toycoop"
 USE_CT=1
+echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
+run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+# ToyCoop 공통: 10시드, MLP, env_device=cpu
+NUM_SEEDS=5
 NENVS=512
 NSTEPS=100
-echo "[PH2] toy_coop"
+FIXED_SEED=41
+
+# --- ToyCoop CT=0, random_reset (기본값 따름) ---
+EXP="rnn-ph2-toycoop"
+USE_CT=0
+echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
+run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+# --- ToyCoop CT=1, random_reset (기본값 따름) ---
+EXP="rnn-ph2-toycoop"
+USE_CT=1
+echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
 run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"

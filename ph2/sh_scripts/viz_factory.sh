@@ -31,7 +31,7 @@ AUTO_PH2_CROSS_NUM_SEEDS=5
 
 # Optional manual fallback commands (used only when AUTO_DISCOVER_PRESETS=false).
 PRESET_FACTORY_COMMANDS=(
-  "./run_visualize.sh --gpu 6 --dir runs/20260319-063552_g8tf48us_asymm_advantages_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5"
+  "./run_visualize.sh --gpu 2 --dir runs/20260323-150455_vygmi6yf_ToyCoop_e3t_ph2_e0p2_o10_s2_k1_ct0 --cross --num_seeds 5 --no_viz"
   # "./run_visualize.sh --gpu 6 --dir runs/20260319-113704_6lre6zzu_cramped_room_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
   # "./run_visualize.sh --gpu 7 --dir runs/20260318-195558_b186b3gj_asymm_advantages_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
   # "./run_visualize.sh --gpu 7 --dir runs/20260313-004534_6u0sqroe_forced_coord_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
@@ -151,21 +151,26 @@ build_auto_preset_commands() {
     fi
 
     run_base_lc="$(echo "$run_base" | tr '[:upper:]' '[:lower:]')"
+    # ToyCoop은 max_steps=100
+    local _max_steps="$AUTO_MAX_STEPS"
+    if [[ "$run_base_lc" == *"toycoop"* ]]; then
+      _max_steps=100
+    fi
     case "$preset_mode" in
       cross-play)
         if [[ "$run_base_lc" == *"ph1"* ]]; then
-          echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --cross --num_seeds $AUTO_PH1_CROSS_NUM_SEEDS --num_recent_tildes $AUTO_PH1_CROSS_NUM_RECENT_TILDES --max_steps $AUTO_MAX_STEPS"
+          echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --cross --num_seeds $AUTO_PH1_CROSS_NUM_SEEDS --num_recent_tildes $AUTO_PH1_CROSS_NUM_RECENT_TILDES --max_steps $_max_steps"
         elif [[ "$run_base_lc" == *"ph2"* ]]; then
-          echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --cross --num_seeds $AUTO_PH2_CROSS_NUM_SEEDS --max_steps $AUTO_MAX_STEPS"
+          echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --cross --num_seeds $AUTO_PH2_CROSS_NUM_SEEDS --max_steps $_max_steps"
         fi
         ;;
       eval-viz)
         if [[ "$run_base_lc" == *"ph1"* ]]; then
-          echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --$preset_mode --max_steps $AUTO_MAX_STEPS"
+          echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --$preset_mode --max_steps $_max_steps"
         fi
         ;;
       eval-analysis)
-        echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --$preset_mode --max_steps $AUTO_MAX_STEPS"
+        echo "./run_visualize.sh --gpu $gpu_idx --dir runs/$run_base --$preset_mode --max_steps $_max_steps"
         ;;
       *)
         echo "[WARN] unsupported AUTO_PRESET_EVAL_MODE: $preset_mode" >&2
@@ -228,7 +233,13 @@ run_preset_factory_commands() {
   for cmd in "${commands[@]}"; do
     [[ -z "$cmd" ]] && continue
     if [[ "$cmd" != *"--max_steps"* && "$cmd" != *"--max-steps"* ]]; then
-      cmd="$cmd --max_steps $AUTO_MAX_STEPS"
+      # ToyCoop은 max_steps=100
+      local _fallback_steps="$AUTO_MAX_STEPS"
+      local _cmd_lc="$(echo "$cmd" | tr '[:upper:]' '[:lower:]')"
+      if [[ "$_cmd_lc" == *"toycoop"* ]]; then
+        _fallback_steps=100
+      fi
+      cmd="$cmd --max_steps $_fallback_steps"
     fi
     total=$((total + 1))
     echo "[CMD] $cmd"

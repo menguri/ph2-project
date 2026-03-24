@@ -34,9 +34,10 @@ def get_actor_critic(config) -> ActorCriticBase:
         case _:
             raise NotImplementedError("Only RNN and CNN models are supported.")
 
+    # config에 ACTION_DIM이 저장되어 있으면 사용, 없으면 OvercookedV2 기본값(6)
+    action_dim = model_config.get("ACTION_DIM", len(Actions))
     return actor_critic(
-        # env.action_space(env.agents[0]).n,
-        len(Actions),
+        action_dim,
         config=model_config,
     )
 

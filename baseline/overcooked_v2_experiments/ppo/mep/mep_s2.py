@@ -63,6 +63,7 @@ def make_train_mep_s2(config):
     GRU_HIDDEN_DIM = model_config["GRU_HIDDEN_DIM"]
 
     model_config["NUM_UPDATES"] = NUM_UPDATES
+    model_config["ACTION_DIM"] = ACTION_DIM
 
     prioritized_alpha = config.get("MEP_PRIORITIZED_ALPHA", 1.0)
     use_prioritized = config.get("MEP_USE_PRIORITIZED_SAMPLING", True)

@@ -117,6 +117,9 @@ def eval_pairing(
     ), "Only one of all_recipes and num_seeds can be set"
     assert "layout" not in env_kwargs, "Layout should be passed as layout_name"
 
+    # ToyCoop 감지: layout_name이 "ToyCoop"이면 env_name_override 설정
+    _env_name_override = "ToyCoop" if layout_name == "ToyCoop" else None
+
     if all_recipes:
         engine_name, _tmp_kwargs = None, None
         if old_overcooked:
@@ -146,6 +149,7 @@ def eval_pairing(
             env_kwargs,
             old_overcooked=old_overcooked,
             disable_auto=disable_old_overcooked_auto,
+            env_name_override=_env_name_override,
         )
 
         keys = jax.random.split(key, num_seeds)

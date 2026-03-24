@@ -4,3 +4,4 @@
   "max_steps": 100
   "partial_obs": false
   "incentivize_strat": 2
+  "step_cost": 0.1

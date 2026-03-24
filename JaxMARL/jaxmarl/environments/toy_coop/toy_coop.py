@@ -48,6 +48,7 @@ class ToyCoop(MultiAgentEnv):
         debug: bool = False,
         partial_obs: bool = False,
         incentivize_strat: int = 2,
+        step_cost: float = 1.0,
     ):
         super().__init__(num_agents=2)
         self.width = 5
@@ -79,6 +80,7 @@ class ToyCoop(MultiAgentEnv):
 
         self.partial_obs = partial_obs
         self.incentivize_strat = incentivize_strat
+        self.step_cost = step_cost
 
     def reset(self, key: chex.PRNGKey) -> Tuple[Dict[str, chex.Array], State]:
         """Reset environment state."""
@@ -212,7 +214,7 @@ class ToyCoop(MultiAgentEnv):
             pink_reward + green_reward,
         )
 
-        return state.replace(agent_pos=next_pos), reward - 1  # step cost
+        return state.replace(agent_pos=next_pos), reward - self.step_cost
 
     @partial(jax.jit, static_argnums=[0])
     def get_obs(self, state: State) -> Dict[str, chex.Array]:

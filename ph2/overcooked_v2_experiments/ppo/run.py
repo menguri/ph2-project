@@ -176,6 +176,12 @@ def single_run(config):
                 population_config=population_config,
             )
 
+        # make_train 내부에서 동적으로 설정된 키를 원본 config에 반영
+        # (체크포인트 저장 시 원본 config를 사용하므로)
+        for _dynamic_key in ("TRANSFORMER_STATE_SHAPE", "ACTION_DIM"):
+            if _dynamic_key in config_copy and _dynamic_key not in config:
+                config[_dynamic_key] = config_copy[_dynamic_key]
+
         # num_devices = len(jax.devices("gpu"))
         num_devices = get_num_devices()
         print("Using", num_devices, "devices")

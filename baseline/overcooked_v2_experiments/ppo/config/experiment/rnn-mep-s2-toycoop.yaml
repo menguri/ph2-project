@@ -1,12 +1,15 @@
 # @package _global_
-# ToyCoop (Dual Destination) 환경 전용 E3T config.
+# ToyCoop (Dual Destination) 환경 전용 MEP Stage 2 config.
 defaults:
   - override /model: rnn
 
-ALG_NAME: "E3T"
-E3T_EPSILON: 0.5
-USE_PARTNER_MODELING: True
-PRED_LOSS_COEF: 1.0
+ALG_NAME: "MEP_S2"
+
+MEP_USE_PRIORITIZED_SAMPLING: True
+MEP_PRIORITIZED_ALPHA: 1.0
+
+NUM_SEEDS: 10
+NUM_CHECKPOINTS: 3
 
 model:
   OBS_ENCODER: "MLP"
@@ -20,3 +23,6 @@ model:
   VF_COEF: 1.0
   MAX_GRAD_NORM: 0.5
   CLIP_EPS: 0.2
+  GAE_LAMBDA: 0.9
+  ANNEAL_LR: True
+  LR_WARMUP: 0.05
