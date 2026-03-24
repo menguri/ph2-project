@@ -8,7 +8,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # -----------------------------------------------------------------------------
 EXP="rnn-ph2"
 # CT 모드: USE_CT=1 이면 rnn-ct experiment config 사용
-: "${USE_CT:=1}"
+: "${USE_CT:=0}"
 if [[ "$USE_CT" == "1" ]]; then
   EXP="rnn-ct"
 fi
@@ -19,7 +19,7 @@ NENVS=64
 NUM_SEEDS=5
 NSTEPS=256
 
-FIXED_SEED=42
+FIXED_SEED=41
 while [[ $# -gt 0 ]]; do
   case "$1" in
     *)
@@ -144,10 +144,10 @@ run_ph2() {
 # -----------------------------------------------------------------------------
 # Sweep 파라미터
 # -----------------------------------------------------------------------------
-# SWEEP_GPUS="1,2,3,4,7"
-# TARGET_OMEGA=10.0
-# TARGET_SIGMA=2.0
-# TARGET_MAX_COUNT=1
+SWEEP_GPUS="1,2,3,4,5"
+TARGET_OMEGA=10.0
+TARGET_SIGMA=2.0
+TARGET_MAX_COUNT=1
 
 # -----------------------------------------------------------------------------
 # 레이아웃별 실행 커멘드 — 원하는 줄만 주석 해제해서 사용
@@ -167,8 +167,48 @@ run_ph2() {
 # echo "[PH2] coord_ring"
 # run_ph2 "$SWEEP_GPUS" "coord_ring" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-# echo "[PH2] forced_coord"
-# run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+TARGET_OMEGA=5.0
+TARGET_SIGMA=2.0
+TARGET_MAX_COUNT=1
+
+echo "[PH2] forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+
+TARGET_OMEGA=5.0
+TARGET_SIGMA=3.0
+TARGET_MAX_COUNT=1
+
+
+echo "[PH2] forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+
+TARGET_OMEGA=3.0
+TARGET_SIGMA=3.0
+TARGET_MAX_COUNT=1
+
+
+echo "[PH2] forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+
+TARGET_OMEGA=3.0
+TARGET_SIGMA=2.0
+TARGET_MAX_COUNT=1
+
+
+echo "[PH2] forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+
+TARGET_OMEGA=2.0
+TARGET_SIGMA=2.0
+TARGET_MAX_COUNT=1
+
+
+echo "[PH2] forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
 # -----------------------------------------------------------------------------
 # OV2 (partial observation, agent_view_size=2):
@@ -197,7 +237,7 @@ run_ph2() {
 # CT v1 / v2 비교 실험: grounded_coord_simple (OV2), counter_circuit (OV1)
 # GPU: 0,1,2,3,4
 # =============================================================================
-SWEEP_GPUS="3,4,5,6,7"
+# SWEEP_GPUS="3,4,5,6,7"
 
 # # --- grounded_coord_simple: CT v1 ---
 # USE_CT=1
@@ -239,36 +279,36 @@ SWEEP_GPUS="3,4,5,6,7"
 # =============================================================================
 
 # ToyCoop 공통: 10시드, MLP, env_device=cpu
-NUM_SEEDS=5
-NENVS=512
-NSTEPS=100
+# NUM_SEEDS=5
+# NENVS=512
+# NSTEPS=100
 
-# --- ToyCoop CT=0, random_reset (기본값 따름) ---
-EXP="rnn-ph2-toycoop"
-USE_CT=0
-echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
-run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# # --- ToyCoop CT=0, random_reset (기본값 따름) ---
+# EXP="rnn-ph2-toycoop"
+# USE_CT=0
+# echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
+# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-# --- ToyCoop CT=1, random_reset (기본값 따름) ---
-EXP="rnn-ph2-toycoop"
-USE_CT=1
-echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
-run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# # --- ToyCoop CT=1, random_reset (기본값 따름) ---
+# EXP="rnn-ph2-toycoop"
+# USE_CT=1
+# echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
+# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-# ToyCoop 공통: 10시드, MLP, env_device=cpu
-NUM_SEEDS=5
-NENVS=512
-NSTEPS=100
-FIXED_SEED=41
+# # ToyCoop 공통: 10시드, MLP, env_device=cpu
+# NUM_SEEDS=5
+# NENVS=512
+# NSTEPS=100
+# FIXED_SEED=41
 
-# --- ToyCoop CT=0, random_reset (기본값 따름) ---
-EXP="rnn-ph2-toycoop"
-USE_CT=0
-echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
-run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# # --- ToyCoop CT=0, random_reset (기본값 따름) ---
+# EXP="rnn-ph2-toycoop"
+# USE_CT=0
+# echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
+# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-# --- ToyCoop CT=1, random_reset (기본값 따름) ---
-EXP="rnn-ph2-toycoop"
-USE_CT=1
-echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
-run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# # --- ToyCoop CT=1, random_reset (기본값 따름) ---
+# EXP="rnn-ph2-toycoop"
+# USE_CT=1
+# echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
+# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
