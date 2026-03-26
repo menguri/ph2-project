@@ -50,6 +50,7 @@ done
 : "${CYCLE_LOSS_ENABLED:=False}"
 : "${CYCLE_LOSS_COEF:=0.1}"
 : "${LATENT_MODE:=False}"
+: "${SAVE_EVAL_CHECKPOINTS:=True}"
 
 # ToyCoop random_reset (procedural generation)
 : "${RANDOM_RESET:=false}"
@@ -111,7 +112,8 @@ run_ph2() {
     --action-prediction "$ACTION_PREDICTION"
     --cycle-loss-enabled "$CYCLE_LOSS_ENABLED"
     --cycle-loss-coef "$CYCLE_LOSS_COEF"
-    --latent-mode "$LATENT_MODE")
+    --latent-mode "$LATENT_MODE"
+    --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS")
 
   if [[ -n "$PH2_FIXED_IND_PROB" ]]; then
     cmd+=(--ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB")
@@ -167,12 +169,12 @@ TARGET_MAX_COUNT=1
 # echo "[PH2] coord_ring"
 # run_ph2 "$SWEEP_GPUS" "coord_ring" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
-TARGET_OMEGA=5.0
-TARGET_SIGMA=2.0
-TARGET_MAX_COUNT=1
+# TARGET_OMEGA=5.0
+# TARGET_SIGMA=2.0
+# TARGET_MAX_COUNT=1
 
-echo "[PH2] forced_coord"
-run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+# echo "[PH2] forced_coord"
+# run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
 
 TARGET_OMEGA=5.0
@@ -206,6 +208,25 @@ TARGET_OMEGA=2.0
 TARGET_SIGMA=2.0
 TARGET_MAX_COUNT=1
 
+: "${PH2_EPSILON:=0.0}"
+
+echo "[PH2] forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+TARGET_OMEGA=1.0
+TARGET_SIGMA=2.0
+TARGET_MAX_COUNT=1
+
+: "${PH2_EPSILON:=0.0}"
+
+echo "[PH2] forced_coord"
+run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+
+TARGET_OMEGA=1.0
+TARGET_SIGMA=3.0
+TARGET_MAX_COUNT=1
+
+: "${PH2_EPSILON:=0.0}"
 
 echo "[PH2] forced_coord"
 run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
@@ -279,9 +300,12 @@ run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MA
 # =============================================================================
 
 # ToyCoop 공통: 10시드, MLP, env_device=cpu
-# NUM_SEEDS=5
 # NENVS=512
 # NSTEPS=100
+# SWEEP_GPUS="6,7"
+
+# : "${PH1_OMEGA:=0.1}"
+# : "${PH1_SIGMA:=1.0}"
 
 # # --- ToyCoop CT=0, random_reset (기본값 따름) ---
 # EXP="rnn-ph2-toycoop"

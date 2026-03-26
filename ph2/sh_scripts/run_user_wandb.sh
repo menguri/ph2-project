@@ -76,6 +76,7 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${CYCLE_LOSS_COEF:=}"
 : "${LATENT_MODE:=}"
 : "${SHARED_PREDICTION:=}"
+: "${SAVE_EVAL_CHECKPOINTS:=}"
 # CycleTransformer (CT) 파라미터
 : "${TRANSFORMER_ACTION:=}"
 : "${TRANSFORMER_WINDOW_SIZE:=}"
@@ -275,6 +276,7 @@ while [[ $# -gt 0 ]]; do
     --cycle-loss-coef) CYCLE_LOSS_COEF="$2"; shift 2;;
     --latent-mode) LATENT_MODE="$2"; shift 2;;
     --shared-prediction) SHARED_PREDICTION="$2"; shift 2;;
+    --save-eval-checkpoints) SAVE_EVAL_CHECKPOINTS="$2"; shift 2;;
     --transformer-action) TRANSFORMER_ACTION="$2"; shift 2;;
     --transformer-window-size) TRANSFORMER_WINDOW_SIZE="$2"; shift 2;;
     --transformer-d-c) TRANSFORMER_D_C="$2"; shift 2;;
@@ -596,6 +598,9 @@ if [[ -n "$LATENT_MODE" ]]; then
 fi
 if [[ -n "$SHARED_PREDICTION" ]]; then
   PY_ARGS+=("SHARED_PREDICTION=$SHARED_PREDICTION")
+fi
+if [[ -n "$SAVE_EVAL_CHECKPOINTS" ]]; then
+  PY_ARGS+=("SAVE_EVAL_CHECKPOINTS=$SAVE_EVAL_CHECKPOINTS")
 fi
 if [[ -n "$TRANSFORMER_ACTION" ]]; then
   PY_ARGS+=("++TRANSFORMER_ACTION=$TRANSFORMER_ACTION")

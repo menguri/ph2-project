@@ -284,7 +284,7 @@ def single_run_with_viz(config):
             orbax_utils = None
             ocp = None
 
-        if orbax_utils is not None and ocp is not None:
+        if orbax_utils is not None and ocp is not None and config.get("SAVE_EVAL_CHECKPOINTS", True):
             try:
                 num_steps = int(config["model"]["NUM_STEPS"])
                 num_envs = int(config["model"]["NUM_ENVS"])
@@ -542,7 +542,7 @@ def single_run_with_viz(config):
                 raise RuntimeError(f"eval snapshot export failed: {type(e).__name__}: {e}") from e
     else:
         print("[CKPTDBG] NUM_CHECKPOINTS == 0, 체크포인트 저장 스킵")
-        if "PH2" in alg_name and len(out["runner_state"]) >= 5:
+        if "PH2" in alg_name and len(out["runner_state"]) >= 5 and config.get("SAVE_EVAL_CHECKPOINTS", True):
             try:
                 from flax.training import orbax_utils
                 import orbax.checkpoint as ocp

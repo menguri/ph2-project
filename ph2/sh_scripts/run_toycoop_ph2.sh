@@ -10,13 +10,13 @@ SCRIPT_DIR="$(pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # --- 기본 설정 ---
-GPUS="${1:-2,3}"
-: "${RANDOM_RESET:=false}"     # true면 매 에피소드 랜덤 배치 (procedural generation)
+GPUS="${1:-6,7}"
+: "${RANDOM_RESET:=true}"     # true면 매 에피소드 랜덤 배치 (procedural generation)
 ENV_DEVICE="cpu"
-NUM_SEEDS=5
+NUM_SEEDS=10
 NENVS=512
 NSTEPS=100
-FIXED_SEED=41
+FIXED_SEED=42
 
 # PH2 experiment config
 EXP="rnn-ph2-toycoop"
@@ -26,17 +26,17 @@ EXP="rnn-ph2-toycoop"
 
 # PH1 blocked-target 파라미터
 : "${PH1_BETA:=1.0}"
-: "${PH1_BETA_SCHEDULE_ENABLED:=False}"
+: "${PH1_BETA_SCHEDULE_ENABLED:=True}"
 : "${PH1_OMEGA:=0.1}"
 : "${PH1_SIGMA:=1.0}"
 : "${PH1_DIST_THRESH:=0.1}"
-: "${PH1_POOL_SIZE:=128}"
-: "${PH1_NORMAL_PROB:=0.5}"
+: "${PH1_POOL_SIZE:=64}"
+: "${PH1_NORMAL_PROB:=0.0}"
 : "${PH1_MULTI_PENALTY_ENABLED:=False}"
-: "${PH1_MULTI_PENALTY_SINGLE_WEIGHT:=2.0}"
+: "${PH1_MULTI_PENALTY_SINGLE_WEIGHT:=1.0}"
 : "${PH1_MULTI_PENALTY_OTHER_WEIGHT:=1.0}"
-: "${PH1_EPSILON:=0.0}"
-: "${PH2_EPSILON:=-1.0}"
+: "${PH1_EPSILON:=0.2}"
+: "${PH2_EPSILON:=0.2}"
 : "${PH1_WARMUP_STEPS:=0}"
 : "${ACTION_PREDICTION:=True}"
 : "${CYCLE_LOSS_ENABLED:=False}"

@@ -833,16 +833,17 @@ def make_train(
                 )
 
                 # [STA-PH1] Handle Extra Return (Latent Embeddings)
+                # ToyCoop 전용: pool 미충전 시 -1.0 blocked states → 0.0 대체 (LayerNorm NaN 방지)
+                _blocked_input = blocked_states_actor if learner_use_blocked_input else None
+                if _blocked_input is not None and env_name == "ToyCoop":
+                    _blocked_input = jnp.where(_blocked_input == -1.0, 0.0, _blocked_input)
+
                 net_out = network.apply(
                     train_state.params,
                     hstate,
                     ac_in,
                     partner_prediction=partner_prediction,
-                    blocked_states=(
-                        blocked_states_actor
-                        if learner_use_blocked_input
-                        else None
-                    ),
+                    blocked_states=_blocked_input,
                 )
                 
                 ph1_extras = {}
@@ -1200,6 +1201,9 @@ def make_train(
                         z_tilde_slots = z_tilde[:, None, :]
 
                     num_slots = z_tilde_slots.shape[1]
+                    # ToyCoop 전용: pool 미충전 시 z_tilde에 NaN이 있을 수 있으므로 보호
+                    if env_name == "ToyCoop":
+                        z_tilde_slots = jnp.where(jnp.isfinite(z_tilde_slots), z_tilde_slots, 0.0)
                     z_next_slots = jnp.expand_dims(z_next, axis=1)
                     lat_dist_slots = jnp.sqrt(
                         jnp.sum((z_next_slots - z_tilde_slots) ** 2, axis=-1)
@@ -1677,16 +1681,17 @@ def make_train(
 
                         # RERUN NETWORK (single pass)
                         # For action prediction: pred_logits returned in extras (computed after GRU)
+                        # ToyCoop 전용: -1.0 blocked states → 0.0 대체 (LayerNorm NaN 방지)
+                        _blocked_for_loss = traj_batch.blocked_states if learner_use_blocked_input else None
+                        if _blocked_for_loss is not None and env_name == "ToyCoop":
+                            _blocked_for_loss = jnp.where(_blocked_for_loss == -1.0, 0.0, _blocked_for_loss)
+
                         net_out = network.apply(
                             params,
                             hstate,
                             (traj_batch.obs, traj_batch.done),
                             partner_prediction=partner_prediction,
-                            blocked_states=(
-                                traj_batch.blocked_states
-                                if learner_use_blocked_input
-                                else None
-                            ),
+                            blocked_states=_blocked_for_loss,
                         )
 
                         if len(net_out) == 4:
@@ -2283,23 +2288,33 @@ def make_train(
                 metric_finite = _all_finite_tree(metric)
                 all_finite = params_finite & losses_finite & metric_finite
 
-                def _raise_nan_abort(us, es):
-                    us_i = int(np.array(us))
-                    es_i = int(np.array(es))
-                    raise RuntimeError(
-                        f"[ABORT_ON_NAN] Non-finite detected during training at "
-                        f"update_step={us_i}, env_step={es_i}. Aborting run."
+                def _check_and_abort_nan(all_ok, us, es, p_ok, l_ok, m_ok,
+                                        tl, vl, la, ent, rat, pl, pa, spz, spa):
+                    """callback 내부에서 조건 체크 — jax.lax.cond + debug.callback 조합이
+                    pmap/vmap 컨텍스트에서 false positive를 내는 문제 우회."""
+                    if bool(np.asarray(all_ok).flat[0]):
+                        return  # 정상 — abort 하지 않음
+                    us_i = int(np.asarray(us).flat[0])
+                    es_i = int(np.asarray(es).flat[0])
+                    msg = (
+                        f"[ABORT_ON_NAN] update_step={us_i}, env_step={es_i}\n"
+                        f"  params_finite={np.asarray(p_ok)}, losses_finite={np.asarray(l_ok)}, metric_finite={np.asarray(m_ok)}\n"
+                        f"  total_loss={np.asarray(tl)}, value_loss={np.asarray(vl)}, "
+                        f"loss_actor={np.asarray(la)}, entropy={np.asarray(ent)}\n"
+                        f"  ratio={np.asarray(rat)}, pred_loss={np.asarray(pl)}, "
+                        f"pred_acc={np.asarray(pa)}\n"
+                        f"  state_pred_z={np.asarray(spz)}, state_pred_action={np.asarray(spa)}"
                     )
+                    raise RuntimeError(msg)
 
-                jax.lax.cond(
+                jax.debug.callback(
+                    _check_and_abort_nan,
                     all_finite,
-                    lambda _: None,
-                    lambda _: jax.debug.callback(
-                        _raise_nan_abort,
-                        update_step,
-                        metric["env_step"],
-                    ),
-                    operand=None,
+                    update_step,
+                    metric["env_step"],
+                    params_finite, losses_finite, metric_finite,
+                    total_loss, value_loss, loss_actor, entropy, ratio,
+                    pred_loss, pred_accuracy, state_pred_z_loss, state_pred_action_loss,
                 )
 
             # WandB 로깅 콜백: JAX 계산 그래프 밖에서 실행되도록 debug.callback 사용
