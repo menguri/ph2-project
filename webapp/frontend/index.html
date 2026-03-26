@@ -71,6 +71,62 @@
             </div>
         </div>
 
+        <!-- Page: Tutorial (5 pages) -->
+        <div id="page-tutorial" class="page">
+            <div class="card">
+                <div id="tut-page-1" class="tut-page">
+                    <h2 data-i18n="tut1_title">Goal</h2>
+                    <div class="tut-content">
+                        <p data-i18n="tut1_desc">Cook and deliver onion soup with your AI partner to earn points!</p>
+                        <div class="tut-steps">
+                            <div class="tut-step"><span class="tut-num">1</span> <span data-i18n="tut1_s1">Pick up onions</span></div>
+                            <div class="tut-step"><span class="tut-num">2</span> <span data-i18n="tut1_s2">Put 3 onions in the pot</span></div>
+                            <div class="tut-step"><span class="tut-num">3</span> <span data-i18n="tut1_s3">Wait for soup to cook</span></div>
+                            <div class="tut-step"><span class="tut-num">4</span> <span data-i18n="tut1_s4">Pick up a plate, then the soup</span></div>
+                            <div class="tut-step"><span class="tut-num">5</span> <span data-i18n="tut1_s5">Deliver to the green serving area</span></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="tut-page-2" class="tut-page" style="display:none;">
+                    <h2 data-i18n="tut2_title">Items</h2>
+                    <div class="tut-content">
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="onion"></canvas> <span data-i18n="tut2_onion">Onion — pick up from the onion pile</span></div>
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="plate"></canvas> <span data-i18n="tut2_plate">Plate — pick up from the plate dispenser</span></div>
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="soup"></canvas> <span data-i18n="tut2_soup">Soup — cooked soup on a plate, ready to deliver</span></div>
+                    </div>
+                </div>
+                <div id="tut-page-3" class="tut-page" style="display:none;">
+                    <h2 data-i18n="tut3_title">Kitchen Objects</h2>
+                    <div class="tut-content">
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="pot"></canvas> <span data-i18n="tut3_pot">Pot — put 3 onions in, cooking starts automatically</span></div>
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="onion_pile"></canvas> <span data-i18n="tut3_onion_pile">Onion Pile — unlimited onion supply</span></div>
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="plate_pile"></canvas> <span data-i18n="tut3_plate_pile">Plate Dispenser — unlimited plate supply</span></div>
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="serve"></canvas> <span data-i18n="tut3_serve">Serving Area (green) — deliver soup here for points!</span></div>
+                    </div>
+                </div>
+                <div id="tut-page-4" class="tut-page" style="display:none;">
+                    <h2 data-i18n="tut4_title">Controls</h2>
+                    <div class="tut-content">
+                        <div class="tut-item"><span class="tut-key-group">&#8592; &#8593; &#8594; &#8595;</span> <span data-i18n="tut4_move">Arrow keys / WASD — Move & face direction</span></div>
+                        <div class="tut-item"><span class="tut-key-act">ACT</span> <span data-i18n="tut4_act">Space / E — Interact: pick up, put down, or serve</span></div>
+                        <p data-i18n="tut4_face" style="margin-top:1rem;color:#aaa;">Face the object and press ACT to interact with it.</p>
+                    </div>
+                </div>
+                <div id="tut-page-5" class="tut-page" style="display:none;">
+                    <h2 data-i18n="tut5_title">Tips</h2>
+                    <div class="tut-content">
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="player_you"></canvas> <span data-i18n="tut5_you">You are the BLUE chef</span></div>
+                        <div class="tut-item"><canvas class="tut-canvas" data-draw="player_ai"></canvas> <span data-i18n="tut5_ai">The ORANGE chef is your AI partner</span></div>
+                        <p data-i18n="tut5_coop" style="margin-top:1rem;">Work together — divide tasks for better scores!</p>
+                    </div>
+                </div>
+                <div class="tut-nav">
+                    <span id="tut-dots"></span>
+                    <button onclick="tutNext()" id="tut-next-btn" data-i18n="tut_next">Next</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Page: Layout Selection -->
         <div id="page-layout" class="page">
             <div class="card">
@@ -89,6 +145,20 @@
             </div>
             <canvas id="game-canvas" width="500" height="400"></canvas>
             <div id="game-status"></div>
+            <!-- Mobile controls (터치 기기에서만 표시) -->
+            <div id="mobile-controls">
+                <div class="mobile-row">
+                    <button class="mobile-btn" data-action="3">&#9650;</button>
+                </div>
+                <div class="mobile-row">
+                    <button class="mobile-btn" data-action="2">&#9664;</button>
+                    <button class="mobile-btn mobile-interact" data-action="5">ACT</button>
+                    <button class="mobile-btn" data-action="0">&#9654;</button>
+                </div>
+                <div class="mobile-row">
+                    <button class="mobile-btn" data-action="1">&#9660;</button>
+                </div>
+            </div>
         </div>
 
         <!-- Page: Post-Episode Survey -->

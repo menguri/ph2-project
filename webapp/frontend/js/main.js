@@ -1,6 +1,6 @@
 // ===== PH2 Human-AI Overcooked Study — Frontend =====
 
-const TILE_SIZE = 80;  // 큰 타일
+let TILE_SIZE = 80;  // 기본값, resizeCanvas에서 모바일 맞춤 조정
 
 // 원작 스타일 색상
 const COLORS = {
@@ -65,7 +65,138 @@ document.getElementById("pre-survey-form").addEventListener("submit", async e =>
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(data),
     });
-    showLayoutSelection();
+    showTutorial();
+});
+
+// ===== Tutorial =====
+let tutPage = 1;
+const TUT_TOTAL = 5;
+
+function showTutorial() {
+    tutPage = 1;
+    showPage("page-tutorial");
+    applyI18n();
+    drawTutCanvases();
+    updateTutPage();
+}
+
+function drawTutCanvases() {
+    const savedTileSize = TILE_SIZE;
+    document.querySelectorAll(".tut-canvas").forEach(c => {
+        const S = 48; // canvas pixel size
+        c.width = S; c.height = S;
+        TILE_SIZE = S; // drawPot 등이 TILE_SIZE 참조
+        const ctx = c.getContext("2d");
+        const cx = S / 2, cy = S / 2;
+        const type = c.getAttribute("data-draw");
+
+        // background
+        ctx.fillStyle = "#16213e";
+        ctx.fillRect(0, 0, S, S);
+
+        if (type === "onion") {
+            drawOnion(ctx, cx, cy, 14);
+        } else if (type === "plate") {
+            drawPlate(ctx, cx, cy, 16);
+        } else if (type === "soup") {
+            drawPlate(ctx, cx, cy, 16);
+            ctx.fillStyle = COLORS.soup;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 3, 12, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+        } else if (type === "pot") {
+            // counter bg
+            ctx.fillStyle = COLORS.counterTop;
+            ctx.fillRect(2, 2, S - 4, S - 4);
+            drawPot(ctx, 0, 0);
+        } else if (type === "onion_pile") {
+            ctx.fillStyle = COLORS.onionPile;
+            ctx.fillRect(2, 2, S - 4, S - 4);
+            drawOnion(ctx, cx - 8, cy - 4, 8);
+            drawOnion(ctx, cx + 8, cy - 4, 8);
+            drawOnion(ctx, cx, cy + 8, 8);
+        } else if (type === "plate_pile") {
+            ctx.fillStyle = "#C9B896";
+            ctx.fillRect(2, 2, S - 4, S - 4);
+            for (let i = 0; i < 3; i++) {
+                drawPlate(ctx, cx, cy - 6 + i * 8, 14);
+            }
+        } else if (type === "serve") {
+            ctx.fillStyle = "#2E7D32";
+            ctx.fillRect(4, 4, S - 8, S - 8);
+            ctx.strokeStyle = "#1B5E20";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(4, 4, S - 8, S - 8);
+            ctx.fillStyle = "#FFF";
+            ctx.font = "bold 10px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("SERVE", cx, cy);
+        } else if (type === "player_you") {
+            ctx.fillStyle = COLORS.playerYou;
+            ctx.beginPath();
+            ctx.arc(cx, cy + 2, 16, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#333"; ctx.lineWidth = 2; ctx.stroke();
+            ctx.fillStyle = COLORS.hat;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 10, 10, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillRect(cx - 7, cy - 18, 14, 10);
+        } else if (type === "player_ai") {
+            ctx.fillStyle = COLORS.playerAI;
+            ctx.beginPath();
+            ctx.arc(cx, cy + 2, 16, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#333"; ctx.lineWidth = 2; ctx.stroke();
+            ctx.fillStyle = COLORS.hat;
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 10, 10, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillRect(cx - 7, cy - 18, 14, 10);
+        }
+    });
+    TILE_SIZE = savedTileSize;
+}
+
+function updateTutPage() {
+    for (let i = 1; i <= TUT_TOTAL; i++) {
+        const el = document.getElementById(`tut-page-${i}`);
+        if (el) el.style.display = (i === tutPage) ? "block" : "none";
+    }
+    // dots
+    const dots = document.getElementById("tut-dots");
+    dots.innerHTML = "";
+    for (let i = 1; i <= TUT_TOTAL; i++) {
+        const dot = document.createElement("span");
+        dot.className = "tut-dot" + (i === tutPage ? " active" : "");
+        dots.appendChild(dot);
+    }
+    // button text
+    const btn = document.getElementById("tut-next-btn");
+    if (tutPage >= TUT_TOTAL) {
+        btn.innerHTML = t("tut_start") || "Start!";
+    } else {
+        btn.innerHTML = t("tut_next") || "Next";
+    }
+}
+
+function tutNext() {
+    if (tutPage >= TUT_TOTAL) {
+        showLayoutSelection();
+    } else {
+        tutPage++;
+        updateTutPage();
+    }
+}
+
+// PC: 스페이스바로 튜토리얼 넘기기
+document.addEventListener("keydown", (e) => {
+    const page = document.querySelector(".page.active");
+    if (page && page.id === "page-tutorial" && (e.key === " " || e.key === "ArrowRight")) {
+        e.preventDefault();
+        tutNext();
+    }
 });
 
 // ===== Layout Selection =====
@@ -161,12 +292,22 @@ function connectWebSocket() {
     };
 }
 
-// Keyboard input
-document.addEventListener("keydown", (e) => {
+// ===== Input handling (keyboard + mobile) =====
+let lastActionTime = 0;
+const MIN_ACTION_INTERVAL = 80; // ms — 입력 쓰로틀 (너무 빠른 연타 방지)
+
+function sendAction(action) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const page = document.querySelector(".page.active");
     if (!page || page.id !== "page-game") return;
+    const now = Date.now();
+    if (now - lastActionTime < MIN_ACTION_INTERVAL) return;
+    lastActionTime = now;
+    ws.send(JSON.stringify({action}));
+}
 
+// Keyboard input
+document.addEventListener("keydown", (e) => {
     const keyMap = {
         "ArrowRight": 0, "ArrowDown": 1, "ArrowLeft": 2, "ArrowUp": 3,
         "d": 0, "s": 1, "a": 2, "w": 3,
@@ -175,7 +316,7 @@ document.addEventListener("keydown", (e) => {
     const action = keyMap[e.key];
     if (action !== undefined) {
         e.preventDefault();
-        ws.send(JSON.stringify({action}));
+        sendAction(action);
     }
 });
 
@@ -185,6 +326,12 @@ function resizeCanvas() {
     const canvas = document.getElementById("game-canvas");
     const h = terrain.length;
     const w = terrain[0].length;
+
+    // 모바일: 화면 너비에 맞춰 TILE_SIZE 조정
+    const maxWidth = Math.min(window.innerWidth - 24, 1000);  // 좌우 여백 12px씩
+    const idealTile = Math.floor(maxWidth / w);
+    TILE_SIZE = Math.min(idealTile, 80);  // 최대 80, 모바일에선 더 작아짐
+
     canvas.width = w * TILE_SIZE;
     canvas.height = h * TILE_SIZE;
 }
@@ -593,6 +740,30 @@ document.getElementById("post-survey-form").addEventListener("submit", async e =
     document.getElementById("post-open-text").value = "";
     applyI18n();
     showPage("page-again");
+});
+
+// ===== Responsive resize =====
+window.addEventListener("resize", () => {
+    if (terrain) { resizeCanvas(); render(); }
+});
+
+// ===== Mobile touch controls =====
+document.querySelectorAll(".mobile-btn").forEach(btn => {
+    const action = parseInt(btn.getAttribute("data-action"));
+    if (isNaN(action)) return;
+    btn.addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        sendAction(action);
+    });
+    // 길게 누르면 연속 입력 (방향키)
+    let holdInterval = null;
+    if (action < 4) {
+        btn.addEventListener("touchstart", () => {
+            holdInterval = setInterval(() => sendAction(action), 120);
+        });
+        btn.addEventListener("touchend", () => clearInterval(holdInterval));
+        btn.addEventListener("touchcancel", () => clearInterval(holdInterval));
+    }
 });
 
 console.log("PH2 Human-AI Study webapp loaded. Participant:", participantId);

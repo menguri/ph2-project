@@ -94,6 +94,7 @@ button.secondary:hover { background: #777; }
     background: #2a2a4a;
     display: block;
     margin: 0 auto;
+    max-width: 100%;
 }
 
 #game-status {
@@ -132,4 +133,96 @@ button.secondary:hover { background: #777; }
 .layout-btn small {
     color: #aaa;
     font-size: 0.85rem;
+}
+
+/* Tutorial */
+.tut-page { }
+.tut-content { margin: 1rem 0; }
+.tut-steps { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.75rem; }
+.tut-step { display: flex; align-items: center; gap: 0.75rem; font-size: 1rem; }
+.tut-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #e94560; color: #fff; font-weight: bold; font-size: 0.9rem; flex-shrink: 0;
+}
+.tut-item { display: flex; align-items: center; gap: 0.75rem; margin: 0.6rem 0; font-size: 1rem; }
+.tut-canvas { width: 48px; height: 48px; flex-shrink: 0; border-radius: 6px; }
+.tut-key-group {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 48px; height: 48px; flex-shrink: 0;
+    background: #2a3a5e; border: 2px solid #3a4a7e; border-radius: 8px;
+    font-size: 0.9rem; color: #fff; letter-spacing: 2px;
+}
+.tut-key-act {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 48px; height: 48px; flex-shrink: 0;
+    background: #1b5e20; border: 2px solid #2e7d32; border-radius: 8px;
+    font-size: 0.85rem; font-weight: bold; color: #fff;
+}
+.tut-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem; }
+.tut-nav button { width: auto; padding: 0.6rem 2rem; margin: 0; }
+#tut-dots { display: flex; gap: 8px; }
+.tut-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #333; display: inline-block;
+}
+.tut-dot.active { background: #e94560; }
+
+/* Mobile controls — 터치 기기에서만 표시 */
+#mobile-controls {
+    display: none;
+    margin-top: 0.75rem;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+
+@media (pointer: coarse) {
+    #mobile-controls { display: block; }
+}
+
+.mobile-row {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin: 0.25rem 0;
+}
+
+.mobile-btn {
+    width: 64px;
+    height: 64px;
+    margin-top: 0;
+    padding: 0;
+    border-radius: 12px;
+    background: #2a3a5e;
+    color: #fff;
+    font-size: 1.6rem;
+    line-height: 64px;
+    text-align: center;
+    border: 2px solid #3a4a7e;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.mobile-btn:active {
+    background: #e94560;
+    border-color: #e94560;
+}
+.mobile-interact {
+    background: #1b5e20;
+    border-color: #2e7d32;
+    font-size: 1rem;
+    font-weight: bold;
+}
+.mobile-interact:active {
+    background: #4caf50;
+    border-color: #4caf50;
+}
+
+/* Mobile viewport */
+@media (max-width: 600px) {
+    body { padding: 0.25rem; }
+    .card { padding: 1rem; }
+    h1 { font-size: 1.2rem; }
+    #game-hud { font-size: 0.9rem; padding: 0.3rem 0.5rem; }
+    #game-status { font-size: 0.8rem; }
 }
