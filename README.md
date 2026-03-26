@@ -69,12 +69,26 @@ source overcooked_v2/bin/activate
 | `test_time_simple` | 5×8 | 3종 | 테스트용 |
 | `test_time_wide` | 7×6 | 4종 | 테스트용 넓은 맵 |
 
-### Dual Destination 레이아웃
+### Dual Destination (ToyCoop) — 별도 환경
 
-serving(배달) 위치가 2개 이상: `asymm_advantages`, `grounded_coord_ring`
-→ 에이전트가 어느 배달대로 갈지 조율해야 하므로 coordination 난이도가 높음.
+Overcooked가 아닌 **5×5 cooperative gridworld**. 두 에이전트가 동시에 서로 다른 목표 지점에 도달해야 하는 coordination 문제.
 
-env config는 `+env=<layout_name>`으로 지정 (예: `+env=cramped_room`, `+env=grounded_coord_simple`).
+| 항목 | 내용 |
+|------|------|
+| 환경 | `JaxMARL/jaxmarl/environments/toy_coop/toy_coop.py` |
+| 그리드 | 5×5, 벽 없음 |
+| Action | 5개 (right, down, left, up, stay) — interact 없음 |
+| 목표 | green goal 2개 + pink goal 2개, 에이전트 2명이 동시에 도달 |
+| Observation | full (partial_obs=false) |
+| env config | `+env=toy_coop` |
+
+```bash
+# Dual Destination 실험
+cd baseline && bash sh_scripts/run_factory_sp.sh   # +env=toy_coop
+cd ph2 && bash sh_scripts/run_factory_ph2.sh       # +env=toy_coop
+```
+
+env config는 `+env=<layout_name>`으로 지정 (예: `+env=cramped_room`, `+env=grounded_coord_simple`, `+env=toy_coop`).
 
 ## 실험 실행
 

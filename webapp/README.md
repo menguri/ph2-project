@@ -84,14 +84,49 @@ models/
 
 ```bash
 cd webapp
-JAX_PLATFORMS=cpu uvicorn app.main:app --port 8000 --loop asyncio
+JAX_PLATFORMS=cpu uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop asyncio
 ```
 
-SSH 포트포워딩으로 로컬 브라우저 접속:
+## 접속 방법
+
+### 1. 로컬 (개발용) — SSH 포트포워딩
+
 ```bash
-# 로컬 PC에서:
+# 로컬 PC 터미널에서:
 ssh -L 8000:localhost:8000 user@server
 # 브라우저에서 http://localhost:8000
+```
+
+### 2. 외부 접속 (실험 참여자 배포용) — cloudflared
+
+방화벽/NAT 뒤에 있어도 외부 URL을 생성해주는 터널. 가입 불필요.
+
+```bash
+# 1) cloudflared 설치 (최초 1회)
+curl -sSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /tmp/cloudflared && chmod +x /tmp/cloudflared
+
+# 2) 서버 실행 (백그라운드)
+cd webapp
+JAX_PLATFORMS=cpu nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 --loop asyncio > /tmp/webapp.log 2>&1 &
+
+# 3) 터널 실행
+/tmp/cloudflared tunnel --url http://localhost:8000
+# → 출력에 https://xxxx-xxxx-xxxx.trycloudflare.com URL이 나옴
+# → 이 URL을 참여자에게 공유
+```
+
+참고:
+- 터널 프로세스를 종료하면 URL도 비활성화됨
+- 매번 실행할 때마다 URL이 바뀜 (고정 URL은 Cloudflare 계정 + named tunnel 필요)
+- 동시 접속 가능 (FastAPI async + WebSocket)
+
+### 3. 종료
+
+```bash
+# 서버 + 터널 종료
+kill $(lsof -ti:8000)          # uvicorn
+pkill -f cloudflared           # 터널
 ```
 
 ## JaxMARL 환경 호환
