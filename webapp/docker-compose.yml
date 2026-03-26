@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+      - ../baseline/runs:/checkpoints/baseline:ro
+      - ../ph2/runs:/checkpoints/ph2:ro
+    environment:
+      - JAX_PLATFORM_NAME=cpu
+    restart: unless-stopped

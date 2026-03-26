@@ -1,0 +1,56 @@
+server:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+
+game:
+  default_layout: "cramped_room"
+  episode_length: 400
+  fps: 10
+  randomize_player_index: true
+
+agent:
+  model_dir: "models"              # webapp/models/{layout}/{algo_name}/{run0,run1,...}/ckpt_final/
+  policy_source: "params"
+  stochastic: true
+
+model:
+  gru_hidden_dim: 128
+  fc_dim_size: 128
+  activation: "relu"
+  action_dim: 6
+
+database:
+  path: "data/db/study.db"
+
+trajectory:
+  save_dir: "data/trajectories"
+  save_obs: true
+  save_state: true
+
+admin:
+  password: "changeme"
+
+survey:
+  pre_game:
+    - {id: "age", type: "number", label: "나이", required: true}
+    - {id: "gender", type: "select", label: "성별",
+       options: ["남성", "여성", "기타", "응답하지 않음"], required: true}
+    - {id: "gaming_exp", type: "likert7",
+       label: "게임 경험 수준 (1=전혀 없음, 7=매우 많음)"}
+    - {id: "overcooked_exp", type: "select", label: "Overcooked 게임 경험",
+       options: ["없음", "조금 있음", "많이 있음"], required: true}
+  post_episode:
+    - {id: "fluency", type: "likert7",
+       label: "The agent and I worked together fluently."}
+    - {id: "contribution", type: "likert7",
+       label: "The agent contributed to our team performance."}
+    - {id: "trust", type: "likert7",
+       label: "I trusted the agent's actions."}
+    - {id: "open_text", type: "textarea",
+       label: "Describe your experience with the agent."}
+
+experiment:
+  study_id: "ph2_zsc_pilot_v1"
+  randomize_algo: true
+  randomize_layout: false

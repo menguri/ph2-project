@@ -187,11 +187,36 @@ CycleEncoder(sg(z_hat), sg(a_hat)) → C_prime (D=128)
   - `run_user_wandb.sh`: TRANSFORMER_* 8개 플래그 defaults/파싱/PY_ARGS 추가
   - `run_factory_ph2.sh`: `USE_CT=1` 환경변수로 CT 모드 활성화 지원
 
+### Human-AI Study Webapp 구현 (2026-03-26)
+- **위치**: `webapp/`
+- **목적**: 원격 참여자가 Overcooked에서 학습된 AI와 협력 플레이 → 주관 평가 설문 + BC용 trajectory 수집
+- **구조**:
+  - `app/main.py` — FastAPI 서버 (JAX CPU-only, `JAX_PLATFORMS=cpu`)
+  - `app/agent/loader.py` — Orbax checkpoint GPU→CPU 로드 (metadata 기반 sharding 복원)
+  - `app/agent/inference.py` — ModelManager: SP/E3T/FCP/PH2 모두 지원, PH2는 `params_ind` 자동 선택
+  - `app/game/engine.py` — GameSession: overcooked-ai 환경 래핑, JaxMARL layout 호환
+  - `app/game/obs_adapter.py` — overcooked-ai state → JaxMARL obs (H,W,C) 변환
+  - `app/game/layouts/` — JaxMARL layout을 overcooked-ai `.layout` 파일로 변환 (grid 크기 일치)
+  - `app/api/routes.py` — WebSocket 게임 루프 + REST (survey, admin export)
+  - `app/db/models.py` — SQLite: Participant, Episode(collisions/deliveries), SurveyResponse(7문항)
+  - `frontend/` — Vanilla JS SPA: canvas 렌더링, i18n(한/영), layout 선택
+- **모델 디렉토리**: `webapp/models/{layout}/{algo}/{run}/ckpt_final/`
+  - 5 layout × 4 algo (sp, e3t, fcp, ph2) = 20 checkpoints
+- **JaxMARL 환경 호환**:
+  - 재료 3개 자동 요리 (interact로 조기 요리 시작 차단 — `_patch_mdp_no_early_cook`)
+  - layout grid 크기 일치 (counter_circuit: 5×8 등)
+  - obs shape 검증 완료 (cramped_room 4×5×30, counter_circuit 5×8×30 등)
+- **BC 데이터**: `data/trajectories/{participant_id}/{episode_id}.pkl`
+  - obs_human: JaxMARL-compatible (H,W,C) uint8, action_human: int 0-5
+- **설문**: fluency, contribution, trust, human_likeness, obstruction, frustration, play_again (Likert 1-7) + open_text
+- **실행**: `cd webapp && JAX_PLATFORMS=cpu uvicorn app.main:app --port 8000 --loop asyncio`
+
 ### 현재 작업 중
 - (없음)
 
 ### 향후 진행 예정
 - `USE_CT=1 bash run_factory_ph2.sh`로 CT 모드 훈련 실행 및 검증
+- Webapp: Docker + nginx 배포, ngrok 외부 접속, 동시 접속 부하 테스트
 
 ---
 

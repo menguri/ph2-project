@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PH2 Human-AI Overcooked Study</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Page: Language Select -->
+        <div id="page-lang" class="page active">
+            <h1>Overcooked Human-AI Coordination Study</h1>
+            <div class="card" style="text-align:center;">
+                <p style="margin-bottom:1.5rem;font-size:1.1rem;">Select language / 언어를 선택하세요</p>
+                <div style="display:flex;gap:1rem;justify-content:center;">
+                    <button onclick="setLang('en')" style="width:auto;padding:1rem 2.5rem;">English</button>
+                    <button onclick="setLang('ko')" style="width:auto;padding:1rem 2.5rem;">한국어</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page: Consent -->
+        <div id="page-consent" class="page">
+            <h1>Overcooked Human-AI Coordination Study</h1>
+            <div class="card">
+                <h2 data-i18n="consent_title">Welcome</h2>
+                <p data-i18n="consent_desc">You will play the cooperative cooking game <strong>Overcooked</strong> with an AI partner.</p>
+                <p data-i18n="consent_task">Your task is to work together to prepare and deliver soup orders as efficiently as possible.</p>
+                <h3 data-i18n="consent_controls_title">Controls</h3>
+                <ul>
+                    <li data-i18n="consent_controls_move"><strong>Arrow keys</strong> or <strong>WASD</strong> — Move</li>
+                    <li data-i18n="consent_controls_interact"><strong>Space</strong> or <strong>E</strong> — Interact (pick up / place / deliver)</li>
+                </ul>
+                <p data-i18n="consent_survey_note">After each game, you'll be asked to fill out a short survey about your experience.</p>
+                <button onclick="showPage('page-pre-survey')" data-i18n="consent_agree">I Agree &amp; Continue</button>
+            </div>
+        </div>
+
+        <!-- Page: Pre-Game Survey -->
+        <div id="page-pre-survey" class="page">
+            <div class="card">
+                <h2 data-i18n="pre_title">About You</h2>
+                <form id="pre-survey-form">
+                    <label><span data-i18n="pre_age">Age</span>
+                        <input type="number" id="survey-age" min="10" max="100" required>
+                    </label>
+                    <label><span data-i18n="pre_gender">Gender</span>
+                        <select id="survey-gender" required>
+                            <option value="" data-i18n="pre_select">Select</option>
+                            <option value="male" data-i18n="pre_male">Male</option>
+                            <option value="female" data-i18n="pre_female">Female</option>
+                            <option value="other" data-i18n="pre_other">Other</option>
+                            <option value="prefer_not" data-i18n="pre_prefer_not">Prefer not to say</option>
+                        </select>
+                    </label>
+                    <label><span data-i18n="pre_gaming">Gaming Experience (1=None, 7=Expert)</span>
+                        <input type="range" id="survey-gaming" min="1" max="7" value="4">
+                        <span id="gaming-val">4</span>
+                    </label>
+                    <label><span data-i18n="pre_overcooked">Overcooked Experience</span>
+                        <select id="survey-overcooked" required>
+                            <option value="" data-i18n="pre_select">Select</option>
+                            <option value="none" data-i18n="pre_oc_none">None</option>
+                            <option value="some" data-i18n="pre_oc_some">Some</option>
+                            <option value="a_lot" data-i18n="pre_oc_alot">A lot</option>
+                        </select>
+                    </label>
+                    <button type="submit" data-i18n="pre_start">Start Game</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Page: Layout Selection -->
+        <div id="page-layout" class="page">
+            <div class="card">
+                <h2 data-i18n="layout_title">Select Layout</h2>
+                <p data-i18n="layout_desc">Choose a kitchen layout to play on:</p>
+                <div id="layout-buttons"></div>
+                <p id="layout-loading" style="display:none;" data-i18n="layout_loading">Loading layouts...</p>
+            </div>
+        </div>
+
+        <!-- Page: Game -->
+        <div id="page-game" class="page">
+            <div id="game-hud">
+                <span id="hud-score">Score: 0</span>
+                <span id="hud-step">Step: 0 / 400</span>
+            </div>
+            <canvas id="game-canvas" width="500" height="400"></canvas>
+            <div id="game-status"></div>
+        </div>
+
+        <!-- Page: Post-Episode Survey -->
+        <div id="page-post-survey" class="page">
+            <div class="card">
+                <h2 data-i18n="post_title">Rate Your AI Partner</h2>
+                <p id="post-score-display"></p>
+                <form id="post-survey-form">
+                    <label><span data-i18n="post_fluency">The agent and I worked together fluently.</span>
+                        <input type="range" id="post-fluency" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_contribution">The agent contributed to our team performance.</span>
+                        <input type="range" id="post-contribution" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_trust">I trusted the agent's actions.</span>
+                        <input type="range" id="post-trust" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_human_likeness">The agent felt like a human player.</span>
+                        <input type="range" id="post-human-likeness" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_obstruction">The agent got in my way.</span>
+                        <input type="range" id="post-obstruction" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_frustration">I felt frustrated during the game.</span>
+                        <input type="range" id="post-frustration" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_play_again">I would want to play with this agent again.</span>
+                        <input type="range" id="post-play-again" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_open">Describe your experience with the agent.</span>
+                        <textarea id="post-open-text" rows="3"></textarea>
+                    </label>
+                    <button type="submit" data-i18n="post_submit">Submit &amp; Continue</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Page: Play Again -->
+        <div id="page-again" class="page">
+            <div class="card">
+                <h2 data-i18n="again_title">Thank You!</h2>
+                <p data-i18n="again_desc">Your response has been recorded.</p>
+                <button onclick="showLayoutSelection()" data-i18n="again_play">Play Again (New AI Partner)</button>
+                <button onclick="showPage('page-thanks')" class="secondary" data-i18n="again_done">Done</button>
+            </div>
+        </div>
+
+        <!-- Page: Thanks -->
+        <div id="page-thanks" class="page">
+            <div class="card">
+                <h2 data-i18n="thanks_title">Thank you for participating!</h2>
+                <p data-i18n="thanks_desc">You may close this window.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/i18n.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

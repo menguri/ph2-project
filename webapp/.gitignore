@@ -1,0 +1,20 @@
+# Data (generated at runtime)
+data/db/*.db
+data/trajectories/
+data/logs/
+
+# Model checkpoints (too large for git, copy manually)
+models/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Environment
+.env
+.DS_Store
+
+# Logs
+*.log
+nohup.out
