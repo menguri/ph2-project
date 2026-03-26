@@ -1,122 +1,198 @@
-# Overcooked-V2 Experiments
+# PH2 Project — Overcooked Zero-Shot Coordination
 
-이 저장소는 [Overcooked-V2] 환경에서 Zero-Shot Coordination (ZSC)을 위한 다양한 기준 모델(baselines)을 구현하고, 추가적인 연구를 진행하기 위해 만들어졌습니다. JAX 기반으로 구현된 [overcooked-v2/experiments] (https://github.com/overcookedv2/experiments)를 참고했습니다.
+Overcooked 환경에서 Zero-Shot Coordination (ZSC) 연구를 위한 멀티에이전트 학습 + Human-AI 상호작용 실험 플랫폼.
 
-## 설치 (Installation)
+## 프로젝트 구조
+
+```
+ph2-project/
+├── baseline/               # Baseline 알고리즘 (SP, E3T, FCP, MEP 등)
+├── ph2/                    # PH2 알고리즘 (PH1 + PH2 + CycleTransformer)
+├── JaxMARL/                # JAX 기반 MARL 환경 라이브러리 (submodule)
+├── webapp/                 # Human-AI 실험용 웹 앱
+├── scripts/                # 유틸리티 스크립트
+├── CLAUDE.md               # 개발 컨텍스트 (알고리즘 상세, 작업 이력)
+└── README.md               # 이 파일
+```
+
+## 설치
 
 ```bash
-# 1. 로컬 venv 생성 및 활성화
+# venv 생성 및 활성화
 python3 -m venv overcooked_v2
 source overcooked_v2/bin/activate
 
-# 2. 의존성 패키지 설치
+# 의존성 설치
 ./scripts/bootstrap_venv.sh
 ```
 
-## 환경 (Environments)
+## 알고리즘 개요
 
-이 저장소에서는 다양한 Overcooked-V2 레이아웃을 사용하여 실험을 진행합니다. 주요 환경은 다음과 같습니다.
+### Baseline (`baseline/`)
 
-### Simple Layouts
+| 알고리즘 | 설명 | 실행 스크립트 |
+|----------|------|-------------|
+| **SP** | Self-Play. 자기 자신과 플레이하며 학습 | `baseline/sh_scripts/run_factory_sp.sh` |
+| **E3T** | 파트너 행동 예측 모듈 추가 (PartnerPredictor) | `baseline/sh_scripts/run_factory_e3t.sh` |
+| **FCP** | SP population과 매칭하여 학습 (2단계) | `baseline/sh_scripts/run_factory_fcp.sh` |
+| **MEP** | Maximum Entropy Population (다양성 극대화) | `baseline/sh_scripts/run_factory_mep.sh` |
+| **SA** | State Augmentation | `baseline/sh_scripts/run_factory_sa.sh` |
+| **OP** | Other-Play | `baseline/sh_scripts/run_factory_op.sh` |
 
-| `grounded_coord_simple` | `demo_cook_simple` | `test_time_simple`
-| :---: | :---: | :---: |
-| ![ground_simple_sp](./readme-figure/ground_simple_sp.gif) | ![demo_simple_sp](./readme-figure/demo_simple_sp.gif) | ![test_simple_sp](./readme-figure/test_simple_sp.gif) |
+### PH2 (`ph2/`)
 
-### Hard Layouts
+| 알고리즘 | 설명 | 실행 스크립트 |
+|----------|------|-------------|
+| **PH2** | Specialist(PH1) + Independent 듀얼 에이전트 학습 | `ph2/sh_scripts/run_factory_ph2.sh` |
+| **PH2-CT** | PH2 + CycleTransformer (상태/행동 재구성) | `USE_CT=1 bash ph2/sh_scripts/run_factory_ph2.sh` |
 
-| `grounded_coord_ring` | `demo_cook_wide` | `test_time_wide` |
-| :---: | :---: | :---: |
-| ![ground_ring_sp](./readme-figure/ground_ring_sp.gif) | ![demo_wide_sp](./readme-figure/demo_wide_sp.gif) | ![test_wide_sp](./readme-figure/test_wide_sp.gif) |
+## 지원 레이아웃
 
-<br/>
+### OV1 — Full Observation (agent_view_size 없음)
 
-## 실험 실행 (Running Experiments)
+| 레이아웃 | 크기 | 재료 | 특징 |
+|----------|------|------|------|
+| `cramped_room` | 4×5 | onion | 좁은 공간, 기본 협력 |
+| `asymm_advantages` | 5×9 | onion | 비대칭 역할, dual destination |
+| `coord_ring` | 5×5 | onion | 순환 구조 |
+| `forced_coord` | 5×5 | onion | 벽으로 분리된 강제 협력 |
+| `counter_circuit` | 5×8 | onion | 카운터 기반 순환 |
 
-실험은 `overcooked_v2_experiments/ppo/main.py`를 통해 실행하며, Hydra를 사용하여 설정을 관리합니다.
+### OV2 — Partial Observation (agent_view_size=2)
 
-| 실험 종류 | 설명 | 실행 명령어 예시 |
-| :--- | :--- | :--- |
-| **SP** (Self-Play) | 에이전트가 자기 자신과 플레이하며 학습합니다. 가장 기본적인 훈련 방식입니다. | `python overcooked_v2_experiments/ppo/main.py +experiment=rnn-sp +env=grounded_coord_simple NUM_SEEDS=10` |
-| **SA** (State-Augmentation) | 다른 에이전트의 잠재적 행동을 상태에 추가하여 학습합니다. | `python overcooked_v2_experiments/ppo/main.py +experiment=rnn-sa +env=grounded_coord_simple NUM_SEEDS=10 NUM_ITERATIONS=10` |
-| **OP** (Other-Play) | 미리 훈련된 다양한 에이전트(population)와 무작위로 매칭되어 학습합니다. | `python overcooked_v2_experiments/ppo/main.py +experiment=rnn-op +env=grounded_coord_simple NUM_SEEDS=10` |
-| **FCP** (Fictitious Co-Play) | SP로 학습된 에이전트 집단(population) 내에서 파트너를 선택하여 학습합니다. | `python overcooked_v2_experiments/ppo/main.py +experiment=rnn-fcp +env=grounded_coord_simple NUM_SEEDS=1 +FCP=<population_path>` |
-| **E3T** (Environment-Ego-Teammate) | 파트너의 행동을 예측하는 모듈을 추가하여, 예측된 정보를 정책 입력으로 활용합니다. | `python overcooked_v2_experiments/ppo/main.py +experiment=rnn-e3t +env=grounded_coord_simple NUM_SEEDS=10` |
+| 레이아웃 | 크기 | 재료 | 특징 |
+|----------|------|------|------|
+| `grounded_coord_simple` | 5×8 | 3종 | 다중 재료, 부분 관측 |
+| `grounded_coord_ring` | 9×9 | 3종 | 큰 맵, dual destination |
+| `demo_cook_simple` | 5×11 | 3종 | 긴 맵 |
+| `demo_cook_wide` | 6×11 | 4종 | 넓은 맵, 4종 재료 |
+| `test_time_simple` | 5×8 | 3종 | 테스트용 |
+| `test_time_wide` | 7×6 | 4종 | 테스트용 넓은 맵 |
 
-- `+experiment`: `rnn-sp`, `rnn-sa`, `rnn-op`, `rnn-fcp`, `rnn-e3t` 등 실험 유형을 지정합니다.
-- `+env`: `grounded_coord_simple` 등 환경 레이아웃을 지정합니다.
-- `NUM_SEEDS`: 동시에 실행할 시드 수를 설정합니다.
+### Dual Destination 레이아웃
 
-### E3T & STL 실험 (Partner Modeling)
+serving(배달) 위치가 2개 이상: `asymm_advantages`, `grounded_coord_ring`
+→ 에이전트가 어느 배달대로 갈지 조율해야 하므로 coordination 난이도가 높음.
 
-이 저장소는 파트너 모델링을 위한 최신 알고리즘인 E3T와 STL을 지원합니다.
+env config는 `+env=<layout_name>`으로 지정 (예: `+env=cramped_room`, `+env=grounded_coord_simple`).
 
-#### 1. E3T (Environment-Ego-Teammate)
-E3T는 **Stateless Prediction** 방식을 사용하여 파트너를 모델링합니다.
-- **작동 원리**: 매 스텝 최근 5개의 관측(`obs_history`)과 파트너 행동(`act_history`)을 입력받아 파트너의 다음 행동을 예측합니다.
-- **특징**: 과거의 잠재 상태(Latent State)를 유지하지 않고 현재의 기록(History)에만 의존하므로, 파트너의 행동이 급변할 경우 예측이 불안정해질 수 있습니다.
+## 실험 실행
 
+### Baseline 실행 예시
 
-### FCP 실험 워크플로우
+```bash
+cd baseline
 
-FCP는 2단계로 진행됩니다.
+# SP — 전 레이아웃
+bash sh_scripts/run_factory_sp.sh
 
-1.  **SP 모델 학습**: 먼저 Self-Play를 통해 여러 시드의 에이전트를 학습시킵니다.
-    ```bash
-    python overcooked_v2_experiments/ppo/main.py +experiment=rnn-sp +env=grounded_coord_simple NUM_SEEDS=10
-    ```
+# E3T — 전 레이아웃
+bash sh_scripts/run_factory_e3t.sh
 
-2.  **Population 생성**: 학습된 SP 모델들을 `fcp_populations` 디렉토리 아래에 새로운 폴더를 만들어 복사합니다.
-    ```bash
-    # 예시: grounded_coord_simple 환경에 대한 population 생성
-    # 1. SP 모델 학습 결과가 저장된 디렉토리를 찾습니다. (예: runs/20251121-012842_k0hq1tgt_grounded_coord_simple_avs-2-256-sp)
-    # 2. 해당 디렉토리의 체크포인트들을 fcp_populations 아래로 복사합니다.
-    
-    # sh_scripts/copy_fcp.sh 스크립트를 사용하면 편리합니다.
-    # 사용법: sh sh_scripts/copy_fcp.sh <source_run_directory>
-    sh sh_scripts/copy_fcp.sh runs/20251121-012842_k0hq1tgt_grounded_coord_simple_avs-2-256-sp
-    ```
+# FCP (2단계: SP population 먼저 필요)
+# 1단계: SP 학습
+bash sh_scripts/run_factory_sp.sh
+# 2단계: SP population 복사 → FCP 학습
+sh sh_scripts/copy_fcp.sh runs/<sp_run_directory>
+bash sh_scripts/run_factory_fcp.sh
 
-3.  **FCP 학습 실행**: 생성된 population 경로를 `+FCP` 인자로 지정하여 FCP 실험을 시작합니다.
-    ```bash
-    python overcooked_v2_experiments/ppo/main.py +experiment=rnn-fcp +env=grounded_coord_simple NUM_SEEDS=1 +FCP=fcp_populations/grounded_coord_simple_avs-2-256-sp
-    ```
+# MEP (2단계: SP population 기반)
+bash sh_scripts/run_factory_mep.sh
+```
 
-## 시각화 (Visualization)
+### PH2 실행 예시
 
-학습된 모델의 성능과 행동을 시각화하기 위해 `sh_scripts/run_visualize.sh` 스크립트를 사용합니다.
+```bash
+cd ph2
 
--   **실행 명령어**:
-    ```bash
-    sh sh_scripts/run_visualize.sh --gpu <gpu_id> --dir <run_directory> [OPTIONS]
-    ```
+# PH2 (E3T + PH1 blocked target)
+bash sh_scripts/run_factory_ph2.sh
 
--   **주요 옵션**:
-    -   `--gpu`: 시각화에 사용할 GPU ID를 지정합니다.
-    -   `--dir`: 시각화할 모델이 저장된 `runs/` 안의 경로를 지정합니다.
-    -   `--num_seeds`: 평가에 사용할 시드 수를 지정합니다. (기본값: 10)
-    -   `--all`: 저장된 모든 체크포인트에 대해 평가를 실행합니다. 지정하지 않으면 마지막 체크포인트만 평가합니다.
-    -   `--no_viz`: GIF 렌더링 없이 평가 지표만 계산합니다.
+# PH2 + CycleTransformer
+USE_CT=1 bash sh_scripts/run_factory_ph2.sh
+```
 
--   **예시**:
-    ```bash
-    # 단일 실행(마지막 체크포인트)에 대한 시각화
-    sh sh_scripts/run_visualize.sh --gpu 0 --dir runs/20251121-040922_ii3s89wl_demo_cook_wide_avs-2-256-sp
+### 주요 하이퍼파라미터
 
-    # 모든 체크포인트에 대해 지표만 계산 (시각화 X)
-    sh sh_scripts/run_visualize.sh --gpu 0 --dir runs/20251121-040922_ii3s89wl_demo_cook_wide_avs-2-256-sp --all --no_viz
-    ```
+```
+# 모델 구조 (모든 알고리즘 공통)
+GRU_HIDDEN_DIM=128, FC_DIM_SIZE=128, CNN_FEATURES=32
 
-## AI-AI Coordination (다른 알고리즘 간 협력)
+# 훈련
+LR=2.5e-4, TOTAL_TIMESTEPS=3e7, NUM_ENVS=256, NUM_STEPS=256
 
-다른 알고리즘으로 학습된 에이전트들 간의 협력을 평가하기 위해, `runs/` 폴더에 원하는 레이아웃에 대한 각 알고리즘의 run 파일을 `run_0`부터 `run_n` (n+1개 알고리즘을 비교하기 위해)으로 옮겨놓고, 시각화 cross 모드를 사용하여 비교할 수 있습니다.
+# PH2 전용
+PH1_OMEGA=10.0, PH1_SIGMA=2.0, PH1_POOL_SIZE=128
+PH2_RATIO_STAGE1/2/3=2/1/2, E3T_EPSILON=0.2
+```
 
-예를 들어, `grounded_coord_simple` 레이아웃에서 SP, SA, E3T 알고리즘을 비교하려면:
+## 평가 및 시각화
 
-1. 각 알고리즘의 학습 결과를 `runs/`에서 찾아 `run_0`, `run_1`, `run_2` 등으로 이름을 변경하여 같은 디렉토리에 배치합니다.
-2. 시각화 스크립트를 cross 모드로 실행합니다:
-   ```bash
-   sh sh_scripts/run_visualize.sh --gpu <gpu_id> --dir <run_directory> --cross
-   ```
+```bash
+# 단일 알고리즘 평가 (GIF + 지표)
+sh sh_scripts/run_visualize.sh --gpu 0 --dir runs/<run_directory>
 
-이렇게 하면 서로 다른 알고리즘의 에이전트들이 협력하는 시나리오를 시각화하고 평가할 수 있습니다.
+# Cross-play 평가 (알고리즘 간 협력)
+sh sh_scripts/run_visualize.sh --gpu 0 --dir runs/<cross_directory> --cross
+
+# 지표만 (GIF 없이)
+sh sh_scripts/run_visualize.sh --gpu 0 --dir runs/<run_directory> --all --no_viz
+```
+
+## 체크포인트 구조
+
+```
+runs/<timestamp>_<id>_<layout>_<algo>/
+├── run_0/ckpt_final/      # seed 0 최종 체크포인트 (Orbax)
+├── run_1/ckpt_final/      # seed 1
+├── ...
+└── eval/                  # 평가 결과
+```
+
+**체크포인트 내용:**
+- `config`: 학습 설정 전체
+- `params`: 기본 policy params
+- `params_spec`: Specialist policy (PH2만)
+- `params_ind`: Independent policy (PH2만)
+
+## Human-AI 실험 Webapp
+
+`webapp/` 디렉토리에 별도 README 참고. 주요 기능:
+
+- 웹 브라우저에서 학습된 AI(SP/E3T/FCP/PH2)와 Overcooked 협력 플레이
+- 게임 후 주관 평가 설문 (7문항 Likert + 자유 서술)
+- JaxMARL-compatible trajectory 저장 (BC 학습용)
+- 한국어/English i18n 지원
+
+```bash
+cd webapp
+JAX_PLATFORMS=cpu uvicorn app.main:app --port 8000 --loop asyncio
+```
+
+모델 배치: `webapp/models/{layout}/{algo}/{run}/ckpt_final/`
+
+## 디렉토리별 역할
+
+| 디렉토리 | 역할 | 수정 가능 |
+|----------|------|----------|
+| `baseline/` | SP, E3T, FCP, MEP 등 기존 알고리즘 | O |
+| `ph2/` | PH2 + CycleTransformer | O |
+| `JaxMARL/` | 환경 라이브러리 (submodule) | X (upstream 관리) |
+| `webapp/` | Human-AI 실험 웹 앱 | O |
+
+## 환경 구분
+
+| 구분 | Observation | agent_view_size | 재료 수 | 대표 레이아웃 |
+|------|------------|----------------|---------|-------------|
+| **OV1** | Full (전체 그리드) | 없음 | 1 (onion) | cramped_room, coord_ring |
+| **OV2** | Partial (5×5 시야) | 2 | 2~4 | grounded_coord_simple, demo_cook_wide |
+
+- OV1: obs shape = `(H, W, 30)` — 전체 맵이 보임
+- OV2: obs shape = `(5, 5, C)` — 자기 주변 5×5만 보임, C는 재료 수에 따라 변동
+- 동일한 `ActorCriticRNN` 네트워크를 사용하되 obs shape만 다름
+
+## 주의사항
+
+- `baseline/`, `ph2/`, `JaxMARL/`의 기존 코드는 webapp 개발 시 **절대 수정하지 않음**
+- 모든 알고리즘은 동일한 CNN+GRU 구조(`ActorCriticRNN`)를 공유 — 체크포인트 호환
+- PH2 모델의 cross-play 평가 시 `params_ind` (Independent policy) 사용

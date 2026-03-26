@@ -76,10 +76,11 @@ class TrajectoryRecorder:
         self._episode_data["final_score"] = final_score
         self._episode_data["episode_length"] = len(self._episode_data["transitions"])
 
-        # 저장 경로: save_dir/{participant_id}/{episode_id}.pkl
-        participant_dir = self.save_dir / self._episode_data["participant_id"]
-        participant_dir.mkdir(parents=True, exist_ok=True)
-        filepath = participant_dir / f"{self._episode_data['episode_id']}.pkl"
+        # 저장 경로: save_dir/{layout}/{participant_id}/{episode_id}.pkl
+        layout = self._episode_data.get("layout", "unknown")
+        episode_dir = self.save_dir / layout / self._episode_data["participant_id"]
+        episode_dir.mkdir(parents=True, exist_ok=True)
+        filepath = episode_dir / f"{self._episode_data['episode_id']}.pkl"
 
         with open(filepath, "wb") as f:
             pickle.dump(self._episode_data, f)
