@@ -1,0 +1,31 @@
+# @package _global_
+# HSP Stage 1: N개 독립 self-play 정책을 random utility weight로 순차 학습
+defaults:
+  - override /model: rnn
+
+ALG_NAME: "HSP_S1"
+
+HSP_POPULATION_SIZE: 36
+HSP_SELECTED_K: 18
+HSP_EVENT_DIM: 13       # 원본 HSP 13종 (인덱스 순서 원본과 동일)
+
+NUM_SEEDS: 1
+NUM_CHECKPOINTS: 3
+
+model:
+  GRU_HIDDEN_DIM: 64
+  FC_DIM_SIZE: 64
+  LR: 0.0003
+  ENT_COEF: 0.0
+  VF_COEF: 0.5
+  GAE_LAMBDA: 0.95
+  NUM_ENVS: 64
+  NUM_STEPS: 128
+  UPDATE_EPOCHS: 4
+  NUM_MINIBATCHES: 4
+  CLIP_EPS: 0.2
+  MAX_GRAD_NORM: 0.5
+  TOTAL_TIMESTEPS: 1e7
+  REW_SHAPING_HORIZON: 0    # utility weight만 사용, shaping annealing 없음
+  ANNEAL_LR: True
+  LR_WARMUP: 0.05

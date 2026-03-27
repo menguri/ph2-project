@@ -72,7 +72,16 @@ def load_checkpoint(run_dir, run_num, checkpoint):
 
     orbax_checkpointer = ocp.PyTreeCheckpointer()
 
-    ckpt = orbax_checkpointer.restore(checkpoint_dir, item=None)
+    # item=None + GPU에서 sharding 에러 방지:
+    # restore_args 없이 item=None으로 복원하면 GPU sharding metadata 충돌 가능
+    # 해결: 먼저 item=None 시도, 실패 시 abstract target으로 재시도
+    try:
+        ckpt = orbax_checkpointer.restore(checkpoint_dir, item=None)
+    except (ValueError, TypeError):
+        import jax
+        # GPU sharding 문제 → CPU에서 로드 후 device_put
+        with jax.default_device(jax.devices("cpu")[0]):
+            ckpt = orbax_checkpointer.restore(checkpoint_dir, item=None)
 
     return ckpt["config"], ckpt["params"]
 

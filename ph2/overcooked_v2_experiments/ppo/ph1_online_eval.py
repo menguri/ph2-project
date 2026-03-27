@@ -856,7 +856,7 @@ def run_ph1_online_eval(
     )
 
     # Example target path (fallback):
-    # runs/20260203-082046_j2ixpwiw_grounded_coord_simple_e3t_stablock/video/...
+    # runs/20260203-082046_j2ixpwiw_grounded_coord_simple_e3t/video/...
     run_name = None
     try:
         if wandb.run is not None:

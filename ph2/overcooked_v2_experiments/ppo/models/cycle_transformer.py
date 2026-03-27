@@ -20,6 +20,14 @@ Architecture (transformer_action=True):
   Policy input: concat([z_GRU, sg(z_from_s), sg(a_hat)])  — 128+128+6=262 동일
   Cycle input:  concat([sg(z_from_s), sg(a_hat)])  — v1과 동일 dim
 
+--- CT v3 (TRANSFORMER_V3=True) ---
+  ZDecoder:     C(D_c) → z_partner_hat(D_gru)  — partner GRU hidden state 복원
+  Recon loss:   MSE(z_partner_hat, sg(partner_gru_z))  — 실제 partner GRU z
+  ActionDecoder: concat([C, sg(z_partner_hat)]) → a_hat  — C와 복원된 z 모두 사용
+  Policy input: concat([z_GRU, sg(z_partner_hat), sg(a_hat)])  — 128+128+6=262 동일
+  Cycle input:  concat([sg(z_partner_hat), sg(a_hat)])  — v1과 동일 dim
+  ct_state_encoder 불필요 (partner GRU z를 직접 supervision으로 사용)
+
 Gradient flow:
   obs → ct_obs_encoder → window:  rollout은 stop_gradient, _loss_fn 경로는 gradient 흐름
   obs → ct_state_encoder → recon_target:  stop_gradient (v1, fixed random projection)
@@ -261,3 +269,128 @@ class CycleTransformerModule(nn.Module):
         _, state_out, a_hat = self._encode(obs_window, padding_mask)
         z = self._state_to_z(state_out)  # v1: z_hat / v2: ct_state_encoder(s_hat)
         return jax.lax.stop_gradient(z), jax.lax.stop_gradient(a_hat)
+
+
+class CycleTransformerModuleV3(nn.Module):
+    """CT v3: Partner GRU z 복원 기반 협력 모듈.
+
+    v1/v2와 달리 partner의 GRU hidden state를 직접 복원 대상으로 사용한다.
+    ct_state_encoder 불필요 — partner_gru_z가 직접 supervision.
+
+    구조:
+      obs_window → CausalTransformerEncoder → C
+      C → ZDecoder → z_partner_hat           (L_z_recon = MSE vs sg(partner_gru_z))
+      [C, sg(z_partner_hat)] → ActionDecoder → a_hat   (L_action = CE vs partner_action)
+      [sg(z_partner_hat), sg(a_hat)] → CycleEncoder → C_prime  (L_cycle = MSE vs sg(C))
+      Policy input: [z_GRU(128), sg(z_partner_hat)(128), sg(a_hat)(6)] = 262 dims
+
+    Gradient flow:
+      CausalTransformerEncoder ← L_z_recon + L_action + L_cycle
+      ZDecoder                 ← L_z_recon (ActionDecoder 입력에 sg 적용)
+      ActionDecoder            ← L_action
+      CycleEncoder             ← L_cycle
+    """
+
+    d_model: int          # D_c: transformer hidden dim (128)
+    d_obs: int            # obs encoder output dim (128)
+    d_gru: int            # partner GRU hidden dim (= GRU_HIDDEN_DIM, 128)
+    action_dim: int       # 6 (OvercookedV2)
+    window_size: int      # W: history window (16)
+    n_heads: int = 4
+    n_layers: int = 1
+    activation: str = "relu"
+    obs_encoder_type: str = "CNN"
+
+    def setup(self):
+        act = nn.relu if self.activation == "relu" else nn.tanh
+
+        def _make_encoder():
+            if self.obs_encoder_type.upper() == "MLP":
+                return _CTFlattenMLP(hidden_size=self.d_obs, output_size=self.d_obs, activation=act)
+            return CNN(output_size=self.d_obs, activation=act)
+
+        # CT obs encoder: raw obs → window input (trainable via CT losses)
+        self.ct_obs_encoder = _make_encoder()
+        self.ct_obs_encoder_ln = nn.LayerNorm()
+        # ct_state_encoder 불필요 (v3는 partner_gru_z 직접 사용)
+
+        # Causal Transformer
+        self.encoder = CausalTransformerEncoder(
+            d_model=self.d_model,
+            n_heads=self.n_heads,
+            n_layers=self.n_layers,
+        )
+
+        # ZDecoder: C → z_partner_hat (partner GRU hidden state 복원)
+        self.z_fc = nn.Dense(self.d_gru)
+        self.z_ln = nn.LayerNorm()
+
+        # ActionDecoder: [C, sg(z_partner_hat)] → a_hat
+        self.action_hidden = nn.Dense(64)
+        self.action_out = nn.Dense(self.action_dim)
+
+        # CycleEncoder: [sg(z_partner_hat), sg(a_hat)] → C_prime
+        self.cycle_hidden = nn.Dense(self.d_model)
+        self.cycle_out = nn.Dense(self.d_model)
+
+    def encode_obs(self, obs_t):
+        """Window buffer용 obs embedding (v1과 동일).
+
+        Args:
+            obs_t: (B, H, W, C) raw observation
+        Returns:
+            (B, D_obs) CT obs embedding
+        """
+        return self.ct_obs_encoder_ln(self.ct_obs_encoder(obs_t))
+
+    def _encode(self, obs_window, padding_mask=None):
+        """Shared forward: transformer → ZDecoder → ActionDecoder.
+
+        Args:
+            obs_window: (B, W, D_obs) pre-computed CT obs embeddings
+            padding_mask: (B, W) bool, True = valid
+        Returns:
+            C:              (B, D_c)
+            z_partner_hat:  (B, D_gru)
+            a_hat:          (B, A)
+        """
+        C = self.encoder(obs_window, padding_mask)                     # (B, D_c)
+        z_partner_hat = self.z_ln(self.z_fc(C))                        # (B, D_gru)
+
+        # ActionDecoder: sg(z_partner_hat) 사용 — ZDecoder는 z_recon_loss만으로 학습
+        a_in = jnp.concatenate(
+            [C, jax.lax.stop_gradient(z_partner_hat)], axis=-1
+        )  # (B, D_c + D_gru)
+        a_hat = self.action_out(nn.relu(self.action_hidden(a_in)))     # (B, A)
+        return C, z_partner_hat, a_hat
+
+    def __call__(self, obs_window, padding_mask=None):
+        """Full forward (loss 계산용, CycleEncoder 포함).
+
+        Returns:
+            C:              (B, D_c)
+            z_partner_hat:  (B, D_gru)
+            a_hat:          (B, A)
+            C_prime:        (B, D_c)
+        """
+        C, z_partner_hat, a_hat = self._encode(obs_window, padding_mask)
+
+        # CycleEncoder: sg(z_partner_hat) + sg(a_hat) → C_prime
+        z_sg = jax.lax.stop_gradient(z_partner_hat)
+        a_sg = jax.lax.stop_gradient(a_hat)
+        cycle_in = jnp.concatenate([z_sg, a_sg], axis=-1)
+        C_prime = self.cycle_out(nn.relu(self.cycle_hidden(cycle_in)))  # (B, D_c)
+
+        return C, z_partner_hat, a_hat, C_prime
+
+    def encode_only(self, obs_window, padding_mask=None):
+        """Rollout / eval forward — stop_gradient 적용된 policy input용.
+
+        Returns:
+            z_partner_hat_sg: (B, D_gru)  — sg 적용
+            a_hat_sg:         (B, A)      — sg 적용
+
+        v1/v2와 동일한 시그니처 → policy head dim 262 유지.
+        """
+        _, z_partner_hat, a_hat = self._encode(obs_window, padding_mask)
+        return jax.lax.stop_gradient(z_partner_hat), jax.lax.stop_gradient(a_hat)

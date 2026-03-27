@@ -57,7 +57,8 @@ class PPOPolicy(AbstractPolicy):
         use_prediction = bool(self.config.get("USE_PREDICTION", True))
         model_type = self.config.get("model", {}).get("TYPE", "")
         use_pred_flag = (alg_name == "E3T") and use_prediction and (model_type == "RNN")
-        actor_only_flag = alg_name in ("MEP_S1", "MEP_S2")
+        actor_only_flag = alg_name in ("MEP_S1", "MEP_S2", "GAMMA_S1", "GAMMA_S2", "HSP_S1", "HSP_S2",
+                                       "MEP", "GAMMA", "HSP")
 
         if use_pred_flag:
             outputs = self.network.apply(

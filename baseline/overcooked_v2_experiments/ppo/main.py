@@ -100,6 +100,40 @@ def single_run_with_viz(config):
         print(f"[RUNDBG] run_base_dir = {run_base_dir}")
         config["RUN_BASE_DIR"] = run_base_dir
 
+        # run_metadata.json 저장 — 디렉토리만 보고도 실험 설정 파악 가능
+        import json as _json
+        _meta = {
+            "alg_name": config.get("ALG_NAME"),
+            "layout": layout_name,
+            "wandb_id": run_id,
+            "timestamp": run_base_dir.name.split("_")[0],
+            "num_seeds": config.get("NUM_SEEDS") or config.get("S2_NUM_SEEDS"),
+            "model": {
+                k: config.get("model", {}).get(k)
+                for k in ["GRU_HIDDEN_DIM", "FC_DIM_SIZE", "LR", "NUM_ENVS",
+                          "NUM_STEPS", "TOTAL_TIMESTEPS", "ENT_COEF", "VF_COEF",
+                          "MAX_GRAD_NORM", "GAE_LAMBDA", "CLIP_EPS", "UPDATE_EPOCHS",
+                          "NUM_MINIBATCHES", "REW_SHAPING_HORIZON"]
+            },
+        }
+        if "MEP_POPULATION_SIZE" in config:
+            _meta["population_size"] = config["MEP_POPULATION_SIZE"]
+            _meta["entropy_alpha"] = config.get("MEP_ENTROPY_ALPHA")
+        if "HSP_POPULATION_SIZE" in config:
+            _meta["hsp_n"] = config["HSP_POPULATION_SIZE"]
+            _meta["hsp_k"] = config.get("HSP_SELECTED_K")
+            _meta["hsp_event_dim"] = config.get("HSP_EVENT_DIM")
+        if config.get("GAMMA_S2_METHOD") == "vae":
+            _meta["gamma_method"] = "vae"
+            _meta["vae_z_dim"] = config.get("GAMMA_VAE_Z_DIM")
+        if "S2_NUM_SEEDS" in config:
+            _meta["s2_num_seeds"] = config["S2_NUM_SEEDS"]
+        try:
+            with open(run_base_dir / "run_metadata.json", "w") as _f:
+                _json.dump(_meta, _f, indent=2, default=str)
+        except Exception as _e:
+            print(f"[WARN] run_metadata.json 저장 실패: {_e}")
+
         # NUM_CHECKPOINTS 최종 값 재확인
         print(f"[RUNDBG] (wandb.init 블록 내부) NUM_CHECKPOINTS={config.get('NUM_CHECKPOINTS')}")
 
@@ -113,8 +147,9 @@ def single_run_with_viz(config):
     # ---------------------------
     print(f"[CKPTDBG] NUM_CHECKPOINTS after run = {config.get('NUM_CHECKPOINTS')}")
     _alg = config.get("ALG_NAME", "")
-    if _alg in ("MEP_S1", "MEP_S2"):
-        # MEP는 run.py에서 직접 디스크 저장 완료. 표준 ckpt 블록 건너뜀.
+    if _alg in ("MEP_S1", "MEP_S2", "GAMMA_S1", "GAMMA_S2", "HSP_S1", "HSP_S2",
+                "MEP", "GAMMA", "HSP"):
+        # MEP/GAMMA/HSP는 run.py에서 직접 디스크 저장 완료. 표준 ckpt 블록 건너뜀.
         pass
     elif config.get("NUM_CHECKPOINTS", 0) > 0:
         print("[CKPTDBG] 체크포인트 버퍼에서 파라미터 추출 시작")
@@ -210,25 +245,26 @@ def single_run_with_viz(config):
         print("[CKPTDBG] NUM_CHECKPOINTS == 0, 체크포인트 저장 스킵")
 
     # ---------------------------
-    # 시각화
+    # 평가: 훈련 후 자동 cross-play → CSV 저장
+    # EVAL.ENABLED (기본 True) 또는 VISUALIZE 플래그로 제어
+    # self-play는 cross-play에 포함되므로 별도 실행 불필요
     # ---------------------------
+    eval_cfg = config.get("EVAL", {})
+    do_eval = eval_cfg.get("ENABLED", True)  # 기본: 훈련 후 항상 평가
     if config.get("VISUALIZE", False):
-        print("[VIZDBG] VISUALIZE=True → visualize_ppo_policy 호출 (final_only=True, num_seeds=2)")
-        visualize_ppo_policy(
-            run_base_dir,
-            key=jax.random.PRNGKey(config["SEED"]),
-            final_only=True,
-            num_seeds=2,
-        )
+        do_eval = True
 
-        print("[VIZDBG] cross-play 평가 호출 (final_only=True, num_seeds=500, cross=True, no_viz=True)")
+    if do_eval:
+        cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 500)
+        print(f"[EVAL] cross-play 평가 (num_seeds={cross_seeds}, no_viz=True)")
+        print(f"[EVAL] → reward_summary_cross.csv 저장 위치: {run_base_dir}")
         visualize_ppo_policy(
             run_base_dir,
             key=jax.random.PRNGKey(config["SEED"]),
             final_only=True,
-            num_seeds=500,
+            num_seeds=cross_seeds,
             cross=True,
-            no_viz=True,
+            no_viz=True,  # CSV + heatmap만 저장, 비디오 생성 안 함
         )
 
     print("[RUNDBG] ===== single_run_with_viz 종료 =====")

@@ -30,7 +30,6 @@ from .utils import (
     render_state_frame,
     resolve_eval_engine,
 )
-from overcooked_v2_experiments.ppo.utils.stablock import enumerate_reachable_positions
 
 
 @chex.dataclass
@@ -52,7 +51,6 @@ def visualize_pairing(
     no_viz=False,
     no_csv=False,
     algorithm="PPO",
-    stablock_enabled=None,
     latent_analysis=False,
     value_analysis=False,
     ph1_forced_tilde_state=None,
@@ -68,7 +66,6 @@ def visualize_pairing(
         all_recipes,
         no_viz,
         algorithm=algorithm,
-        stablock_enabled=stablock_enabled,
         latent_analysis=latent_analysis,
         value_analysis=value_analysis,
         ph1_forced_tilde_state=ph1_forced_tilde_state,
@@ -155,7 +152,6 @@ def eval_pairing(
     all_recipes=False,
     no_viz=False,
     algorithm="PPO",
-    stablock_enabled=None,
     latent_analysis=False,
     value_analysis=False,
     ph1_forced_tilde_state=None,
@@ -224,7 +220,6 @@ def eval_pairing(
             env,
             key,
             algorithm=algorithm,
-            stablock_enabled=stablock_enabled,
             ph1_forced_tilde_state=ph1_forced_tilde_state,
             value_by_et=True,
             et_candidates=coords,
@@ -302,7 +297,6 @@ def eval_pairing(
                 env,
                 keys[i],
                 algorithm=algorithm,
-                stablock_enabled=stablock_enabled,
                 forced_blocked_states=forced_blocked_states,
                 ph1_forced_tilde_state=ph1_forced_tilde_state,
             )
@@ -358,7 +352,6 @@ def eval_pairing(
                 env,
                 key,
                 algorithm=algorithm,
-                stablock_enabled=stablock_enabled,
                 ph1_forced_tilde_state=ph1_forced_tilde_state,
             )
 
@@ -389,8 +382,7 @@ def eval_pairing(
                     env,
                     key,
                     algorithm=algorithm,
-                    stablock_enabled=stablock_enabled,
-                    ph1_forced_tilde_state=ph1_forced_tilde_state,
+                        ph1_forced_tilde_state=ph1_forced_tilde_state,
                     use_jit=True,
                 )
                 return carry, rollout
@@ -402,7 +394,6 @@ def eval_pairing(
                 env,
                 keys[0],
                 algorithm=algorithm,
-                stablock_enabled=stablock_enabled,
                 ph1_forced_tilde_state=ph1_forced_tilde_state,
                 use_jit=True,
             )

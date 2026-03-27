@@ -35,7 +35,7 @@ class _FlattenMLP(nn.Module):
         x = self.activation(x)
         return x
 from .e3t import PartnerPredictor
-from .cycle_transformer import CycleTransformerModule
+from .cycle_transformer import CycleTransformerModule, CycleTransformerModuleV3
 
 
 class ScannedRNN(nn.Module):
@@ -238,20 +238,38 @@ class ActorCriticRNN(ActorCriticBase):
 
             T_dim, B_dim = obs.shape[:2]
             _transformer_v2 = bool(self.config.get("TRANSFORMER_V2", False))
+            _transformer_v3 = bool(self.config.get("TRANSFORMER_V3", False))
             _state_shape = tuple(self.config.get("TRANSFORMER_STATE_SHAPE", []))
-            cycle_module = CycleTransformerModule(
-                d_model=D_c,
-                d_obs=D_obs,
-                action_dim=self.action_dim,
-                window_size=W,
-                n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
-                n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
-                activation=self.config.get("ACTIVATION", "relu"),
-                v2=_transformer_v2,
-                state_shape=_state_shape if _transformer_v2 else (),
-                obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
-                name="cycle_transformer",
-            )
+
+            if _transformer_v3:
+                # CT v3: partner GRU z 복원 기반
+                cycle_module = CycleTransformerModuleV3(
+                    d_model=D_c,
+                    d_obs=D_obs,
+                    d_gru=int(self.config["GRU_HIDDEN_DIM"]),
+                    action_dim=self.action_dim,
+                    window_size=W,
+                    n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
+                    n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
+                    activation=self.config.get("ACTIVATION", "relu"),
+                    obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
+                    name="cycle_transformer",
+                )
+            else:
+                # CT v1/v2
+                cycle_module = CycleTransformerModule(
+                    d_model=D_c,
+                    d_obs=D_obs,
+                    action_dim=self.action_dim,
+                    window_size=W,
+                    n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
+                    n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
+                    activation=self.config.get("ACTIVATION", "relu"),
+                    v2=_transformer_v2,
+                    state_shape=_state_shape if _transformer_v2 else (),
+                    obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
+                    name="cycle_transformer",
+                )
 
             # CT obs encoder: independent from shared_encoder, trainable via CT losses.
             # rollout window 빌드에는 stop_gradient 적용 → policy gradient가 ct_obs_encoder에 흐르지 않음.
@@ -310,7 +328,7 @@ class ActorCriticRNN(ActorCriticBase):
             #   PH1의 blocked target(tilde{s})은 full state일 수 있어
             #   execution obs(agent_view_size 적용)와 spatial shape가 달라도 정상이다.
             #   따라서 obs와의 H/W shape 비교를 하지 않는다.
-            #   (좌표 기반 stablock은 ndim<4 이므로 아래 else 경로로 감)
+            #   (좌표 기반 blocked target은 ndim<4)
             is_image_like = blocked_states_in.ndim >= 4
 
             if is_image_like:
@@ -369,20 +387,6 @@ class ActorCriticRNN(ActorCriticBase):
                 elif blocked_single is not None:
                     blocked_emb = self.encode_blocked(blocked_single)
                     embedding = jnp.concatenate([embedding, blocked_emb], axis=-1)
-            else:
-                # 좌표 기반(stablock 기존) 경로는 유지 (Dense input 등)
-                if blocked_states_in.ndim == 2:
-                    blocked_states_in = blocked_states_in[jnp.newaxis, ...]
-                elif blocked_states_in.ndim != embedding.ndim:
-                    # 차원 불일치 시 예외 처리 보다는 브로드캐스팅 시도
-                    if blocked_states_in.shape[0] == embedding.shape[1]:
-                         # (B, D) -> (1, B, D) -> (T, B, D)
-                         blocked_states_in = jnp.broadcast_to(
-                            blocked_states_in[jnp.newaxis, ...],
-                            (embedding.shape[0],) + blocked_states_in.shape
-                        )
-
-                embedding = jnp.concatenate([embedding, blocked_states_in], axis=-1)
 
         rnn_in = (embedding, dones)
         rnn_state, embedding = ScannedRNN()(rnn_state, rnn_in)
@@ -486,24 +490,41 @@ class ActorCriticRNN(ActorCriticBase):
             obs_windows:   (N, W, D_obs) where N = T*B (flattened time*batch)
             padding_masks: (N, W) bool, True = valid slot (may be None)
         Returns:
-            (C, z_hat, a_hat, C_prime) each of shape (N, ...)
+            v1/v2: (C, state_out, a_hat, C_prime) each of shape (N, ...)
+            v3:    (C, z_partner_hat, a_hat, C_prime) each of shape (N, ...)
         """
         W = int(self.config.get("TRANSFORMER_WINDOW_SIZE", 16))
         D_c = int(self.config.get("TRANSFORMER_D_C", 128))
         D_obs = int(self.config["GRU_HIDDEN_DIM"])
         _transformer_v2 = bool(self.config.get("TRANSFORMER_V2", False))
+        _transformer_v3 = bool(self.config.get("TRANSFORMER_V3", False))
         _state_shape = tuple(self.config.get("TRANSFORMER_STATE_SHAPE", []))
-        module = CycleTransformerModule(
-            d_model=D_c,
-            d_obs=D_obs,
-            action_dim=self.action_dim,
-            window_size=W,
-            n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
-            n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
-            activation=self.config.get("ACTIVATION", "relu"),
-            v2=_transformer_v2,
-            state_shape=_state_shape if _transformer_v2 else (),
-            obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
-            name="cycle_transformer",  # must match name in __call__
-        )
+
+        if _transformer_v3:
+            module = CycleTransformerModuleV3(
+                d_model=D_c,
+                d_obs=D_obs,
+                d_gru=int(self.config["GRU_HIDDEN_DIM"]),
+                action_dim=self.action_dim,
+                window_size=W,
+                n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
+                n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
+                activation=self.config.get("ACTIVATION", "relu"),
+                obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
+                name="cycle_transformer",
+            )
+        else:
+            module = CycleTransformerModule(
+                d_model=D_c,
+                d_obs=D_obs,
+                action_dim=self.action_dim,
+                window_size=W,
+                n_heads=int(self.config.get("TRANSFORMER_N_HEADS", 4)),
+                n_layers=int(self.config.get("TRANSFORMER_N_LAYERS", 1)),
+                activation=self.config.get("ACTIVATION", "relu"),
+                v2=_transformer_v2,
+                state_shape=_state_shape if _transformer_v2 else (),
+                obs_encoder_type=self.config.get("OBS_ENCODER", "CNN"),
+                name="cycle_transformer",
+            )
         return module(obs_windows, padding_masks)

@@ -21,6 +21,7 @@ def get_actor_critic(config) -> ActorCriticBase:
         "TRANSFORMER_PRED_COEF",
         "TRANSFORMER_CYCLE_COEF",
         "TRANSFORMER_V2",          # v2 pixel-space recon 아키텍처 분기용
+        "TRANSFORMER_V3",          # v3 partner GRU z 복원 아키텍처 분기용
         "TRANSFORMER_STATE_SHAPE", # v2 pixel decoder output shape (H, W, C_full)
     ):
         if _ct_key in config:

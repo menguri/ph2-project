@@ -37,10 +37,6 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 # FCP_DEVICE 설정 (기본값: cpu)
 : "${FCP_DEVICE:=cpu}"
 
-# Stablock settings
-: "${STABLOCK_ENABLED:=False}"
-: "${STABLOCK_PENALTY:=10.0}"
-: "${STABLOCK_NO_BLOCK_PROB:=}"
 : "${USE_PARTNER_MODELING:=True}"
 : "${PRED_LOSS_COEF:=1.0}"
 
@@ -87,6 +83,7 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${TRANSFORMER_PRED_COEF:=}"
 : "${TRANSFORMER_CYCLE_COEF:=}"
 : "${TRANSFORMER_V2:=}"
+: "${TRANSFORMER_V3:=}"
 
 # XLA_FLAGS: 기본 CUDA data dir 설정
 : "${XLA_FLAGS:=--xla_gpu_cuda_data_dir=${CUDA_HOME:-/usr/local/cuda-12.2}}"
@@ -241,9 +238,6 @@ while [[ $# -gt 0 ]]; do
     --anchor)     ANCHOR_ENABLED="1"; shift 1;;
     --mem-frac)   XLA_PYTHON_CLIENT_MEM_FRACTION="$2"; shift 2;;
     --fcp-device) FCP_DEVICE="$2"; shift 2 ;;
-    --stablock-enabled) STABLOCK_ENABLED="$2"; shift 2;;
-    --stablock-penalty) STABLOCK_PENALTY="$2"; shift 2;;
-    --stablock-no-block-prob) STABLOCK_NO_BLOCK_PROB="$2"; shift 2;;
     --use-partner-modeling) USE_PARTNER_MODELING="$2"; shift 2;;
     --pred-loss-coef) PRED_LOSS_COEF="$2"; shift 2;;
     --ph1-block-type) PH1_BLOCK_TYPE="$2"; shift 2;;
@@ -286,12 +280,14 @@ while [[ $# -gt 0 ]]; do
     --transformer-pred-coef) TRANSFORMER_PRED_COEF="$2"; shift 2;;
     --transformer-cycle-coef) TRANSFORMER_CYCLE_COEF="$2"; shift 2;;
     --transformer-v2) TRANSFORMER_V2="$2"; shift 2;;
+    --transformer-v3) TRANSFORMER_V3="$2"; shift 2;;
     --ph2-*|--PH2-*)
       echo "[ERROR] Unsupported PH2 flag: $1" >&2
       echo "        Supported PH2 flags: --ph2-ratio-stage1/2/3, --ph2-fixed-ind-prob, --ph2-epsilon, --action-prediction" >&2
       exit 1
       ;;
     --random-reset) RANDOM_RESET_OVERRIDE="$2"; shift 2;;
+    --extra) EXTRA_ARGS+=("$2"); shift 2;;
     *)            echo "[WARN] Unknown arg: $1"; shift 1;;
   esac
 done
@@ -339,8 +335,6 @@ fi
 [[ "$CAST_OBS_BF16" == "1" ]]      && echo "  Obs DType    : bfloat16 (CAST_OBS_BF16)"
 [[ -n "$MODEL_NUM_ENVS_OVERRIDE" ]]   && echo "  NUM_ENVS     : $MODEL_NUM_ENVS_OVERRIDE (override)"
 [[ -n "$MODEL_NUM_STEPS_OVERRIDE" ]] && echo "  NUM_STEPS    : $MODEL_NUM_STEPS_OVERRIDE (override)"
-[[ "$STABLOCK_ENABLED" == "True" ]] && echo "  Stablock     : Enabled (Penalty: $STABLOCK_PENALTY)"
-[[ -n "$STABLOCK_NO_BLOCK_PROB" ]]   && echo "  Stablock NB  : NO_BLOCK_PROB=$STABLOCK_NO_BLOCK_PROB"
 [[ "$USE_PARTNER_MODELING" == "True" ]] && echo "  Partner Mod  : Enabled (Coef: $PRED_LOSS_COEF)"
 
 echo "==============================================================="
@@ -487,16 +481,45 @@ if [[ -n "$MODEL_NUM_STEPS_OVERRIDE" ]]; then
   PY_ARGS+=("model.NUM_STEPS=${MODEL_NUM_STEPS_OVERRIDE}")
 fi
 
-# Add stablock-related args
-if [[ "$STABLOCK_ENABLED" == "True" ]]; then
-  PY_ARGS+=("+STABLOCK_ENABLED=True")
-fi
-if [[ -n "$STABLOCK_PENALTY" ]]; then
-  PY_ARGS+=("+STABLOCK_HEAVY_PENALTY=$STABLOCK_PENALTY")
-fi
-if [[ -n "$STABLOCK_NO_BLOCK_PROB" ]]; then
-  PY_ARGS+=("+STABLOCK_NO_BLOCK_PROB=$STABLOCK_NO_BLOCK_PROB")
-fi
+# set -u 대응: 선택적 변수 기본값 초기화
+: "${PRED_LOSS_COEF:=}"
+: "${PH1_BLOCK_TYPE:=}"
+: "${PH1_BETA:=}"
+: "${PH1_BETA_SCHEDULE_ENABLED:=}"
+: "${PH1_BETA_START:=}"
+: "${PH1_BETA_END:=}"
+: "${PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS:=}"
+: "${PH1_OMEGA:=}"
+: "${PH1_SIGMA:=}"
+: "${PH1_DISTANCE_THRESHOLD:=}"
+: "${PH1_POOL_SIZE:=}"
+: "${PH1_NORMAL_PROB:=}"
+: "${PH1_MULTI_PENALTY_ENABLED:=}"
+: "${PH1_MAX_PENALTY_COUNT:=}"
+: "${PH1_MULTI_PENALTY_SINGLE_WEIGHT:=}"
+: "${PH1_MULTI_PENALTY_OTHER_WEIGHT:=}"
+: "${PH1_ENABLED:=}"
+: "${PH1_EPSILON:=}"
+: "${PH1_WARMUP_STEPS:=}"
+: "${PH2_RATIO_STAGE1:=}"
+: "${PH2_RATIO_STAGE2:=}"
+: "${PH2_RATIO_STAGE3:=}"
+: "${PH2_FIXED_IND_PROB:=}"
+: "${PH2_EPSILON:=}"
+: "${ACTION_PREDICTION:=}"
+: "${SAVE_EVAL_CHECKPOINTS:=}"
+: "${TRANSFORMER_ACTION:=}"
+: "${TRANSFORMER_WINDOW_SIZE:=}"
+: "${TRANSFORMER_D_C:=}"
+: "${TRANSFORMER_RECON_COEF:=}"
+: "${TRANSFORMER_PRED_COEF:=}"
+: "${TRANSFORMER_CYCLE_COEF:=}"
+: "${TRANSFORMER_V2:=}"
+: "${TRANSFORMER_V3:=}"
+: "${SHARED_PREDICTION:=}"
+: "${RANDOM_RESET_FLAG:=}"
+if [[ -z "${EXTRA_ARGS+x}" ]]; then EXTRA_ARGS=(); fi
+
 if [[ "$USE_PARTNER_MODELING" == "True" ]]; then
   PY_ARGS+=("USE_PARTNER_MODELING=True")
 fi
@@ -629,6 +652,9 @@ fi
 if [[ -n "$TRANSFORMER_V2" ]]; then
   PY_ARGS+=("++TRANSFORMER_V2=$TRANSFORMER_V2")
 fi
+if [[ -n "$TRANSFORMER_V3" ]]; then
+  PY_ARGS+=("++TRANSFORMER_V3=$TRANSFORMER_V3")
+fi
 
 # random_reset override (ToyCoop procedural generation)
 if [[ -n "${RANDOM_RESET_OVERRIDE:-}" ]]; then
@@ -699,6 +725,13 @@ cd "${PROJECT_DIR}"
 # import 경로: 현재 프로젝트 디렉토리 + JaxMARL
 export PYTHONPATH="${PROJECT_DIR}:${REPO_ROOT}/JaxMARL"
 echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
+
+# 추가 Hydra override (--extra 플래그)
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  for arg in "${EXTRA_ARGS[@]}"; do
+    PY_ARGS+=("${arg}")
+  done
+fi
 
 env -u LD_LIBRARY_PATH XLA_FLAGS="${RUNTIME_XLA_FLAGS}" \
   python overcooked_v2_experiments/ppo/main.py "${PY_ARGS[@]}" 2>&1 | filter_ptx

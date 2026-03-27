@@ -1,0 +1,35 @@
+# @package _global_
+# MEP 통합 config: S1(population) → S2(adaptive) 자동 진행
+defaults:
+  - override /model: rnn
+
+ALG_NAME: "MEP"
+
+# Population (S1)
+MEP_POPULATION_SIZE: 4
+MEP_ENTROPY_ALPHA: 0.01
+
+# Adaptive (S2)
+MEP_USE_PRIORITIZED_SAMPLING: True
+MEP_PRIORITIZED_ALPHA: 1.0
+S2_NUM_SEEDS: 10
+
+NUM_SEEDS: 1           # S1은 항상 1
+NUM_CHECKPOINTS: 3
+
+model:
+  LR: 0.0003
+  ENT_COEF: 0.0
+  VF_COEF: 0.5
+  GAE_LAMBDA: 0.95
+  NUM_ENVS: 64
+  NUM_STEPS: 128
+  UPDATE_EPOCHS: 4
+  NUM_MINIBATCHES: 4
+  CLIP_EPS: 0.2
+  MAX_GRAD_NORM: 0.5
+  TOTAL_TIMESTEPS: 3e7       # S1 timesteps
+  S2_TOTAL_TIMESTEPS: 2e7    # S2 timesteps
+  REW_SHAPING_HORIZON: 2.5e6
+  ANNEAL_LR: True
+  LR_WARMUP: 0.05

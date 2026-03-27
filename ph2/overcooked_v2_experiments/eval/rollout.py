@@ -73,7 +73,6 @@ def get_rollout(
     env,
     key,
     algorithm="PPO",
-    stablock_enabled=None,
     forced_blocked_states=None,
     value_by_et=False,
     et_candidates=None,
@@ -159,11 +158,6 @@ def get_rollout(
     key, key_r = jax.random.split(key, 2)
     obs, state = reset_fn(key_r)
 
-    stablock_enabled = (
-        [False] * env.num_agents if stablock_enabled is None else stablock_enabled
-    )
-    stablock_enabled = [bool(x) for x in stablock_enabled]
-
     blocked_states = None
     ph1_forced_tilde_state = (
         jnp.array(ph1_forced_tilde_state, dtype=jnp.float32)
@@ -176,11 +170,6 @@ def get_rollout(
                 f"agent_{i}": jnp.array(forced_blocked_states[i], dtype=jnp.int32)
                 for i in range(env.num_agents)
             }
-        elif any(stablock_enabled):
-            blocked_states = {}
-            for i, enabled in enumerate(stablock_enabled):
-                if enabled:
-                    blocked_states[f"agent_{i}"] = jnp.array([-1, -1], dtype=jnp.int32)
 
     if value_by_et:
         if et_candidates is None or target_agent is None:

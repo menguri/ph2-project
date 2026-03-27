@@ -1,0 +1,30 @@
+# @package _global_
+# GAMMA Stage 1 — ToyCoop (Dual Destination) 환경 전용
+defaults:
+  - override /model: rnn
+
+ALG_NAME: "GAMMA_S1"
+
+MEP_POPULATION_SIZE: 4
+MEP_ENTROPY_ALPHA: 0.01
+
+NUM_SEEDS: 1
+NUM_CHECKPOINTS: 3
+
+model:
+  OBS_ENCODER: "MLP"
+  GRU_HIDDEN_DIM: 64
+  FC_DIM_SIZE: 64
+  LR: 0.0003
+  NUM_ENVS: 512
+  NUM_STEPS: 100
+  NUM_MINIBATCHES: 2
+  UPDATE_EPOCHS: 4
+  TOTAL_TIMESTEPS: 1e8
+  ENT_COEF: 0.005
+  VF_COEF: 1.0
+  MAX_GRAD_NORM: 0.5
+  CLIP_EPS: 0.2
+  GAE_LAMBDA: 0.9
+  ANNEAL_LR: True
+  LR_WARMUP: 0.05

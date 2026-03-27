@@ -96,6 +96,34 @@ def single_run_with_viz(config):
         print(f"[RUNDBG] run_base_dir = {run_base_dir}")
         config["RUN_BASE_DIR"] = run_base_dir
 
+        # run_metadata.json 저장 — 디렉토리만 보고도 실험 설정 파악 가능
+        import json as _json
+        _meta = {
+            "alg_name": config.get("ALG_NAME"),
+            "layout": layout_name,
+            "wandb_id": run_id,
+            "timestamp": run_base_dir.name.split("_")[0] if hasattr(run_base_dir, 'name') else "",
+            "num_seeds": config.get("NUM_SEEDS"),
+            "model": {
+                k: config.get("model", {}).get(k)
+                for k in ["GRU_HIDDEN_DIM", "FC_DIM_SIZE", "LR", "NUM_ENVS",
+                          "NUM_STEPS", "TOTAL_TIMESTEPS", "ENT_COEF", "VF_COEF",
+                          "MAX_GRAD_NORM", "GAE_LAMBDA", "CLIP_EPS", "UPDATE_EPOCHS",
+                          "NUM_MINIBATCHES", "REW_SHAPING_HORIZON"]
+            },
+        }
+        # PH1/PH2 파라미터
+        for k in ["PH1_EPSILON", "PH1_OMEGA", "PH1_SIGMA", "PH1_MAX_PENALTY_COUNT",
+                   "PH1_BETA", "PH2_RATIO", "E3T_EPSILON",
+                   "TRANSFORMER_ACTION", "ACTION_PREDICTION"]:
+            if k in config:
+                _meta[k.lower()] = config[k]
+        try:
+            with open(Path(run_base_dir) / "run_metadata.json", "w") as _f:
+                _json.dump(_meta, _f, indent=2, default=str)
+        except Exception as _e:
+            print(f"[WARN] run_metadata.json 저장 실패: {_e}")
+
         # NUM_CHECKPOINTS 최종 값 재확인
         print(f"[RUNDBG] (wandb.init 블록 내부) NUM_CHECKPOINTS={config.get('NUM_CHECKPOINTS')}")
 
@@ -644,23 +672,23 @@ def single_run_with_viz(config):
                 ) from e
 
     # ---------------------------
-    # 시각화
+    # 평가: 훈련 후 자동 cross-play → CSV 저장
+    # EVAL.ENABLED (기본 True) 또는 VISUALIZE 플래그로 제어
     # ---------------------------
+    eval_cfg = config.get("EVAL", {})
+    do_eval = eval_cfg.get("ENABLED", True)
     if config.get("VISUALIZE", False):
-        print("[VIZDBG] VISUALIZE=True → visualize_ppo_policy 호출 (final_only=True, num_seeds=2)")
-        visualize_ppo_policy(
-            run_base_dir,
-            key=jax.random.PRNGKey(config["SEED"]),
-            final_only=True,
-            num_seeds=2,
-        )
+        do_eval = True
 
-        print("[VIZDBG] cross-play 평가 호출 (final_only=True, num_seeds=500, cross=True, no_viz=True)")
+    if do_eval:
+        cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 500)
+        print(f"[EVAL] cross-play 평가 (num_seeds={cross_seeds}, no_viz=True)")
+        print(f"[EVAL] → reward_summary_cross.csv 저장 위치: {run_base_dir}")
         visualize_ppo_policy(
             run_base_dir,
             key=jax.random.PRNGKey(config["SEED"]),
             final_only=True,
-            num_seeds=500,
+            num_seeds=cross_seeds,
             cross=True,
             no_viz=True,
         )

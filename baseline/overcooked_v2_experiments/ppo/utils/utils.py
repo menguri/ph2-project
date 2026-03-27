@@ -31,6 +31,22 @@ def _infer_run_suffix(config) -> str:
         suffix = "m1"
     if config.get("ALG_NAME") == "MEP_S2":
         suffix = "m2"
+    if config.get("ALG_NAME") == "GAMMA_S1":
+        suffix = "g1"
+    if config.get("ALG_NAME") == "GAMMA_S2":
+        suffix = "g2"
+    if config.get("ALG_NAME") == "HSP_S1":
+        suffix = "h1"
+    if config.get("ALG_NAME") == "HSP_S2":
+        suffix = "h2"
+    # 통합 파이프라인 suffix
+    if config.get("ALG_NAME") == "MEP":
+        suffix = "mep"
+    if config.get("ALG_NAME") == "GAMMA":
+        method = config.get("GAMMA_S2_METHOD", "rl")
+        suffix = f"gamma-{method}" if method != "rl" else "gamma"
+    if config.get("ALG_NAME") == "HSP":
+        suffix = "hsp"
 
     return suffix
 
@@ -46,6 +62,39 @@ def build_default_run_name(config) -> str:
     return f"{suffix}_{layout_name}_{model_name.lower()}_{avs_str}"
 
 
+def _build_param_tag(config) -> str:
+    """알고리즘별 핵심 파라미터를 짧은 태그로 생성. 디렉토리 이름에 포함."""
+    alg = config.get("ALG_NAME", "SP")
+    model = config.get("model", {})
+    parts = []
+
+    gru = model.get("GRU_HIDDEN_DIM", 128)
+    if gru != 128:
+        parts.append(f"h{gru}")
+
+    if alg in ("MEP", "MEP_S1", "GAMMA", "GAMMA_S1"):
+        pop = config.get("MEP_POPULATION_SIZE", 4)
+        parts.append(f"pop{pop}")
+        alpha = config.get("MEP_ENTROPY_ALPHA", 0.01)
+        if alpha != 0.01:
+            parts.append(f"ea{alpha}")
+
+    if alg in ("HSP", "HSP_S1"):
+        n = config.get("HSP_POPULATION_SIZE", 36)
+        k = config.get("HSP_SELECTED_K", 18)
+        parts.append(f"n{n}k{k}")
+
+    if alg == "GAMMA" and config.get("GAMMA_S2_METHOD") == "vae":
+        z = config.get("GAMMA_VAE_Z_DIM", 16)
+        parts.append(f"z{z}")
+
+    nenv = model.get("NUM_ENVS", 64)
+    if nenv not in (64, 256):  # 비표준 값만 표시
+        parts.append(f"e{nenv}")
+
+    return "_".join(parts)
+
+
 def get_run_base_dir(run_id: str, config) -> str:
     optional_prefix = config.get("OPTIONAL_PREFIX", "")
 
@@ -58,15 +107,17 @@ def get_run_base_dir(run_id: str, config) -> str:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     suffix = _infer_run_suffix(config)
+    param_tag = _build_param_tag(config)
 
     if "FCP" in config:
         dir = Path(config["FCP"])
         f = dir.name
         run_dir = os.path.join(results_dir, f"{timestamp}_{run_id}_{layout_name}_fcp")
     else:
-        run_dir = os.path.join(
-            results_dir, f"{timestamp}_{run_id}_{layout_name}_{suffix}"
-        )
+        name_parts = [timestamp, run_id, layout_name, suffix]
+        if param_tag:
+            name_parts.append(param_tag)
+        run_dir = os.path.join(results_dir, "_".join(name_parts))
     os.makedirs(run_dir, exist_ok=True)
 
     print("run_dir", run_dir)

@@ -1,4 +1,5 @@
 import copy
+import shutil
 from functools import partial
 from pathlib import Path
 from omegaconf import OmegaConf
@@ -154,11 +155,253 @@ def load_mep_population(population_dir: Path):
     return stacked
 
 
+def _run_s2_multi_seed(config, pop_params, label="S2"):
+    """S2 multi-seed 학습 공통 로직 (MEP/GAMMA/HSP S2 모두 동일)."""
+    from overcooked_v2_experiments.ppo.mep.mep_s2 import make_train_mep_s2
+    train_fn = make_train_mep_s2(config)
+
+    num_seeds = config["NUM_SEEDS"]
+    with jax.disable_jit(False):
+        rng = jax.random.PRNGKey(config["SEED"])
+        rngs = jax.random.split(rng, num_seeds)
+        rngs = jax.device_put(rngs, jax.devices("cpu")[0])
+
+        num_devices = get_num_devices()
+        print(f"[{label}] num_seeds={num_seeds}, num_devices={num_devices}")
+
+        def _train_s2(rng_s):
+            return train_fn(rng_s, population=pop_params)
+
+        if num_devices <= 1:
+            train_jit = jax.jit(_train_s2)
+            if num_seeds == 1:
+                out = train_jit(rngs[0])
+            else:
+                out = jax.vmap(train_jit)(rngs)
+        else:
+            if num_seeds == num_devices:
+                out = jax.pmap(_train_s2)(rngs)
+            elif num_seeds % num_devices == 0:
+                seeds_per_device = num_seeds // num_devices
+                rngs_2d = rngs.reshape((num_devices, seeds_per_device, *rngs.shape[1:]))
+                out = jax.pmap(jax.vmap(_train_s2))(rngs_2d)
+                out = jax.tree_util.tree_map(
+                    lambda x: x.reshape((num_seeds, *x.shape[2:])), out
+                )
+            else:
+                print(f"[warn] num_seeds({num_seeds}) % num_devices({num_devices}) != 0; fallback to vmap")
+                train_jit = jax.jit(_train_s2)
+                out = jax.vmap(train_jit)(rngs)
+
+    # 체크포인트 저장
+    num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
+    if num_checkpoints > 0:
+        actor_ckpts = out["actor_ckpts"]
+        sample_leaf = jax.tree_util.tree_leaves(actor_ckpts)[0]
+        has_seed_axis = sample_leaf.shape[0] == num_seeds and num_seeds > 1
+        for s in range(num_seeds):
+            if has_seed_axis:
+                seed_ckpts = jax.tree_util.tree_map(lambda x: x[s], actor_ckpts)
+            else:
+                seed_ckpts = actor_ckpts
+            for slot in range(num_checkpoints - 1):
+                params = jax.tree_util.tree_map(lambda x: x[slot], seed_ckpts)
+                store_checkpoint(config, params, s, slot, final=False)
+            params_final = jax.tree_util.tree_map(
+                lambda x: x[num_checkpoints - 1], seed_ckpts
+            )
+            store_checkpoint(config, params_final, s, num_checkpoints - 1, final=True)
+        print(f"[{label}] Saved {num_seeds} seeds × {num_checkpoints} ckpts to {config['RUN_BASE_DIR']}")
+
+    return out
+
+
+def _save_population(pop_ckpts, pop_dir, label="POP"):
+    """Population checkpoint을 디스크에 저장 (MEP/GAMMA 공통)."""
+    N = jax.tree_util.tree_leaves(pop_ckpts)[0].shape[0]
+    _CKPT_NAMES = ["ckpt_init_actor.pkl", "ckpt_mid_actor.pkl", "ckpt_final_actor.pkl"]
+    pop_dir = Path(pop_dir)
+    pop_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(N):
+        member_dir = pop_dir / f"member_{i}"
+        member_dir.mkdir(exist_ok=True)
+        for slot, ckpt_name in enumerate(_CKPT_NAMES):
+            member_ckpt = jax.tree_util.tree_map(lambda x: x[i, slot], pop_ckpts)
+            with open(member_dir / ckpt_name, "wb") as f:
+                pickle.dump(member_ckpt, f)
+    print(f"[{label}] Saved {N} members × 3 ckpts to {pop_dir}")
+    return N
+
+
+def _run_unified_mep(config):
+    """MEP S1 → S2 통합 실행."""
+    from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
+
+    run_base_dir = Path(config["RUN_BASE_DIR"])
+
+    # ---- S1: Population training ----
+    print("=" * 60)
+    print("[MEP] Stage 1: Population training")
+    print("=" * 60)
+    train_fn = make_train_mep_s1(config)
+    rng = jax.random.PRNGKey(config["SEED"])
+    with jax.disable_jit(False):
+        out_s1 = jax.jit(train_fn)(rng)
+
+    pop_dir = run_base_dir / "mep_population"
+    _save_population(out_s1["pop_actor_ckpts"], pop_dir, "MEP S1")
+
+    # ---- S2: Adaptive agent training ----
+    print("=" * 60)
+    print("[MEP] Stage 2: Adaptive agent training")
+    print("=" * 60)
+    pop_params = load_mep_population(pop_dir)
+    s2_config = _make_s2_config(config)
+    out_s2 = _run_s2_multi_seed(s2_config, pop_params, "MEP S2")
+
+    return {"s1": out_s1, "s2": out_s2}
+
+
+def _run_unified_gamma(config):
+    """GAMMA S1 → S2 통합 실행. S2는 method에 따라 rl 또는 vae."""
+    from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
+
+    run_base_dir = Path(config["RUN_BASE_DIR"])
+    method = config.get("GAMMA_S2_METHOD", "rl")
+
+    # ---- S1: Population training (MEP S1과 동일) ----
+    print("=" * 60)
+    print("[GAMMA] Stage 1: Population training")
+    print("=" * 60)
+    train_fn = make_train_mep_s1(config)
+    rng = jax.random.PRNGKey(config["SEED"])
+    with jax.disable_jit(False):
+        out_s1 = jax.jit(train_fn)(rng)
+
+    pop_dir = run_base_dir / "gamma_population"
+    _save_population(out_s1["pop_actor_ckpts"], pop_dir, "GAMMA S1")
+
+    # ---- S2 ----
+    if method == "vae":
+        print("=" * 60)
+        print("[GAMMA] Stage 2: VAE training + z-conditioned RL")
+        print("=" * 60)
+        from overcooked_v2_experiments.ppo.gamma.gamma_s2_vae import run_gamma_s2_vae
+        pop_params = load_mep_population(pop_dir)
+        s2_config = _make_s2_config(config)
+        out_s2 = run_gamma_s2_vae(s2_config, pop_params, pop_dir)
+    else:
+        print("=" * 60)
+        print("[GAMMA] Stage 2: Adaptive agent training (standard RL)")
+        print("=" * 60)
+        pop_params = load_mep_population(pop_dir)
+        s2_config = _make_s2_config(config)
+        out_s2 = _run_s2_multi_seed(s2_config, pop_params, "GAMMA S2")
+
+    return {"s1": out_s1, "s2": out_s2}
+
+
+def _run_unified_hsp(config):
+    """HSP S1 → Greedy Selection → S2 통합 실행."""
+    from overcooked_v2_experiments.ppo.hsp.hsp_s1 import make_train_hsp_s1
+    from overcooked_v2_experiments.ppo.hsp.greedy_selector import (
+        collect_event_features, greedy_select_policies,
+    )
+    import numpy as np
+    import json
+
+    run_base_dir = Path(config["RUN_BASE_DIR"])
+
+    # ---- S1: Utility weight population training ----
+    print("=" * 60)
+    print("[HSP] Stage 1: Utility weight population training")
+    print("=" * 60)
+    train_fn = make_train_hsp_s1(config)
+    rng = jax.random.PRNGKey(config["SEED"])
+    all_ckpts, all_weights = train_fn(rng)
+
+    # 전체 N개 policy 저장
+    pop_all_dir = run_base_dir / "hsp_population_all"
+    pop_all_dir.mkdir(parents=True, exist_ok=True)
+    _CKPT_NAMES = ["ckpt_init_actor.pkl", "ckpt_mid_actor.pkl", "ckpt_final_actor.pkl"]
+    for i, ckpts_i in enumerate(all_ckpts):
+        member_dir = pop_all_dir / f"member_{i}"
+        member_dir.mkdir(exist_ok=True)
+        for slot, ckpt_name in enumerate(_CKPT_NAMES):
+            member_ckpt = jax.tree_util.tree_map(lambda x: x[slot], ckpts_i)
+            with open(member_dir / ckpt_name, "wb") as f:
+                pickle.dump(member_ckpt, f)
+    np.save(pop_all_dir / "utility_weights.npy", np.array(all_weights))
+    print(f"[HSP S1] Saved {len(all_ckpts)} policies to {pop_all_dir}")
+
+    # ---- Greedy Selection ----
+    print("=" * 60)
+    print("[HSP] Greedy diversity selection")
+    print("=" * 60)
+    event_matrix = collect_event_features(pop_all_dir, config)
+    K = config.get("HSP_SELECTED_K", 18)
+    selected = greedy_select_policies(event_matrix, K)
+
+    pop_dir = run_base_dir / "hsp_population"
+    pop_dir.mkdir(parents=True, exist_ok=True)
+    for new_idx, orig_idx in enumerate(selected):
+        src = pop_all_dir / f"member_{orig_idx}"
+        dst = pop_dir / f"member_{new_idx}"
+        shutil.copytree(src, dst)
+    with open(pop_dir / "selected_indices.json", "w") as f:
+        json.dump(selected, f)
+    print(f"[HSP] Selected {K} from {len(all_ckpts)} → {pop_dir}")
+
+    # ---- S2: Adaptive agent training ----
+    print("=" * 60)
+    print("[HSP] Stage 2: Adaptive agent training")
+    print("=" * 60)
+    pop_params = load_mep_population(pop_dir)
+    s2_config = _make_s2_config(config)
+    # HSP S2에서는 shaping horizon을 S2용으로 교체
+    if "S2_REW_SHAPING_HORIZON" in config.get("model", {}):
+        s2_config["model"]["REW_SHAPING_HORIZON"] = config["model"]["S2_REW_SHAPING_HORIZON"]
+    out_s2 = _run_s2_multi_seed(s2_config, pop_params, "HSP S2")
+
+    return {"s1_ckpts": all_ckpts, "selected": selected, "s2": out_s2}
+
+
+def _make_s2_config(config):
+    """S1 config에서 S2용 config를 생성한다."""
+    import copy
+    s2 = copy.deepcopy(config)
+    # S2 timesteps
+    if "S2_TOTAL_TIMESTEPS" in s2.get("model", {}):
+        s2["model"]["TOTAL_TIMESTEPS"] = s2["model"]["S2_TOTAL_TIMESTEPS"]
+    # S2 seeds
+    if "S2_NUM_SEEDS" in s2:
+        s2["NUM_SEEDS"] = s2["S2_NUM_SEEDS"]
+    # S2 shaping horizon
+    if "S2_REW_SHAPING_HORIZON" in s2.get("model", {}):
+        s2["model"]["REW_SHAPING_HORIZON"] = s2["model"]["S2_REW_SHAPING_HORIZON"]
+    return s2
+
+
 def single_run(config):
     alg_name = config.get("ALG_NAME", "SP")
 
+    # ================================================================
+    # 통합 파이프라인: ALG_NAME이 "MEP", "GAMMA", "HSP"이면
+    # S1 → (greedy selection) → S2를 하나의 run에서 자동 진행.
+    # 결과 디렉토리 구조:
+    #   {RUN_BASE_DIR}/
+    #   ├── {alg}_population/    # S1 결과
+    #   └── run_{s}/ckpt_*/      # S2 결과
+    # ================================================================
+    if alg_name == "MEP":
+        return _run_unified_mep(config)
+    if alg_name == "GAMMA":
+        return _run_unified_gamma(config)
+    if alg_name == "HSP":
+        return _run_unified_hsp(config)
+
     # ----------------------------------------------------------------
-    # MEP_S1: population training
+    # MEP_S1: population training (레거시 — 개별 S1/S2도 계속 지원)
     # ----------------------------------------------------------------
     if alg_name == "MEP_S1":
         from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
@@ -258,6 +501,219 @@ def single_run(config):
                 )
                 store_checkpoint(config, params_final, s, num_checkpoints - 1, final=True)
             print(f"[MEP S2] Saved {num_seeds} seeds × {num_checkpoints} ckpts to {config['RUN_BASE_DIR']}")
+
+        return out
+
+    # ----------------------------------------------------------------
+    # GAMMA_S1: MEP S1과 동일 알고리즘, population dir만 gamma_population으로 변경
+    # ----------------------------------------------------------------
+    if alg_name == "GAMMA_S1":
+        from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
+        train_fn = make_train_mep_s1(config)
+        rng = jax.random.PRNGKey(config["SEED"])
+        with jax.disable_jit(False):
+            out = jax.jit(train_fn)(rng)
+
+        pop_ckpts = out["pop_actor_ckpts"]
+        N = jax.tree_util.tree_leaves(pop_ckpts)[0].shape[0]
+        _CKPT_NAMES = ["ckpt_init_actor.pkl", "ckpt_mid_actor.pkl", "ckpt_final_actor.pkl"]
+        run_base_dir = Path(config["RUN_BASE_DIR"])
+        pop_dir = run_base_dir / "gamma_population"
+        pop_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(N):
+            member_dir = pop_dir / f"member_{i}"
+            member_dir.mkdir(exist_ok=True)
+            for slot, ckpt_name in enumerate(_CKPT_NAMES):
+                member_ckpt = jax.tree_util.tree_map(lambda x: x[i, slot], pop_ckpts)
+                with open(member_dir / ckpt_name, "wb") as f:
+                    pickle.dump(member_ckpt, f)
+        print(f"[GAMMA S1] Saved {N} members × 3 ckpts to {pop_dir}")
+        return out
+
+    # ----------------------------------------------------------------
+    # GAMMA_S2: MEP S2와 동일, GAMMA_POPULATION_DIR에서 population 로드
+    # ----------------------------------------------------------------
+    if alg_name == "GAMMA_S2":
+        from overcooked_v2_experiments.ppo.mep.mep_s2 import make_train_mep_s2
+        pop_dir = Path(config.get("GAMMA_POPULATION_DIR", config.get("MEP_POPULATION_DIR", "")))
+        if not pop_dir.exists():
+            raise ValueError(
+                f"[GAMMA S2] Population dir not found: {pop_dir}\n"
+                "Run GAMMA Stage 1 first or provide +GAMMA_POPULATION_DIR."
+            )
+        pop_params = load_mep_population(pop_dir)
+        train_fn = make_train_mep_s2(config)
+
+        num_seeds = config["NUM_SEEDS"]
+        with jax.disable_jit(False):
+            rng = jax.random.PRNGKey(config["SEED"])
+            rngs = jax.random.split(rng, num_seeds)
+            rngs = jax.device_put(rngs, jax.devices("cpu")[0])
+
+            num_devices = get_num_devices()
+            print(f"[GAMMA S2] num_seeds={num_seeds}, num_devices={num_devices}")
+
+            def _train_gamma_s2(rng_s):
+                return train_fn(rng_s, population=pop_params)
+
+            if num_devices <= 1:
+                train_jit = jax.jit(_train_gamma_s2)
+                if num_seeds == 1:
+                    out = train_jit(rngs[0])
+                else:
+                    out = jax.vmap(train_jit)(rngs)
+            else:
+                if num_seeds == num_devices:
+                    out = jax.pmap(_train_gamma_s2)(rngs)
+                elif num_seeds % num_devices == 0:
+                    seeds_per_device = num_seeds // num_devices
+                    rngs_2d = rngs.reshape((num_devices, seeds_per_device, *rngs.shape[1:]))
+                    out = jax.pmap(jax.vmap(_train_gamma_s2))(rngs_2d)
+                    out = jax.tree_util.tree_map(
+                        lambda x: x.reshape((num_seeds, *x.shape[2:])), out
+                    )
+                else:
+                    print(f"[warn] num_seeds({num_seeds}) % num_devices({num_devices}) != 0; fallback to vmap")
+                    train_jit = jax.jit(_train_gamma_s2)
+                    out = jax.vmap(train_jit)(rngs)
+
+        # 체크포인트 저장 (MEP S2와 동일)
+        num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
+        if num_checkpoints > 0:
+            actor_ckpts = out["actor_ckpts"]
+            sample_leaf = jax.tree_util.tree_leaves(actor_ckpts)[0]
+            has_seed_axis = sample_leaf.shape[0] == num_seeds and num_seeds > 1
+
+            for s in range(num_seeds):
+                if has_seed_axis:
+                    seed_ckpts = jax.tree_util.tree_map(lambda x: x[s], actor_ckpts)
+                else:
+                    seed_ckpts = actor_ckpts
+                for slot in range(num_checkpoints - 1):
+                    params = jax.tree_util.tree_map(lambda x: x[slot], seed_ckpts)
+                    store_checkpoint(config, params, s, slot, final=False)
+                params_final = jax.tree_util.tree_map(
+                    lambda x: x[num_checkpoints - 1], seed_ckpts
+                )
+                store_checkpoint(config, params_final, s, num_checkpoints - 1, final=True)
+            print(f"[GAMMA S2] Saved {num_seeds} seeds × {num_checkpoints} ckpts to {config['RUN_BASE_DIR']}")
+
+        return out
+
+    # ----------------------------------------------------------------
+    # HSP_S1: N개 독립 정책을 utility weight로 순차 학습 + greedy selection
+    # ----------------------------------------------------------------
+    if alg_name == "HSP_S1":
+        from overcooked_v2_experiments.ppo.hsp.hsp_s1 import make_train_hsp_s1
+        train_fn = make_train_hsp_s1(config)
+        rng = jax.random.PRNGKey(config["SEED"])
+        all_ckpts, all_weights = train_fn(rng)
+
+        # 전체 N개 policy를 hsp_population_all/에 저장
+        import numpy as np
+        run_base_dir = Path(config["RUN_BASE_DIR"])
+        pop_all_dir = run_base_dir / "hsp_population_all"
+        pop_all_dir.mkdir(parents=True, exist_ok=True)
+        _CKPT_NAMES = ["ckpt_init_actor.pkl", "ckpt_mid_actor.pkl", "ckpt_final_actor.pkl"]
+        for i, ckpts_i in enumerate(all_ckpts):
+            member_dir = pop_all_dir / f"member_{i}"
+            member_dir.mkdir(exist_ok=True)
+            for slot, ckpt_name in enumerate(_CKPT_NAMES):
+                member_ckpt = jax.tree_util.tree_map(lambda x: x[slot], ckpts_i)
+                with open(member_dir / ckpt_name, "wb") as f:
+                    pickle.dump(member_ckpt, f)
+        np.save(pop_all_dir / "utility_weights.npy", np.array(all_weights))
+        print(f"[HSP S1] Saved {len(all_ckpts)} policies to {pop_all_dir}")
+
+        # Greedy selection
+        from overcooked_v2_experiments.ppo.hsp.greedy_selector import (
+            collect_event_features, greedy_select_policies,
+        )
+        event_matrix = collect_event_features(pop_all_dir, config)
+        K = config.get("HSP_SELECTED_K", 18)
+        selected = greedy_select_policies(event_matrix, K)
+
+        # 선택된 policy만 hsp_population/에 복사
+        pop_dir = run_base_dir / "hsp_population"
+        pop_dir.mkdir(parents=True, exist_ok=True)
+        for new_idx, orig_idx in enumerate(selected):
+            src = pop_all_dir / f"member_{orig_idx}"
+            dst = pop_dir / f"member_{new_idx}"
+            shutil.copytree(src, dst)
+
+        import json
+        with open(pop_dir / "selected_indices.json", "w") as f:
+            json.dump(selected, f)
+        print(f"[HSP S1] {len(all_ckpts)} policies trained, {K} selected → {pop_dir}")
+        return {"all_ckpts": all_ckpts, "selected": selected}
+
+    # ----------------------------------------------------------------
+    # HSP_S2: MEP S2와 동일, HSP_POPULATION_DIR에서 population 로드
+    # ----------------------------------------------------------------
+    if alg_name == "HSP_S2":
+        from overcooked_v2_experiments.ppo.mep.mep_s2 import make_train_mep_s2
+        pop_dir = Path(config["HSP_POPULATION_DIR"])
+        if not pop_dir.exists():
+            raise ValueError(
+                f"[HSP S2] Population dir not found: {pop_dir}\n"
+                "Run HSP Stage 1 first or provide +HSP_POPULATION_DIR."
+            )
+        pop_params = load_mep_population(pop_dir)
+        train_fn = make_train_mep_s2(config)
+
+        num_seeds = config["NUM_SEEDS"]
+        with jax.disable_jit(False):
+            rng = jax.random.PRNGKey(config["SEED"])
+            rngs = jax.random.split(rng, num_seeds)
+            rngs = jax.device_put(rngs, jax.devices("cpu")[0])
+
+            num_devices = get_num_devices()
+            print(f"[HSP S2] num_seeds={num_seeds}, num_devices={num_devices}")
+
+            def _train_hsp_s2(rng_s):
+                return train_fn(rng_s, population=pop_params)
+
+            if num_devices <= 1:
+                train_jit = jax.jit(_train_hsp_s2)
+                if num_seeds == 1:
+                    out = train_jit(rngs[0])
+                else:
+                    out = jax.vmap(train_jit)(rngs)
+            else:
+                if num_seeds == num_devices:
+                    out = jax.pmap(_train_hsp_s2)(rngs)
+                elif num_seeds % num_devices == 0:
+                    seeds_per_device = num_seeds // num_devices
+                    rngs_2d = rngs.reshape((num_devices, seeds_per_device, *rngs.shape[1:]))
+                    out = jax.pmap(jax.vmap(_train_hsp_s2))(rngs_2d)
+                    out = jax.tree_util.tree_map(
+                        lambda x: x.reshape((num_seeds, *x.shape[2:])), out
+                    )
+                else:
+                    print(f"[warn] num_seeds({num_seeds}) % num_devices({num_devices}) != 0; fallback to vmap")
+                    train_jit = jax.jit(_train_hsp_s2)
+                    out = jax.vmap(train_jit)(rngs)
+
+        # 체크포인트 저장 (MEP S2와 동일)
+        num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
+        if num_checkpoints > 0:
+            actor_ckpts = out["actor_ckpts"]
+            sample_leaf = jax.tree_util.tree_leaves(actor_ckpts)[0]
+            has_seed_axis = sample_leaf.shape[0] == num_seeds and num_seeds > 1
+
+            for s in range(num_seeds):
+                if has_seed_axis:
+                    seed_ckpts = jax.tree_util.tree_map(lambda x: x[s], actor_ckpts)
+                else:
+                    seed_ckpts = actor_ckpts
+                for slot in range(num_checkpoints - 1):
+                    params = jax.tree_util.tree_map(lambda x: x[slot], seed_ckpts)
+                    store_checkpoint(config, params, s, slot, final=False)
+                params_final = jax.tree_util.tree_map(
+                    lambda x: x[num_checkpoints - 1], seed_ckpts
+                )
+                store_checkpoint(config, params_final, s, num_checkpoints - 1, final=True)
+            print(f"[HSP S2] Saved {num_seeds} seeds × {num_checkpoints} ckpts to {config['RUN_BASE_DIR']}")
 
         return out
 

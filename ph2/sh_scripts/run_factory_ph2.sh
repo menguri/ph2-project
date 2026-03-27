@@ -37,7 +37,6 @@ done
 : "${PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS:=-1}"
 : "${PH1_OMEGA:=10.0}"
 : "${PH1_SIGMA:=2.0}"
-: "${PH1_DIST_THRESH:=0.1}"
 : "${PH1_POOL_SIZE:=128}"
 : "${PH1_NORMAL_PROB:=0.0}"
 : "${PH1_MULTI_PENALTY_ENABLED:=True}"
@@ -47,9 +46,6 @@ done
 : "${PH2_EPSILON:=0.2}"
 : "${PH1_WARMUP_STEPS:=2000000}"
 : "${ACTION_PREDICTION:=True}"
-: "${CYCLE_LOSS_ENABLED:=False}"
-: "${CYCLE_LOSS_COEF:=0.1}"
-: "${LATENT_MODE:=False}"
 : "${SAVE_EVAL_CHECKPOINTS:=True}"
 
 # ToyCoop random_reset (procedural generation)
@@ -59,15 +55,14 @@ done
 : "${TRANSFORMER_RECON_COEF:=1.0}"
 : "${TRANSFORMER_PRED_COEF:=1.0}"
 : "${TRANSFORMER_CYCLE_COEF:=0.5}"
-: "${TRANSFORMER_WINDOW_SIZE:=16}"
+: "${TRANSFORMER_WINDOW_SIZE:=10}"
 : "${TRANSFORMER_D_C:=64}"
 : "${TRANSFORMER_V2:=0}"
+: "${TRANSFORMER_V3:=0}"
 
-# PH2 schedule configs
-PH2_RATIO_STAGE1=2
-PH2_RATIO_STAGE2=1
-PH2_RATIO_STAGE3=2
-PH2_FIXED_IND_PROB=""
+# PH2 ind 매칭 확률 (0.5 = spec-spec 50%, spec-ind/ind-ind 50%)
+# PH2_FIXED_IND_PROB 설정 시 PH2_RATIO_STAGE1/2/3 무시됨
+: "${PH2_FIXED_IND_PROB:=0.5}"
 
 run_ph2() {
   local gpus=$1
@@ -97,7 +92,6 @@ run_ph2() {
     --ph1-beta-schedule-horizon-env-steps $PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS \
     --ph1-omega $ph1_omega \
     --ph1-sigma $ph1_sigma \
-    --ph1-dist $PH1_DIST_THRESH \
     --ph1-pool-size $PH1_POOL_SIZE \
     --ph1-normal-prob $PH1_NORMAL_PROB \
     --ph1-multi-penalty-enabled $PH1_MULTI_PENALTY_ENABLED \
@@ -106,18 +100,9 @@ run_ph2() {
     --ph1-multi-penalty-other-weight $PH1_MULTI_PENALTY_OTHER_WEIGHT \
     --ph1-epsilon $PH1_EPSILON \
     --ph1-warmup-steps $PH1_WARMUP_STEPS \
-    --ph2-ratio-stage1 $PH2_RATIO_STAGE1 \
-    --ph2-ratio-stage2 $PH2_RATIO_STAGE2 \
-    --ph2-ratio-stage3 $PH2_RATIO_STAGE3 \
-    --action-prediction "$ACTION_PREDICTION"
-    --cycle-loss-enabled "$CYCLE_LOSS_ENABLED"
-    --cycle-loss-coef "$CYCLE_LOSS_COEF"
-    --latent-mode "$LATENT_MODE"
+    --ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB" \
+    --action-prediction "$ACTION_PREDICTION" \
     --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS")
-
-  if [[ -n "$PH2_FIXED_IND_PROB" ]]; then
-    cmd+=(--ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB")
-  fi
   if [[ -n "$PH2_EPSILON" ]]; then
     cmd+=(--ph2-epsilon "$PH2_EPSILON")
   fi
@@ -130,6 +115,9 @@ run_ph2() {
     cmd+=(--transformer-cycle-coef "$TRANSFORMER_CYCLE_COEF")
     if [[ "$TRANSFORMER_V2" == "1" ]]; then
       cmd+=(--transformer-v2 True)
+    fi
+    if [[ "$TRANSFORMER_V3" == "1" ]]; then
+      cmd+=(--transformer-v3 True)
     fi
   fi
   if [[ "$USE_SHARED" == "1" ]]; then
@@ -147,90 +135,6 @@ run_ph2() {
 # Sweep 파라미터
 # -----------------------------------------------------------------------------
 SWEEP_GPUS="1,2,3,4,5"
-TARGET_OMEGA=10.0
-TARGET_SIGMA=2.0
-TARGET_MAX_COUNT=1
-
-# -----------------------------------------------------------------------------
-# 레이아웃별 실행 커멘드 — 원하는 줄만 주석 해제해서 사용
-#
-# OV1 (full observation, agent_view_size 없음):
-# -----------------------------------------------------------------------------
-
-# echo "[PH2] counter_circuit"
-# run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] asymm_advantages"
-# run_ph2 "$SWEEP_GPUS" "asymm_advantages" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] cramped_room"
-# run_ph2 "$SWEEP_GPUS" "cramped_room" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] coord_ring"
-# run_ph2 "$SWEEP_GPUS" "coord_ring" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# TARGET_OMEGA=5.0
-# TARGET_SIGMA=2.0
-# TARGET_MAX_COUNT=1
-
-# echo "[PH2] forced_coord"
-# run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-
-TARGET_OMEGA=5.0
-TARGET_SIGMA=3.0
-TARGET_MAX_COUNT=1
-
-
-echo "[PH2] forced_coord"
-run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-
-TARGET_OMEGA=3.0
-TARGET_SIGMA=3.0
-TARGET_MAX_COUNT=1
-
-
-echo "[PH2] forced_coord"
-run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-
-TARGET_OMEGA=3.0
-TARGET_SIGMA=2.0
-TARGET_MAX_COUNT=1
-
-
-echo "[PH2] forced_coord"
-run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-
-TARGET_OMEGA=2.0
-TARGET_SIGMA=2.0
-TARGET_MAX_COUNT=1
-
-: "${PH2_EPSILON:=0.0}"
-
-echo "[PH2] forced_coord"
-run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-TARGET_OMEGA=1.0
-TARGET_SIGMA=2.0
-TARGET_MAX_COUNT=1
-
-: "${PH2_EPSILON:=0.0}"
-
-echo "[PH2] forced_coord"
-run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-TARGET_OMEGA=1.0
-TARGET_SIGMA=3.0
-TARGET_MAX_COUNT=1
-
-: "${PH2_EPSILON:=0.0}"
-
-echo "[PH2] forced_coord"
-run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
 # -----------------------------------------------------------------------------
 # OV2 (partial observation, agent_view_size=2):
 # USE_CT=1로 실행 권장 — get_obs_default() full obs가 CT recon target으로 사용됨
@@ -255,84 +159,33 @@ run_ph2 "$SWEEP_GPUS" "forced_coord" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MA
 # run_ph2 "$SWEEP_GPUS" "demo_cook_wide" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
 
 # =============================================================================
-# CT v1 / v2 비교 실험: grounded_coord_simple (OV2), counter_circuit (OV1)
-# GPU: 0,1,2,3,4
+# CT v3: Partner GRU z 복원 — grounded_coord_simple / test_time_wide
+# W=10, D_c=64, omega=10, sigma=2, k=1
 # =============================================================================
-# SWEEP_GPUS="3,4,5,6,7"
+USE_CT=1
+EXP="rnn-ct"
+TRANSFORMER_V3=1
 
-# # --- grounded_coord_simple: CT v1 ---
-# USE_CT=1
-# TRANSFORMER_V2=0
-# EXP="rnn-ct"
-# echo "[PH2-CT-v1] grounded_coord_simple"
-# run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-# wait
-# # --- grounded_coord_simple: CT v2 ---
-# USE_CT=1
-# TRANSFORMER_V2=1
-# EXP="rnn-ct"
-# echo "[PH2-CT-v2] grounded_coord_simple"
-# run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-# wait
-# # --- grounded_coord_simple: original ---
-# USE_CT=0
-# TRANSFORMER_V2=0
-# EXP="rnn-ph2"
-# echo "[PH2-CT-original] grounded_coord_simple"
-# run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-# # --- counter_circuit: CT v1 ---
-# USE_CT=1
-# TRANSFORMER_V2=0
-# EXP="rnn-ct"
-# echo "[PH2-CT-v1] counter_circuit"
-# run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-# wait
-# # --- counter_circuit: CT v2 ---
-# USE_CT=1
-# TRANSFORMER_V2=1
-# EXP="rnn-ct"
-# echo "[PH2-CT-v2] counter_circuit"
-# run_ph2 "$SWEEP_GPUS" "counter_circuit" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+echo "[CT-v3] grounded_coord_simple"
+run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "10.0" "2.0" "1"
+
+echo "[CT-v3] test_time_wide"
+run_ph2 "$SWEEP_GPUS" "test_time_wide" "10.0" "2.0" "1"
 
 # =============================================================================
-# ToyCoop (Dual Destination) — MLP encoder, full obs
-# RANDOM_RESET 기본값은 스크립트 상단에서 설정 (true/false)
+# OV2 grounded_coord_simple: omega×sigma×penalty_count 스윕
+# CT 미사용. omega=[10,3], sigma=[2,3], k=[1,2,3,4] → 16 실험
 # =============================================================================
+USE_CT=0
+TRANSFORMER_V3=0
+EXP="rnn-ph2"
 
-# ToyCoop 공통: 10시드, MLP, env_device=cpu
-# NENVS=512
-# NSTEPS=100
-# SWEEP_GPUS="6,7"
+for omega in 10.0 3.0; do
+  for sigma in 2.0 3.0; do
+    for k in 4 3 2 1; do
+      echo "[PH2-sweep] grounded_coord_simple o=${omega} s=${sigma} k=${k}"
+      run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$omega" "$sigma" "$k"
+    done
+  done
+done
 
-# : "${PH1_OMEGA:=0.1}"
-# : "${PH1_SIGMA:=1.0}"
-
-# # --- ToyCoop CT=0, random_reset (기본값 따름) ---
-# EXP="rnn-ph2-toycoop"
-# USE_CT=0
-# echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
-# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# # --- ToyCoop CT=1, random_reset (기본값 따름) ---
-# EXP="rnn-ph2-toycoop"
-# USE_CT=1
-# echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
-# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# # ToyCoop 공통: 10시드, MLP, env_device=cpu
-# NUM_SEEDS=5
-# NENVS=512
-# NSTEPS=100
-# FIXED_SEED=41
-
-# # --- ToyCoop CT=0, random_reset (기본값 따름) ---
-# EXP="rnn-ph2-toycoop"
-# USE_CT=0
-# echo "[PH2] toy_coop (CT=0, random_reset=$RANDOM_RESET)"
-# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# # --- ToyCoop CT=1, random_reset (기본값 따름) ---
-# EXP="rnn-ph2-toycoop"
-# USE_CT=1
-# echo "[PH2] toy_coop (CT=1, random_reset=$RANDOM_RESET)"
-# run_ph2 "$SWEEP_GPUS" "toy_coop" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"

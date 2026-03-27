@@ -25,12 +25,6 @@ import threading
 from models.rnn import ScannedRNN
 import matplotlib.pyplot as plt
 from jaxmarl.environments.overcooked_v2.overcooked import ObservationType
-from overcooked_v2_experiments.ppo.utils.stablock import (
-    expand_blocked_states,
-    initialize_blocked_states,
-    resample_blocked_states,
-    enumerate_reachable_positions,
-)
 from overcooked_v2_experiments.ppo.ph1_utils import (
     compute_ph1_probs,
     sample_target_idx,
@@ -41,7 +35,6 @@ from overcooked_v2_experiments.ppo.models.abstract import ActorCriticBase
 from .models.model import get_actor_critic, initialize_carry
 from overcooked_v2_experiments.eval.policy import AbstractPolicy
 from flax import core
-from .utils.stablock import enumerate_reachable_positions
 
 
 # Host-side guard for PH1 eval callback.
@@ -130,10 +123,6 @@ def make_train(
     e3t_enabled = ("E3T" in alg_name_u)
     e3t_epsilon = config.get("E3T_EPSILON", 0.05)
     use_partner_modeling = config.get("USE_PARTNER_MODELING", True)
-    # [Stablock] 알고리즘 활성화 및 패널티 설정
-    stablock_enabled = bool(config.get("STABLOCK_ENABLED", False))
-    stablock_heavy_penalty = float(config.get("STABLOCK_HEAVY_PENALTY", 10.0))
-    stablock_no_block_prob = config.get("STABLOCK_NO_BLOCK_PROB", None)
     env_name, env_kwargs = _prepare_env_spec(config, env_config)
 
     # Optional device selection for environment to mitigate GPU OOM.
@@ -418,12 +407,9 @@ def make_train(
 
         # Keep init-time blocked input rule consistent with runtime apply rule.
         # PH2 phase2(ind) learner path uses population partner and should not consume blocked input.
-        use_blocked_input_learner = (ph1_enabled or stablock_enabled)
+        use_blocked_input_learner = ph1_enabled
         if use_blocked_input_learner:
-            if stablock_enabled:
-                # [Stablock] blocked_states 더미 입력 (좌표 그대로 전달)
-                dummy_blocked_states = jnp.zeros((1, model_config["NUM_ENVS"], 2), dtype=jnp.int32)
-            elif config.get("PH1_ENABLED", False):
+            if config.get("PH1_ENABLED", False):
                 # PH1 always uses global full state as blocked target
                 if ph1_multi_penalty_enabled:
                     init_shape = (
@@ -596,7 +582,7 @@ def make_train(
                 partner_actor_mask = ~is_ego
 
                 partner_pos = jnp.zeros((model_config["NUM_ENVS"], 2), dtype=jnp.int32)
-                if ph1_enabled or stablock_enabled:
+                if ph1_enabled:
                     pos_y, pos_x = _extract_pos_axes(env_state)
                     partner_idxs = (ego_idxs + 1) % env.num_agents
                     # 환경 인덱스를 생성하여 정확히 매칭 (128개의 환경에서 각각 지정된 파트너의 값 추출)
@@ -605,7 +591,6 @@ def make_train(
                     partner_x = pos_x[partner_idxs, env_range]
                     partner_pos = jnp.stack([partner_y, partner_x], axis=-1)
 
-                # [Stablock] 에피소드 종료 시 차단 좌표 재샘플링 (partner만 적용)
                 if config.get("PH1_ENABLED", False):
                     # [STA-PH1] env별 pool에서 타겟 샘플링
                     # ph1_pool_states: (Envs, Pool, H, W, C_full)
@@ -683,16 +668,6 @@ def make_train(
                         new_targets,
                         blocked_states_env,
                     )
-                elif stablock_enabled:
-                    blocked_states_env = resample_blocked_states(
-                        rng,
-                        env_state,
-                        episode_done,
-                        blocked_states_env,
-                        stablock_enabled,
-                        partner_pos,
-                        no_block_prob=stablock_no_block_prob,
-                    )
                 else:
                     blocked_states_env = blocked_states_env
                 if config.get("PH1_ENABLED", False):
@@ -701,11 +676,7 @@ def make_train(
                     # Agent order is [Ag0_E0...Ag0_En, Ag1_E0...Ag1_En] (Agent-Major)
 
                     blocked_states_actor = jnp.concatenate([blocked_states_env, blocked_states_env], axis=0)
-                    
-                elif stablock_enabled:
-                    blocked_states_actor = expand_blocked_states(
-                        blocked_states_env, env.num_agents, is_ego
-                    )
+
                 else:
                     blocked_states_actor = jnp.full(
                         (model_config["NUM_ACTORS"], 2), -1, dtype=jnp.int32
@@ -747,7 +718,7 @@ def make_train(
                     # (3) Ego vs Partner 구분하여 입력 선택
                     # Ego(Agent 0)는 예측값 사용, Partner(Agent 1)는 무작위 입력 사용 (기본)
                     # [E3T] PH1_ENABLED인 경우에도 모델 훈련 및 V-spec 계산을 위해 모든 에이전트가 Real Prediction 사용
-                    use_real_pred = (ph1_enabled and use_ph1_partner_pred) | (stablock_enabled == True) | is_ego
+                    use_real_pred = (ph1_enabled and use_ph1_partner_pred) | is_ego
                     combined_prediction = jnp.where(use_real_pred[:, None], real_prediction, rand_pred_input)
                     
                     # (Batch, ActionDim) -> (1, Batch, ActionDim) for Actor input
@@ -766,11 +737,11 @@ def make_train(
                     partner_prediction=partner_prediction,
                     blocked_states=(
                         blocked_states_actor
-                        if (ph1_enabled or stablock_enabled)
+                        if ph1_enabled
                         else None
                     ),
                 )
-                
+
                 ph1_extras = {}
                 if len(net_out) == 4:
                     hstate, pi, value, ph1_extras = net_out
@@ -1057,53 +1028,6 @@ def make_train(
                     info["ph1_penalty_env_slots"] = dist_penalty_env_slots
                     info["ph1_dist_env_slots"] = lat_dist_env_slots
                 
-                # [Stablock] 차단 좌표 도달 시 큰 음의 보상 적용 (partner만 유효)
-                if stablock_enabled:
-                    pos_y, pos_x = _extract_pos_axes(env_state)
-                    pos = jnp.stack([pos_y, pos_x], axis=-1)
-                    pos = jnp.swapaxes(pos, 0, 1).reshape(
-                        model_config["NUM_ACTORS"], 2
-                    )
-
-                    hit_mask = jnp.all(pos == blocked_states_actor, axis=-1)
-                    hit_mask_swapped = jnp.all(pos[:, ::-1] == blocked_states_actor, axis=-1)
-                    penalty_by_actor = (
-                        hit_mask.astype(jnp.float32) * stablock_heavy_penalty
-                    )
-                    # Debug: print positions, blocked states, and hit mask (first few)
-                    # jax.debug.print("[STABLOCK] pos.shape={}", pos.shape)
-                    # jax.debug.print("[STABLOCK] pos[0:8]={}", pos[0:8])
-                    # jax.debug.print("[STABLOCK] blocked_states_actor[0:8]={}", blocked_states_actor[0:8])
-                    # jax.debug.print("[STABLOCK] hit_mask[0:8]={}", hit_mask[0:8])
-                    penalty_by_agent = penalty_by_actor.reshape(
-                        env.num_agents, model_config["NUM_ENVS"]
-                    )
-                    reward = {
-                        a: reward[a] - penalty_by_agent[i]
-                        for i, a in enumerate(env.agents)
-                    }
-                    info["stablock_hit"] = penalty_by_agent
-                    info["stablock_hit_count"] = jnp.full((model_config["NUM_ACTORS"],), hit_mask.sum(), dtype=jnp.int32)
-                    info["stablock_hit_count_swapped"] = jnp.full((model_config["NUM_ACTORS"],), hit_mask_swapped.sum(), dtype=jnp.int32)
-
-                    hit_by_env = jnp.sum(
-                        (hit_mask & partner_actor_mask).reshape(env.num_agents, model_config["NUM_ENVS"]),
-                        axis=0,
-                    )
-                    new_episode_hit_counts = episode_hit_counts + hit_by_env
-                    episode_hit_counts = new_episode_hit_counts * (1 - done["__all__"])
-                    returned_episode_hit_counts = jax.lax.select(
-                        done["__all__"],
-                        new_episode_hit_counts,
-                        returned_episode_hit_counts,
-                    )
-                    returned_episode_hit_counts_actor = jnp.where(
-                        is_ego,
-                        0,
-                        jnp.tile(returned_episode_hit_counts, env.num_agents),
-                    )
-                    info["returned_episode_hit_count"] = returned_episode_hit_counts_actor
-
                 # anneal_factor: 보상 쉐이핑 감쇠 계수 (학습 초반 1.0 → REW_SHAPING_HORIZON에 걸쳐 0.0으로 선형 감소)
                 current_timestep = (
                     update_step * model_config["NUM_STEPS"] * model_config["NUM_ENVS"]
@@ -1329,7 +1253,7 @@ def make_train(
 
             # [E3T] Calculate partner_prediction for last_val (Value Function)
             partner_prediction = None
-            # [Stablock/E3T] last_val 계산 시점의 ego 마스크
+            # [E3T] last_val 계산 시점의 ego 마스크
             target_ego_idxs = jnp.tile(next_ego_idxs, env.num_agents)
             is_ego_last = (actor_indices == target_ego_idxs)
             if (e3t_enabled or (ph1_enabled and use_ph1_partner_pred)) and use_partner_modeling:
@@ -1345,21 +1269,17 @@ def make_train(
                 
                 # 3. Combine (dynamic ego idx 기준)
                 # PH1 활성화 시 모든 에이전트가 Real Prediction 사용 (V-gap 정확도를 위해)
-                use_real_pred_last = (ph1_enabled and use_ph1_partner_pred) | (stablock_enabled == True) | is_ego_last
+                use_real_pred_last = (ph1_enabled and use_ph1_partner_pred) | is_ego_last
                 combined_prediction = jnp.where(use_real_pred_last[:, None], pred_logits, rand_pred_input)
                 
                 # 4. Add Time Dimension (1, Batch, ActionDim)
                 partner_prediction = combined_prediction[jnp.newaxis, ...]
 
-            # [Stablock] last_val 계산에도 blocked_states를 전달
+            # [PH1] last_val 계산에도 blocked_states를 전달
             blocked_states_actor_last = None
             if config.get("PH1_ENABLED", False):
                 # Same target for both agents in state mode
                 blocked_states_actor_last = jnp.concatenate([blocked_states_env, blocked_states_env], axis=0)
-            elif stablock_enabled:
-                blocked_states_actor_last = expand_blocked_states(
-                    blocked_states_env, env.num_agents, is_ego_last
-                )
 
             net_out = network.apply(
                 train_state.params,
@@ -1368,11 +1288,11 @@ def make_train(
                 partner_prediction=partner_prediction,
                 blocked_states=(
                     blocked_states_actor_last
-                    if (ph1_enabled or stablock_enabled)
+                    if ph1_enabled
                     else None
                 ),
             )
-            
+
             if len(net_out) == 4:
                 _, _, last_val, _ = net_out
             else:
@@ -1508,7 +1428,7 @@ def make_train(
                             partner_prediction=partner_prediction,
                             blocked_states=(
                                 traj_batch.blocked_states
-                                if (ph1_enabled or stablock_enabled)
+                                if ph1_enabled
                                 else None
                             ),
                         )
@@ -2159,9 +2079,8 @@ def make_train(
         # [E3T] Initial Ego Indices (Random init)
         initial_ego_idxs = jax.random.randint(_rng, (model_config["NUM_ENVS"],), 0, env.num_agents)
 
-        # [Stablock] 에피소드 시작 시 partner에게 부여할 차단 좌표 초기화
         partner_pos = jnp.zeros((model_config["NUM_ENVS"], 2), dtype=jnp.int32)
-        if ph1_enabled or stablock_enabled:
+        if ph1_enabled:
             pos_y, pos_x = _extract_pos_axes(env_state)
             partner_idxs = (initial_ego_idxs + 1) % env.num_agents
             env_range = jnp.arange(model_config["NUM_ENVS"])
@@ -2178,15 +2097,6 @@ def make_train(
             else:
                 init_shape = (model_config["NUM_ENVS"],) + ph1_block_shape
             initial_blocked_states_env = jnp.full(init_shape, -1.0, dtype=jnp.float32)
-        elif stablock_enabled:
-            initial_blocked_states_env = initialize_blocked_states(
-                _rng,
-                env_state,
-                stablock_enabled,
-                model_config["NUM_ENVS"],
-                partner_pos,
-                no_block_prob=stablock_no_block_prob,
-            )
         else:
             initial_blocked_states_env = jnp.full(
                 (model_config["NUM_ENVS"], 2), -1, dtype=jnp.int32
@@ -2195,13 +2105,6 @@ def make_train(
         # jax.debug.print("Initial blocked_states_env shape: {}", initial_blocked_states_env.shape)
         # jax.debug.print("Initial blocked_states_env sample (first 8): {}", initial_blocked_states_env[:8])
         
-        # Debug: print possible blocked coords for first env
-        if stablock_enabled:
-            def print_possible_coords(grid_np, partner_pos_np):
-                coords = enumerate_reachable_positions(grid_np, partner_pos_np)
-                # print(f"Possible blocked coords for first env (N={coords.shape[0]}): {coords}")
-            # jax.debug.callback(print_possible_coords, env_state.env_state.grid[0], partner_pos[0])
-
         # [PH1] Initialize Target Pool
         ph1_pool_size = config.get("PH1_POOL_SIZE", 100)
         

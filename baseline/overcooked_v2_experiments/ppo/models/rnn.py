@@ -77,7 +77,7 @@ class ActorCriticRNN(ActorCriticBase):
         return ScannedRNN.initialize_carry(batch_size, hidden_size)
 
     @nn.compact
-    def __call__(self, hidden, x, train=False, use_prediction=False, actor_only=False):
+    def __call__(self, hidden, x, train=False, use_prediction=False, actor_only=False, encode_only=False):
         rnn_state = hidden
 
         obs, dones = x
@@ -106,6 +106,10 @@ class ActorCriticRNN(ActorCriticBase):
 
         rnn_in = (embedding, dones)
         rnn_state, embedding = ScannedRNN()(rnn_state, rnn_in)
+
+        # encode_only: GRU embedding만 반환 (GAMMA VAE obs_feat용)
+        if encode_only:
+            return rnn_state, embedding
 
         # E3T Prediction: use GRU output with stop_gradient as predictor input
         pred_logits = None
@@ -142,3 +146,10 @@ class ActorCriticRNN(ActorCriticBase):
         )
 
         return rnn_state, pi, jnp.squeeze(critic, axis=-1), pred_logits
+
+    def encode(self, hidden, x):
+        """
+        관측을 GRU까지 인코딩하여 embedding만 반환 (actor/critic head 미포함).
+        GAMMA VAE obs_feat용. __call__(encode_only=True) 위임으로 params 공유 보장.
+        """
+        return self.__call__(hidden, x, encode_only=True)

@@ -145,6 +145,9 @@ while [[ $# -gt 0 ]]; do
     --iters|--iterations) ITERATIONS_OVERRIDE="$2"; shift 2;;
     --fcp)        FCP_DIR="$2"; shift 2;;  # 예: --fcp runs/fcp_populations/grounded_coord_simple
     --mep-pop-dir) MEP_POP_DIR="$2"; shift 2;;  # MEP S2 population 디렉토리
+    --gamma-pop-dir) GAMMA_POP_DIR="$2"; shift 2;;  # GAMMA S2 population 디렉토리
+    --hsp-pop-dir) HSP_POP_DIR="$2"; shift 2;;      # HSP S2 population 디렉토리
+    --extra) EXTRA_ARGS+=("$2"); shift 2;;           # 추가 Hydra override (예: +GAMMA_S2_METHOD=vae)
     --cpu)        export JAX_PLATFORMS=cpu; shift 1;;
     --env-device) ENV_DEVICE="$2"; shift 2;;     # cpu|gpu
     --bf16-obs)   CAST_OBS_BF16="1"; shift 1;;
@@ -311,9 +314,26 @@ if [[ -n "$FCP_DIR" ]]; then
   PY_ARGS+=("+FCP_DEVICE=${FCP_DEVICE}")
 fi
 
-# MEP population 디렉토리 override
+# MEP/GAMMA/HSP population 디렉토리 override
+: "${MEP_POP_DIR:=}"
+: "${GAMMA_POP_DIR:=}"
+: "${HSP_POP_DIR:=}"
+if [[ -z "${EXTRA_ARGS+x}" ]]; then EXTRA_ARGS=(); fi
 if [[ -n "$MEP_POP_DIR" ]]; then
   PY_ARGS+=("+MEP_POPULATION_DIR=${MEP_POP_DIR}")
+fi
+if [[ -n "$GAMMA_POP_DIR" ]]; then
+  PY_ARGS+=("+GAMMA_POPULATION_DIR=${GAMMA_POP_DIR}")
+fi
+if [[ -n "$HSP_POP_DIR" ]]; then
+  PY_ARGS+=("+HSP_POPULATION_DIR=${HSP_POP_DIR}")
+fi
+
+# 추가 Hydra override (--extra 플래그)
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  for arg in "${EXTRA_ARGS[@]}"; do
+    PY_ARGS+=("${arg}")
+  done
 fi
 
 # env 그룹이 original일 때만 layout override

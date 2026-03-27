@@ -103,13 +103,12 @@ def _infer_run_suffix(config) -> str:
             suffix = "e3d_ph2"
         else:
             suffix = f"{suffix}_ph2"
-        # CycleTransformer 변형: e3t_ph2_ct
+        # CycleTransformer 변형: e3t_ph2_ct / e3t_ph2_ct3
         if "CT" in alg_name:
-            suffix = f"{suffix}_ct"
-
-    # [Stablock] 활성화 시 suffix에 stablock 추가
-    if config.get("STABLOCK_ENABLED"):
-        suffix = f"{suffix}_stablock"
+            if _as_bool(config.get("TRANSFORMER_V3", False)):
+                suffix = f"{suffix}_ct3"
+            else:
+                suffix = f"{suffix}_ct"
 
     return suffix
 

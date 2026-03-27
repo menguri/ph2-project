@@ -27,12 +27,6 @@ from overcooked_v2_experiments.ppo.utils.store import load_all_checkpoints
 PH1_DEFAULT_EVAL_STEPS = 400
 
 
-def _get_stablock(cfg: Dict) -> bool:
-    if "alg" in cfg and "STABLOCK_ENABLED" in cfg["alg"]:
-        return bool(cfg["alg"]["STABLOCK_ENABLED"])
-    return bool(cfg.get("STABLOCK_ENABLED", False))
-
-
 def _resolve_policy_config(cfg: Dict, policy_source: str) -> Dict:
     out = copy.deepcopy(cfg)
     source = str(policy_source).strip().lower()
@@ -309,7 +303,6 @@ def run_ph1_recent_cross_eval(
         ]
         current_algs = [_resolve_alg_label(cfg) for cfg in current_configs]
         alg_arg = _resolve_eval_algorithm(current_algs)
-        current_stablock = [_get_stablock(cfg) for cfg in current_configs]
 
         policies = []
         for actor_idx, run_idx in enumerate(comb):
@@ -343,7 +336,6 @@ def run_ph1_recent_cross_eval(
                 all_recipes=False,
                 no_viz=no_viz,
                 algorithm=alg_arg,
-                stablock_enabled=current_stablock,
                 latent_analysis=False,
                 value_analysis=False,
                 ph1_forced_tilde_state=tilde_state,

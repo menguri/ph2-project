@@ -24,12 +24,6 @@ import pickle
 from models.rnn import ScannedRNN
 import matplotlib.pyplot as plt
 from jaxmarl.environments.overcooked_v2.overcooked import ObservationType
-from overcooked_v2_experiments.ppo.utils.stablock import (
-    expand_blocked_states,
-    initialize_blocked_states,
-    resample_blocked_states,
-    enumerate_reachable_positions,
-)
 from overcooked_v2_experiments.ppo.ph1_utils import (
     compute_ph1_probs,
     sample_target_idx,
@@ -40,7 +34,6 @@ from overcooked_v2_experiments.ppo.models.abstract import ActorCriticBase
 from .models.model import get_actor_critic, initialize_carry
 from overcooked_v2_experiments.eval.policy import AbstractPolicy
 from flax import core
-from .utils.stablock import enumerate_reachable_positions
 
 
 class Transition(NamedTuple):
@@ -59,6 +52,7 @@ class Transition(NamedTuple):
     partner_prediction: jnp.ndarray
     hstate: any
     global_obs: jnp.ndarray   # (NUM_ACTORS, H, W, C_full) — CT recon 타겟용 full global state
+    partner_gru_z: jnp.ndarray  # (NUM_ACTORS, D) — CT v3: partner GRU hidden state 복원 타겟
 
 
 def batchify(x: dict, agent_list, num_actors):
@@ -135,6 +129,7 @@ def make_train(
     transformer_recon_coef = float(config.get("TRANSFORMER_RECON_COEF", 1.0))
     transformer_pred_coef = float(config.get("TRANSFORMER_PRED_COEF", 1.0))
     transformer_cycle_coef = float(config.get("TRANSFORMER_CYCLE_COEF", 0.5))
+    transformer_v3 = bool(config.get("TRANSFORMER_V3", False))
     # OV1 vs OV2 감지: env kwargs에 agent_view_size 있으면 partial obs (OV2)
     # OV2 → CT recon target은 per-actor full obs (get_obs_default 활용)
     # OV1 → agent 0의 full obs를 모든 actor에 동일하게 사용 (PH1 pool과 동일)
@@ -150,15 +145,11 @@ def make_train(
     action_prediction = bool(config.get("ACTION_PREDICTION", True))
     prediction_enabled = bool(action_prediction)
     learner_use_blocked_input = bool(
-        config.get("LEARNER_USE_BLOCKED_INPUT", ph1_enabled or bool(config.get("STABLOCK_ENABLED", False)))
+        config.get("LEARNER_USE_BLOCKED_INPUT", ph1_enabled)
     )
     population_use_blocked_input = bool(config.get("POPULATION_USE_BLOCKED_INPUT", False))
     population_use_partner_pred_input = bool(config.get("POPULATION_USE_PARTNER_PRED_INPUT", False))
     ph1_probs_use_population_model = bool(config.get("PH1_PROBS_USE_POPULATION_MODEL", False))
-    # [Stablock] 알고리즘 활성화 및 패널티 설정
-    stablock_enabled = bool(config.get("STABLOCK_ENABLED", False))
-    stablock_heavy_penalty = float(config.get("STABLOCK_HEAVY_PENALTY", 10.0))
-    stablock_no_block_prob = config.get("STABLOCK_NO_BLOCK_PROB", None)
     env_name, env_kwargs = _prepare_env_spec(config, env_config)
     # PH2 joint-match controls
     ph2_match_schedule = bool(config.get("PH2_MATCH_SCHEDULE", False))
@@ -466,10 +457,7 @@ def make_train(
         # PH2 phase2(ind) learner path uses population partner and should not consume blocked input.
         use_blocked_input_learner = learner_use_blocked_input
         if use_blocked_input_learner:
-            if stablock_enabled:
-                # [Stablock] blocked_states 더미 입력 (좌표 그대로 전달)
-                dummy_blocked_states = jnp.zeros((1, model_config["NUM_ENVS"], 2), dtype=jnp.int32)
-            elif config.get("PH1_ENABLED", False):
+            if config.get("PH1_ENABLED", False):
                 # PH1 always uses global full state as blocked target
                 if ph1_multi_penalty_enabled:
                     init_shape = (
@@ -679,7 +667,7 @@ def make_train(
                 is_ego = (actor_indices == target_ego_idxs)
                 partner_actor_mask = ~is_ego
 
-                # [Stablock] partner 위치 계산 (env.num_agents == 2 가정)
+                # partner 위치 계산 (env.num_agents == 2 가정)
                 pos_y, pos_x = _extract_pos_axes(env_state)
                 partner_idxs = (ego_idxs + 1) % env.num_agents
                 # 환경 인덱스를 생성하여 정확히 매칭 (128개의 환경에서 각각 지정된 파트너의 값 추출)
@@ -689,7 +677,7 @@ def make_train(
                 partner_x = pos_x[partner_idxs, env_range] # 결과 shape: (128,)
                 partner_pos = jnp.stack([partner_y, partner_x], axis=-1) # 결과 shape: (128, 2)
 
-                # [Stablock] 에피소드 종료 시 차단 좌표 재샘플링 (partner만 적용)
+                # 에피소드 종료 시 blocked target 재샘플링
                 if config.get("PH1_ENABLED", False):
                     # [STA-PH1] env별 pool에서 타겟 샘플링
                     # ph1_pool_states: (Envs, Pool, H, W, C_full)
@@ -769,16 +757,6 @@ def make_train(
                         new_targets,
                         blocked_states_env,
                     )
-                else:
-                    blocked_states_env = resample_blocked_states(
-                        rng,
-                        env_state,
-                        episode_done,
-                        blocked_states_env,
-                        stablock_enabled,
-                        partner_pos,
-                        no_block_prob=stablock_no_block_prob,
-                    )
                 if config.get("PH1_ENABLED", False):
                     # PH1 Expansion Logic
                     # blocked_states_env: (Envs, ...)  <-- Same target for both agents
@@ -786,10 +764,6 @@ def make_train(
 
                     blocked_states_actor = jnp.concatenate([blocked_states_env, blocked_states_env], axis=0)
                     
-                elif stablock_enabled:
-                    blocked_states_actor = expand_blocked_states(
-                        blocked_states_env, env.num_agents, is_ego
-                    )
                 else:
                     blocked_states_actor = jnp.full(
                         (model_config["NUM_ACTORS"], 2), -1, dtype=jnp.int32
@@ -1264,55 +1238,6 @@ def make_train(
                     info["ph1_penalty_env_slots"] = dist_penalty_env_slots
                     info["ph1_dist_env_slots"] = lat_dist_env_slots
                 
-                # [Stablock] 차단 좌표 도달 시 큰 음의 보상 적용 (partner만 유효)
-                if stablock_enabled:
-                    pos_y, pos_x = _extract_pos_axes(env_state)
-                    pos_y = jnp.squeeze(pos_y)
-                    pos_x = jnp.squeeze(pos_x)
-                    pos = jnp.stack([pos_y, pos_x], axis=-1)
-                    pos = jnp.swapaxes(pos, 0, 1).reshape(
-                        model_config["NUM_ACTORS"], 2
-                    )
-
-                    hit_mask = jnp.all(pos == blocked_states_actor, axis=-1)
-                    hit_mask_swapped = jnp.all(pos[:, ::-1] == blocked_states_actor, axis=-1)
-                    penalty_by_actor = (
-                        hit_mask.astype(jnp.float32) * stablock_heavy_penalty
-                    )
-                    # Debug: print positions, blocked states, and hit mask (first few)
-                    # jax.debug.print("[STABLOCK] pos.shape={}", pos.shape)
-                    # jax.debug.print("[STABLOCK] pos[0:8]={}", pos[0:8])
-                    # jax.debug.print("[STABLOCK] blocked_states_actor[0:8]={}", blocked_states_actor[0:8])
-                    # jax.debug.print("[STABLOCK] hit_mask[0:8]={}", hit_mask[0:8])
-                    penalty_by_agent = penalty_by_actor.reshape(
-                        env.num_agents, model_config["NUM_ENVS"]
-                    )
-                    reward = {
-                        a: reward[a] - penalty_by_agent[i]
-                        for i, a in enumerate(env.agents)
-                    }
-                    info["stablock_hit"] = penalty_by_agent
-                    info["stablock_hit_count"] = jnp.full((model_config["NUM_ACTORS"],), hit_mask.sum(), dtype=jnp.int32)
-                    info["stablock_hit_count_swapped"] = jnp.full((model_config["NUM_ACTORS"],), hit_mask_swapped.sum(), dtype=jnp.int32)
-
-                    hit_by_env = jnp.sum(
-                        (hit_mask & partner_actor_mask).reshape(env.num_agents, model_config["NUM_ENVS"]),
-                        axis=0,
-                    )
-                    new_episode_hit_counts = episode_hit_counts + hit_by_env
-                    episode_hit_counts = new_episode_hit_counts * (1 - done["__all__"])
-                    returned_episode_hit_counts = jax.lax.select(
-                        done["__all__"],
-                        new_episode_hit_counts,
-                        returned_episode_hit_counts,
-                    )
-                    returned_episode_hit_counts_actor = jnp.where(
-                        is_ego,
-                        0,
-                        jnp.tile(returned_episode_hit_counts, env.num_agents),
-                    )
-                    info["returned_episode_hit_count"] = returned_episode_hit_counts_actor
-
                 # anneal_factor: 보상 쉐이핑 감쇠 계수 (학습 초반 1.0 → REW_SHAPING_HORIZON에 걸쳐 0.0으로 선형 감소)
                 current_timestep = (
                     update_step * model_config["NUM_STEPS"] * model_config["NUM_ENVS"]
@@ -1450,9 +1375,21 @@ def make_train(
                 # action (원본 정책 샘플)을 기준으로 계산 (action_for_env는 epsilon 혼합 후 값)
                 current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
 
+                # partner GRU z (v3: partner의 GRU hidden state를 supervision으로 사용)
+                if transformer_v3:
+                    _raw_gru = hstate[0] if transformer_action else hstate
+                    current_partner_gru_z = jax.lax.stop_gradient(
+                        jnp.roll(_raw_gru, shift=model_config["NUM_ENVS"], axis=0)
+                    )
+                else:
+                    current_partner_gru_z = jnp.zeros(
+                        (model_config["NUM_ACTORS"],), dtype=jnp.float32
+                    )
+
                 # CT recon target용 full global obs 추출 (transformer_action=True일 때만)
                 # OV1: agent 0 full obs를 tile → OV2/ToyCoop: 각 actor 자신의 시점 full obs
-                if transformer_action:
+                if transformer_action and not transformer_v3:
+                    # v1/v2: collect global_obs for reconstruction target
                     if is_partial_obs or env_name == "ToyCoop":
                         # ToyCoop: full obs이지만 ego/other 채널 swap되므로 per-actor 사용
                         _global_obs = _extract_global_full_obs_per_actor(env_state)
@@ -1460,7 +1397,7 @@ def make_train(
                         _agent0_full = _extract_global_full_obs(env_state)   # (NUM_ENVS, H, W, C_full)
                         _global_obs = jnp.tile(_agent0_full, [2, 1, 1, 1])   # (NUM_ACTORS, H, W, C_full)
                 else:
-                    _global_obs = jnp.zeros_like(obs_batch)  # dummy — CT 코드 실행 안 됨
+                    _global_obs = jnp.zeros_like(obs_batch)  # dummy — v3 또는 CT 비활성화
 
                 transition = Transition(
                     jnp.tile(done["__all__"], env.num_agents),
@@ -1478,6 +1415,7 @@ def make_train(
                     combined_prediction,
                     hstate,
                     _global_obs,
+                    current_partner_gru_z,
                 )
 
                 env_step_state = (
@@ -1569,19 +1507,15 @@ def make_train(
 
             # [E3T] For action prediction, prediction is computed internally by network.apply
             partner_prediction = None
-            # [Stablock/E3T] last_val 계산 시점의 ego 마스크
+            # [E3T] last_val 계산 시점의 ego 마스크
             target_ego_idxs = jnp.tile(next_ego_idxs, env.num_agents)
             is_ego_last = (actor_indices == target_ego_idxs)
 
-            # [Stablock] last_val 계산에도 blocked_states를 전달
+            # [PH1] last_val 계산에도 blocked_states를 전달
             blocked_states_actor_last = None
             if config.get("PH1_ENABLED", False):
                 # Same target for both agents in state mode
                 blocked_states_actor_last = jnp.concatenate([blocked_states_env, blocked_states_env], axis=0)
-            elif stablock_enabled:
-                blocked_states_actor_last = expand_blocked_states(
-                    blocked_states_env, env.num_agents, is_ego_last
-                )
 
             net_out = network.apply(
                 train_state.params,
@@ -1778,78 +1712,112 @@ def make_train(
                             # Full forward: (C, state_out, a_hat, C_prime)
                             # v1: state_out = z_hat (N, D_obs)
                             # v2: state_out = s_hat (N, H, W, C_full)
+                            # v3: state_out = z_partner_hat (N, D_gru)
                             C_flat, state_out_flat, a_hat_flat, C_prime_flat = network.apply(
                                 params,
                                 obs_windows_flat,
                                 pad_masks_flat,
                                 method=network.cycle_transformer_forward,
                             )
-                            C = C_flat.reshape(T_dim, B_dim, -1)
-                            a_hat = a_hat_flat.reshape(T_dim, B_dim, -1)
-                            C_prime = C_prime_flat.reshape(T_dim, B_dim, -1)
 
                             valid_mask = ~traj_batch.done  # (T, B)
 
-                            if transformer_v2:
-                                # v2: pixel space reconstruction
-                                # state_out_flat = s_hat (N, H, W, C_full)
-                                _v2_shape = tuple(config.get("TRANSFORMER_STATE_SHAPE", []))
-                                H_v2, W_v2, C_v2 = _v2_shape
-                                s_hat = state_out_flat.reshape(T_dim, B_dim, H_v2, W_v2, C_v2)
-                                # recon target: global_obs 그대로 (no ct_state_encoder)
-                                recon_target_v2 = jax.lax.stop_gradient(traj_batch.global_obs)
-                                # (T, B, H, W, C_full)
+                            if transformer_v3:
+                                # CT v3: partner GRU z 복원
+                                z_partner_hat = state_out_flat.reshape(T_dim, B_dim, -1)
+                                a_hat = a_hat_flat.reshape(T_dim, B_dim, -1)
+                                C = C_flat.reshape(T_dim, B_dim, -1)
+                                C_prime = C_prime_flat.reshape(T_dim, B_dim, -1)
 
-                                # L_recon: MSE per pixel, mean over spatial dims
-                                recon_diff_v2 = (s_hat - recon_target_v2) ** 2
-                                # (T, B, H, W, C_full)
-                                recon_diff_scalar = jnp.mean(recon_diff_v2, axis=(-3, -2, -1))
-                                # (T, B)
-                                ct_recon_loss = _masked_mean(recon_diff_scalar, valid_mask)
+                                # L_z_recon: MSE(z_partner_hat, sg(partner_gru_z))
+                                target_z = jax.lax.stop_gradient(traj_batch.partner_gru_z)
+                                z_recon_diff = jnp.mean((z_partner_hat - target_z) ** 2, axis=-1)
+                                ct_recon_loss = _masked_mean(z_recon_diff, valid_mask)
 
-                                # per-channel loss: mean over T, B, H, W → (C_full,)
-                                # valid step만 포함 (valid_mask 적용)
-                                valid_mask_v2 = valid_mask[:, :, None, None, None]
-                                recon_diff_masked = jnp.where(valid_mask_v2, recon_diff_v2, 0.0)
-                                n_valid = jnp.sum(valid_mask).clip(1)
-                                ct_recon_per_channel = (
-                                    jnp.sum(recon_diff_masked, axis=(0, 1, 2, 3)) / n_valid
-                                )  # (C_full,)
+                                # L_action: CE(a_hat, partner_action)
+                                ct_action_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
+                                    logits=a_hat,
+                                    labels=traj_batch.partner_action.astype(jnp.int32),
+                                )
+                                ct_action_loss = _masked_mean(ct_action_loss_vec, valid_mask)
+
+                                # L_cycle: MSE(C_prime, sg(C))
+                                cycle_diff = jnp.mean(
+                                    (C_prime - jax.lax.stop_gradient(C)) ** 2, axis=-1
+                                )
+                                ct_cycle_loss = _masked_mean(cycle_diff, valid_mask)
+
+                                # 계수 적용
+                                ct_recon_loss = ct_recon_loss * transformer_recon_coef
+                                ct_action_loss = ct_action_loss * transformer_pred_coef
+                                ct_cycle_loss = ct_cycle_loss * transformer_cycle_coef
+                                ct_recon_per_channel = jnp.zeros(1)  # v3: dummy
                             else:
-                                # v1: latent space reconstruction
-                                z_hat = state_out_flat.reshape(T_dim, B_dim, D_obs)
-                                # recon target: ct_state_encoder(global_obs) → D_obs latent
-                                # ct_state_encoder params는 gradient 없음 (고정 random projection)
-                                recon_target = jax.lax.stop_gradient(
-                                    network.apply(
-                                        params,
-                                        jax.lax.stop_gradient(traj_batch.global_obs),
-                                        method=network.ct_encode_state,
-                                    )
-                                )  # (T, B, D_obs)
+                                # 기존 v1/v2 loss (변경 없음)
+                                C = C_flat.reshape(T_dim, B_dim, -1)
+                                a_hat = a_hat_flat.reshape(T_dim, B_dim, -1)
+                                C_prime = C_prime_flat.reshape(T_dim, B_dim, -1)
 
-                                recon_diff = jnp.mean(
-                                    (z_hat - recon_target) ** 2, axis=-1
+                                if transformer_v2:
+                                    # v2: pixel space reconstruction
+                                    # state_out_flat = s_hat (N, H, W, C_full)
+                                    _v2_shape = tuple(config.get("TRANSFORMER_STATE_SHAPE", []))
+                                    H_v2, W_v2, C_v2 = _v2_shape
+                                    s_hat = state_out_flat.reshape(T_dim, B_dim, H_v2, W_v2, C_v2)
+                                    # recon target: global_obs 그대로 (no ct_state_encoder)
+                                    recon_target_v2 = jax.lax.stop_gradient(traj_batch.global_obs)
+                                    # (T, B, H, W, C_full)
+
+                                    # L_recon: MSE per pixel, mean over spatial dims
+                                    recon_diff_v2 = (s_hat - recon_target_v2) ** 2
+                                    # (T, B, H, W, C_full)
+                                    recon_diff_scalar = jnp.mean(recon_diff_v2, axis=(-3, -2, -1))
+                                    # (T, B)
+                                    ct_recon_loss = _masked_mean(recon_diff_scalar, valid_mask)
+
+                                    # per-channel loss: mean over T, B, H, W → (C_full,)
+                                    # valid step만 포함 (valid_mask 적용)
+                                    valid_mask_v2 = valid_mask[:, :, None, None, None]
+                                    recon_diff_masked = jnp.where(valid_mask_v2, recon_diff_v2, 0.0)
+                                    n_valid = jnp.sum(valid_mask).clip(1)
+                                    ct_recon_per_channel = (
+                                        jnp.sum(recon_diff_masked, axis=(0, 1, 2, 3)) / n_valid
+                                    )  # (C_full,)
+                                else:
+                                    # v1: latent space reconstruction
+                                    z_hat = state_out_flat.reshape(T_dim, B_dim, D_obs)
+                                    # recon target: ct_state_encoder(global_obs) → D_obs latent
+                                    # ct_state_encoder params는 gradient 없음 (고정 random projection)
+                                    recon_target = jax.lax.stop_gradient(
+                                        network.apply(
+                                            params,
+                                            jax.lax.stop_gradient(traj_batch.global_obs),
+                                            method=network.ct_encode_state,
+                                        )
+                                    )  # (T, B, D_obs)
+
+                                    recon_diff = jnp.mean(
+                                        (z_hat - recon_target) ** 2, axis=-1
+                                    )  # (T, B)
+                                    ct_recon_loss = _masked_mean(recon_diff, valid_mask)
+                                    ct_recon_per_channel = jnp.zeros(1)  # v1: dummy
+
+                                # L_action: CE(a_hat, partner_action)
+                                ct_action_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
+                                    logits=a_hat,
+                                    labels=traj_batch.partner_action.astype(jnp.int32),
                                 )  # (T, B)
-                                ct_recon_loss = _masked_mean(recon_diff, valid_mask)
-                                ct_recon_per_channel = jnp.zeros(1)  # v1: dummy
+                                ct_action_loss = _masked_mean(ct_action_loss_vec, valid_mask)
 
-                            # L_action: CE(a_hat, partner_action)
-                            ct_action_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
-                                logits=a_hat,
-                                labels=traj_batch.partner_action.astype(jnp.int32),
-                            )  # (T, B)
-                            ct_action_loss = _masked_mean(ct_action_loss_vec, valid_mask)
+                                # L_cycle: MSE(C_prime, sg(C))
+                                cycle_diff = jnp.mean(
+                                    (C_prime - jax.lax.stop_gradient(C)) ** 2, axis=-1
+                                )  # (T, B)
+                                ct_cycle_loss = _masked_mean(cycle_diff, valid_mask)
 
-                            # L_cycle: MSE(C_prime, sg(C))
-                            cycle_diff = jnp.mean(
-                                (C_prime - jax.lax.stop_gradient(C)) ** 2, axis=-1
-                            )  # (T, B)
-                            ct_cycle_loss = _masked_mean(cycle_diff, valid_mask)
-
-                            ct_recon_loss = ct_recon_loss * transformer_recon_coef
-                            ct_action_loss = ct_action_loss * transformer_pred_coef
-                            ct_cycle_loss = ct_cycle_loss * transformer_cycle_coef
+                                ct_recon_loss = ct_recon_loss * transformer_recon_coef
+                                ct_action_loss = ct_action_loss * transformer_pred_coef
+                                ct_cycle_loss = ct_cycle_loss * transformer_cycle_coef
 
                         # def safe_mean(x, mask):
                         #     x_safe = jnp.where(mask, x, 0.0)
@@ -2545,7 +2513,7 @@ def make_train(
             # [E3T] Initial Ego Indices (Random init)
             initial_ego_idxs = jax.random.randint(_rng, (model_config["NUM_ENVS"],), 0, env.num_agents)
 
-            # [Stablock] 에피소드 시작 시 partner에게 부여할 차단 좌표 초기화
+            # 에피소드 시작 시 partner 위치 및 blocked target 초기화
             pos_y, pos_x = _extract_pos_axes(env_state)
             partner_idxs = (initial_ego_idxs + 1) % env.num_agents
             env_range = jnp.arange(model_config["NUM_ENVS"]) # 추가
@@ -2564,25 +2532,14 @@ def make_train(
                     init_shape = (model_config["NUM_ENVS"],) + ph1_block_shape
                 initial_blocked_states_env = jnp.full(init_shape, -1.0, dtype=jnp.float32)
             else:
-                initial_blocked_states_env = initialize_blocked_states(
-                    _rng,
-                    env_state,
-                    stablock_enabled,
-                    model_config["NUM_ENVS"],
-                    partner_pos,
-                    no_block_prob=stablock_no_block_prob,
+                initial_blocked_states_env = jnp.full(
+                    (model_config["NUM_ENVS"], 2), -1, dtype=jnp.int32
                 )
             # Debug: print initial blocked state set (first few envs)
             # jax.debug.print("Initial blocked_states_env shape: {}", initial_blocked_states_env.shape)
             # jax.debug.print("Initial blocked_states_env sample (first 8): {}", initial_blocked_states_env[:8])
             
             # Debug: print possible blocked coords for first env
-            if stablock_enabled:
-                def print_possible_coords(grid_np, partner_pos_np):
-                    coords = enumerate_reachable_positions(grid_np, partner_pos_np)
-                    # print(f"Possible blocked coords for first env (N={coords.shape[0]}): {coords}")
-                # jax.debug.callback(print_possible_coords, env_state.env_state.grid[0], partner_pos[0])
-
             # [PH1] Initialize Target Pool
             ph1_pool_size = config.get("PH1_POOL_SIZE", 100)
             

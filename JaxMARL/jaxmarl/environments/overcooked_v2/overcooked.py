@@ -184,7 +184,7 @@ class OvercookedV2(MultiAgentEnv):
             indices=jnp.array([actions[f"agent_{i}"] for i in range(self.num_agents)])
         )
 
-        state, reward, shaped_rewards = self.step_agents(key, state, acts)
+        state, reward, shaped_rewards, event_vectors = self.step_agents(key, state, acts)
 
         state = state.replace(time=state.time + 1)
 
@@ -207,7 +207,12 @@ class OvercookedV2(MultiAgentEnv):
             lax.stop_gradient(state),
             rewards,
             dones,
-            {"shaped_reward": shaped_rewards},
+            {
+                "shaped_reward": shaped_rewards,
+                "shaped_reward_events": {
+                    f"agent_{i}": ev for i, ev in enumerate(event_vectors)
+                },
+            },
         )
 
     @partial(jax.jit, static_argnums=(0,))
@@ -1084,9 +1089,12 @@ class OvercookedV2(MultiAgentEnv):
         new_agents = new_agents.replace(pos=_masked_positions(swap_mask))
 
         # Interact action:
+        _NUM_EVENTS = 13  # 원본 HSP 13종 이벤트 (인덱스 순서 원본과 동일)
+
         def _interact_wrapper(carry, x):
             agent, action = x
             is_interact = action == Actions.interact
+            is_stay = action == Actions.stay
 
             def _interact(carry, agent):
                 grid, correct_delivery, reward = carry
@@ -1097,6 +1105,7 @@ class OvercookedV2(MultiAgentEnv):
                     new_correct_delivery,
                     interact_reward,
                     shaped_reward,
+                    event_vector,
                 ) = self.process_interact(
                     grid, agent, new_agents.inventory, state.recipe
                 )
@@ -1106,15 +1115,21 @@ class OvercookedV2(MultiAgentEnv):
                     correct_delivery | new_correct_delivery,
                     reward + interact_reward,
                 )
-                return carry, (new_agent, shaped_reward)
+                return carry, (new_agent, shaped_reward, event_vector)
+
+            def _no_interact(c, a):
+                # STAY 이벤트는 interact가 아닌 경우에도 추적
+                ev = jnp.zeros(_NUM_EVENTS)
+                ev = ev.at[12].set(is_stay.astype(jnp.float32))  # [12] STAY
+                return c, (a, 0.0, ev)
 
             return jax.lax.cond(
-                is_interact, _interact, lambda c, a: (c, (a, 0.0)), carry, agent
+                is_interact, _interact, _no_interact, carry, agent,
             )
 
         carry = (grid, False, 0.0)
         xs = (new_agents, actions)
-        (new_grid, new_correct_delivery, reward), (new_agents, shaped_rewards) = (
+        (new_grid, new_correct_delivery, reward), (new_agents, shaped_rewards, event_vectors) = (
             jax.lax.scan(_interact_wrapper, carry, xs)
         )
 
@@ -1182,6 +1197,7 @@ class OvercookedV2(MultiAgentEnv):
             ),
             reward,
             shaped_rewards,
+            event_vectors,
         )
 
     def process_interact(
@@ -1364,7 +1380,46 @@ class OvercookedV2(MultiAgentEnv):
         )
 
         correct_delivery = successful_delivery & is_correct_recipe
-        return new_grid, new_agent, correct_delivery, reward, shaped_reward
+
+        # ---- 원본 HSP 13종 이벤트 벡터 (JIT 호환) ----
+        # 인덱스 순서: 원본 HSP shaped_info 딕셔너리 순서와 동일
+        # (overcooked_mdp.py line 754-768 + Overcooked_Env.py line 524 STAY)
+
+        # Drop 이벤트: counter(wall)에 무엇을 놓았는가
+        drop_on_counter = object_is_wall & object_has_no_ingredients & ~inventory_is_empty
+        drop_ingredient_on_counter = drop_on_counter & inventory_is_ingredient
+        drop_plate_on_counter = drop_on_counter & inventory_is_plate
+        drop_dish_on_counter = drop_on_counter & inventory_is_dish  # cooked soup
+
+        # Pickup from counter: counter에서 무엇을 집었는가
+        pickup_from_counter = object_is_wall & ~object_has_no_ingredients & inventory_is_empty
+        counter_has_ingredient = DynamicObject.is_ingredient(interact_ingredients)
+        counter_has_plate = interact_ingredients == DynamicObject.PLATE
+        counter_has_dish = (interact_ingredients & DynamicObject.COOKED) != 0
+        pickup_ingredient_from_counter = pickup_from_counter & counter_has_ingredient
+        pickup_plate_from_counter = pickup_from_counter & counter_has_plate
+        pickup_soup_from_counter = pickup_from_counter & counter_has_dish
+
+        # Pickup from pile
+        pickup_ingredient_from_pile = object_is_ingredient_pile & inventory_is_empty
+
+        event_vector = jnp.array([
+            drop_ingredient_on_counter.astype(jnp.float32),    # [0]  put_onion_on_X
+            drop_plate_on_counter.astype(jnp.float32),         # [1]  put_dish_on_X
+            drop_dish_on_counter.astype(jnp.float32),          # [2]  put_soup_on_X
+            pickup_ingredient_from_counter.astype(jnp.float32),  # [3]  pickup_onion_from_X
+            pickup_ingredient_from_pile.astype(jnp.float32),     # [4]  pickup_onion_from_O
+            pickup_plate_from_counter.astype(jnp.float32),       # [5]  pickup_dish_from_X
+            (object_is_plate_pile & inventory_is_empty).astype(jnp.float32),  # [6]  pickup_dish_from_D
+            pickup_soup_from_counter.astype(jnp.float32),        # [7]  pickup_soup_from_X
+            (no_plates_on_counters * is_plate_pickup_useful * successful_plate_pickup).astype(jnp.float32),  # [8]  USEFUL_DISH_PICKUP
+            (successful_dish_pickup * is_dish_pickup_useful).astype(jnp.float32),  # [9]  SOUP_PICKUP
+            (successful_pot_placement * is_pot_placement_useful).astype(jnp.float32),  # [10] PLACEMENT_IN_POT
+            correct_delivery.astype(jnp.float32),              # [11] delivery
+            jnp.float32(0.0),                                  # [12] STAY (interact에서는 0, _no_interact에서 설정)
+        ])
+
+        return new_grid, new_agent, correct_delivery, reward, shaped_reward, event_vector
 
     def is_terminal(self, state: State) -> bool:
         """Check whether state is terminal."""

@@ -118,11 +118,6 @@ def visualize_ppo_policy(
 
     run_keys = list(all_params.keys())
 
-    def _get_stablock(cfg):
-        if "alg" in cfg and "STABLOCK_ENABLED" in cfg["alg"]:
-            return bool(cfg["alg"]["STABLOCK_ENABLED"])
-        return bool(cfg.get("STABLOCK_ENABLED", False))
-
     def _resolve_policy_config(cfg):
         out = copy.deepcopy(cfg)
         source = str(policy_source).strip().lower()
@@ -315,15 +310,13 @@ def visualize_ppo_policy(
                 alg_arg = current_algs[0]
 
             # JIT Key: include alg tuple + behavior-affecting config values per agent
-            # so that different config variants (e.g. different LEARNER_USE_BLOCKED_INPUT,
-            # stablock_enabled) are compiled separately rather than sharing the first-compiled
-            # closure.
-            current_stablock_fp = tuple(_get_stablock(cfg) for cfg in current_configs)
+            # so that different config variants (e.g. different LEARNER_USE_BLOCKED_INPUT)
+            # are compiled separately rather than sharing the first-compiled closure.
             config_fp = tuple(
                 bool(cfg.get("LEARNER_USE_BLOCKED_INPUT", True))
                 for cfg in current_configs
             )
-            jit_key = current_algs + config_fp + current_stablock_fp
+            jit_key = current_algs + config_fp
             
             if jit_key not in jit_cache:
                 print(f"Compiling JIT for pair: {jit_key}")
@@ -349,7 +342,6 @@ def visualize_ppo_policy(
                             all_recipes=num_seeds is None,
                             no_viz=True,
                             algorithm=alg_arg,
-                            stablock_enabled=list(current_stablock_fp),
                             old_overcooked=False,
                             disable_old_overcooked_auto=True,
                         )
@@ -367,7 +359,6 @@ def visualize_ppo_policy(
                             env,
                             key,
                             algorithm=alg_arg,
-                            stablock_enabled=list(current_stablock_fp),
                             use_jit=True,
                         )
                     jit_cache[jit_key] = jax.jit(_rollout_impl)
@@ -390,7 +381,6 @@ def visualize_ppo_policy(
                             all_recipes=num_seeds is None,
                             no_viz=no_viz,
                             algorithm=alg_arg,
-                            stablock_enabled=list(current_stablock_fp),
                             latent_analysis=latent_analysis,
                             value_analysis=value_analysis,
                             old_overcooked=False,

@@ -242,3 +242,7 @@ overcooked_v2_experiments/human_rl/imitation/processed_data
 **/_METADATA
 **/_strings.json
 **/_sharding
+
+# Human-proxy: models and training data (large files)
+human-proxy/models/
+human-proxy/data/
