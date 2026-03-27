@@ -10,6 +10,7 @@ ph2-project/
 ├── ph2/                    # PH2 알고리즘 (PH1 + PH2 + CycleTransformer)
 ├── JaxMARL/                # JAX 기반 MARL 환경 라이브러리 (submodule)
 ├── webapp/                 # Human-AI 실험용 웹 앱
+├── human-proxy/            # BC 모델 학습 + cross-play 평가
 ├── scripts/                # 유틸리티 스크립트
 ├── CLAUDE.md               # 개발 컨텍스트 (알고리즘 상세, 작업 이력)
 └── README.md               # 이 파일
@@ -185,6 +186,77 @@ JAX_PLATFORMS=cpu uvicorn app.main:app --port 8000 --loop asyncio
 
 모델 배치: `webapp/models/{layout}/{algo}/{run}/ckpt_final/`
 
+## Human Proxy — Behavioral Cloning (`human-proxy/`)
+
+Webapp에서 수집한 인간 플레이 trajectory를 기반으로 **Behavioral Cloning (BC) 모델**을 학습하고, 학습된 BC 정책을 RL 에이전트와 cross-play 평가하는 파이프라인.
+
+### 파이프라인
+
+```
+Webapp Trajectories (.pkl) → Extract (numpy) → Train BC → Evaluate (BC × RL) → Scores/Heatmap
+```
+
+### 실행 방법
+
+```bash
+cd human-proxy
+
+# 1. Trajectory 추출 — webapp에서 수집한 pickle → numpy 변환
+bash sh_scripts/extract.sh
+
+# 2. BC 모델 학습 — position별 5 seed 학습
+bash sh_scripts/train_bc.sh cramped_room
+
+# 3. Cross-play 평가 — BC vs RL 에이전트
+bash sh_scripts/eval_with_bc.sh ../baseline/runs/<sp_run_dir> cramped_room
+```
+
+### BC 모델 구조
+
+CNN 기반 정책 네트워크 (Flax):
+```
+obs (H,W,30) → Conv(32,3×3) → ReLU → Conv(32,3×3) → ReLU → Flatten → Dense(64) → ReLU → Dense(6)
+```
+
+- Loss: softmax cross-entropy
+- Optimizer: Adam (lr=1e-3)
+- 학습: 200 epochs, batch_size=64, 5 seed `jax.vmap` 병렬 학습
+
+### 디렉토리 구조
+
+```
+human-proxy/
+├── code/
+│   ├── extract.py       # Trajectory pickle → numpy 변환
+│   ├── train.py         # BCModel 정의 + 학습 루프
+│   ├── policy.py        # BCPolicy (추론) + PPOPolicy 로더
+│   └── evaluate.py      # BC × RL cross-play 평가
+├── sh_scripts/
+│   ├── extract.sh       # 추출 실행
+│   ├── train_bc.sh      # 학습 실행 (layout 인자)
+│   └── eval_with_bc.sh  # 평가 실행 (algo_dir, layout 인자)
+├── data/bc/{layout}/pos_{0|1}/
+│   ├── obs.npy          # (N, H, W, 30) uint8
+│   ├── actions.npy      # (N,) int32, 0-5
+│   └── metadata.json    # 에피소드 통계
+└── models/{layout}/
+    ├── pos_{0|1}/seed_{0..4}/checkpoint.pkl
+    └── eval_results/
+        ├── scores.csv
+        └── heatmap_pos{0|1}.png
+```
+
+### 주요 파라미터
+
+| 파라미터 | 기본값 | 설명 |
+|----------|--------|------|
+| `--layout` | (필수) | 레이아웃 이름 (cramped_room 등) |
+| `--position` | 0, 1 | 인간 플레이어 위치 |
+| `--num-seeds` | 5 | BC 모델 seed 수 |
+| `--epochs` | 200 | 학습 에폭 |
+| `--num-eval-seeds` | 10 | 평가 rollout 수 |
+| `--max-steps` | 400 | 평가 에피소드 길이 |
+
 ## 디렉토리별 역할
 
 | 디렉토리 | 역할 | 수정 가능 |
@@ -193,6 +265,7 @@ JAX_PLATFORMS=cpu uvicorn app.main:app --port 8000 --loop asyncio
 | `ph2/` | PH2 + CycleTransformer | O |
 | `JaxMARL/` | 환경 라이브러리 (submodule) | X (upstream 관리) |
 | `webapp/` | Human-AI 실험 웹 앱 | O |
+| `human-proxy/` | BC 모델 학습 + cross-play 평가 | O |
 
 ## 환경 구분
 
