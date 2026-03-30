@@ -34,7 +34,7 @@ class _FlattenMLP(nn.Module):
         )(x)
         x = self.activation(x)
         return x
-from .e3t import PartnerPredictor
+from .e3t import PartnerPredictor, ZPredictor, CycleDecoder
 from .cycle_transformer import CycleTransformerModule, CycleTransformerModuleV3
 
 
@@ -394,16 +394,40 @@ class ActorCriticRNN(ActorCriticBase):
         # Action-prediction: compute pred_logits from GRU output
         # When transformer_action=True, CycleTransformer replaces PartnerPredictor.
         pred_logits = None
+        z_partner_hat = None
+        gru_output = embedding  # GRU 직후 출력 (cycle loss target용으로 extras에 저장)
+
+        z_prediction_enabled = bool(self.config.get("Z_PREDICTION_ENABLED", False))
+
         if transformer_action:
             # Concatenate z + sg(ẑ) + sg(â) as policy input
             embedding = jnp.concatenate(
                 [embedding, _ct_z_hat_sg, _ct_a_hat_sg], axis=-1
             )
             pred_logits = _ct_a_hat_sg  # used for logging (already stopped)
-        elif self._action_prediction_enabled():
+        else:
             z_sg = jax.lax.stop_gradient(embedding)
-            pred_logits = PartnerPredictor(action_dim=self.action_dim, name="predictor")(z_sg)
-            embedding = jnp.concatenate([embedding, pred_logits], axis=-1)
+
+            # Action prediction (PartnerPredictor / E3T)
+            if self._action_prediction_enabled():
+                pred_logits = PartnerPredictor(action_dim=self.action_dim, name="predictor")(z_sg)
+
+            # Partner z prediction (ZPredictor) — sg 입력, PPO gradient 차단
+            if z_prediction_enabled:
+                z_partner_hat = ZPredictor(
+                    hidden_dim=self.config["GRU_HIDDEN_DIM"],
+                    output_dim=self.config["GRU_HIDDEN_DIM"],
+                    name="z_predictor",
+                )(z_sg)
+
+            # Policy input 구성: [z_GRU, (sg(z_partner_hat)), (pred_logits)]
+            parts = [embedding]
+            if z_partner_hat is not None:
+                parts.append(jax.lax.stop_gradient(z_partner_hat))
+            if pred_logits is not None:
+                parts.append(pred_logits)
+            if len(parts) > 1:
+                embedding = jnp.concatenate(parts, axis=-1)
 
         actor_mean = nn.Dense(
             self.config["FC_DIM_SIZE"],
@@ -435,6 +459,8 @@ class ActorCriticRNN(ActorCriticBase):
             "blocked_emb": blocked_emb,
             "blocked_emb_slots": blocked_emb_slots,
             "pred_logits": pred_logits,
+            "z_partner_hat": z_partner_hat,  # (T, B, D) or None — Z_PREDICTION용
+            "gru_output": gru_output,        # (T, B, D) — cycle loss target용
         }
 
         # Build new hidden state
@@ -444,6 +470,27 @@ class ActorCriticRNN(ActorCriticBase):
             new_hidden = rnn_state
 
         return new_hidden, pi, jnp.squeeze(critic, axis=-1), extras
+
+    @nn.compact
+    def cycle_decode(self, x):
+        """CycleDecoder forward — CT OFF cycle loss 계산용.
+
+        _loss_fn에서 method=network.cycle_decode 로 호출.
+        입력: sg(pred_logits)(6) 또는 concat(sg(z_partner_hat)(128), sg(pred_logits)(6))
+        출력: z_hat (GRU_HIDDEN_DIM,) — ego z_GRU 복원
+
+        Args:
+            x: (N, D_in) where D_in varies by config (6, 128, 134)
+        Returns:
+            (N, GRU_HIDDEN_DIM)
+        """
+        D = int(self.config["GRU_HIDDEN_DIM"])
+        decoder = CycleDecoder(
+            hidden_dim=D,
+            output_dim=D,
+            name="cycle_decoder",
+        )
+        return decoder(x)
 
     @nn.compact
     def ct_encode_state(self, obs):

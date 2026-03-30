@@ -56,7 +56,7 @@ def make_train_hsp_s1(config):
         env = LogWrapper(env_raw, replace_info=False)
 
     N = config["HSP_POPULATION_SIZE"]        # 36
-    EVENT_DIM = config["HSP_EVENT_DIM"]      # 5 (OV2) or 1 (ToyCoop)
+    EVENT_DIM = config["HSP_EVENT_DIM"]      # 13 (OV2) or 1 (ToyCoop)
 
     NUM_ENVS = model_config["NUM_ENVS"]
     NUM_STEPS = model_config["NUM_STEPS"]

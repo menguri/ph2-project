@@ -128,6 +128,9 @@ def get_run_base_dir(run_id: str, config) -> str:
     optional_prefix = config.get("OPTIONAL_PREFIX", "")
 
     layout_name = config["env"]["ENV_KWARGS"].get("layout", config["env"].get("ENV_NAME", "unknown"))
+    # ToyCoop + random_reset → layout_name에 _Ran suffix 추가
+    if layout_name == "ToyCoop" and config["env"].get("ENV_KWARGS", {}).get("random_reset", False):
+        layout_name = "ToyCoop_Ran"
 
     results_dir = "runs"
     if optional_prefix != "":

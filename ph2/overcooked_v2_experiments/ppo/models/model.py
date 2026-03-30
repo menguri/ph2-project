@@ -9,6 +9,10 @@ def get_actor_critic(config) -> ActorCriticBase:
     model_config = dict(config["model"])
     if "ACTION_PREDICTION" in config:
         model_config["ACTION_PREDICTION"] = config["ACTION_PREDICTION"]
+    # Z Prediction / Cycle Loss keys
+    for _zp_key in ("Z_PREDICTION_ENABLED", "CYCLE_LOSS_ENABLED"):
+        if _zp_key in config:
+            model_config[_zp_key] = config[_zp_key]
     # Forward CycleTransformer (CT) global config keys into model_config so
     # ActorCriticRNN can read them from self.config.
     for _ct_key in (

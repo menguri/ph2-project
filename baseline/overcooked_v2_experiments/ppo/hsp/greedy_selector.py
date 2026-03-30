@@ -52,7 +52,7 @@ def greedy_select_policies(event_matrix: np.ndarray, k: int, seed: int = 0) -> l
 def collect_event_features(
     pop_dir: str | Path,
     config: dict,
-    n_eval_episodes: int = 50,
+    n_eval_episodes: int = 10,
 ) -> np.ndarray:
     """
     N개 정책을 self-play로 평가하여 이벤트 빈도 행렬을 수집한다.
@@ -118,57 +118,47 @@ def _evaluate_policy_events(
 ):
     """
     단일 policy로 self-play n_episodes 실행 → 에피소드별 이벤트 합산.
+    JIT + lax.scan으로 고속 실행.
     반환: (EVENT_DIM,) 평균 이벤트 카운트
     """
-    total_events = np.zeros(event_dim)
+    max_steps = getattr(env_raw, 'max_steps', 400)
+    agents = env.agents
 
-    for ep in range(n_episodes):
-        key = jax.random.PRNGKey(ep)
+    def _run_one_episode(key):
         key, key_r = jax.random.split(key)
         obs, state = env.reset(key_r)
-
         h0 = ActorCriticRNN.initialize_carry(1, gru_hidden_dim)
         h1 = ActorCriticRNN.initialize_carry(1, gru_hidden_dim)
         done = jnp.zeros((1,), dtype=jnp.bool_)
 
-        ep_events = np.zeros(event_dim)
-        max_steps = getattr(env_raw, 'max_steps', 400)
-
-        for step in range(max_steps):
-            # obs shape: (H, W, C) → (T=1, B=1, H, W, C) for network
-            obs_0 = obs[env.agents[0]][jnp.newaxis, jnp.newaxis]
-            obs_1 = obs[env.agents[1]][jnp.newaxis, jnp.newaxis]
+        def _step(carry, _):
+            obs, state, h0, h1, done, ep_events, key = carry
+            obs_0 = obs[agents[0]][jnp.newaxis, jnp.newaxis]
+            obs_1 = obs[agents[1]][jnp.newaxis, jnp.newaxis]
 
             key, k0, k1, k_env = jax.random.split(key, 4)
-
-            h0, pi_0, _, _ = network.apply(
-                params, h0, (obs_0, done[jnp.newaxis])
-            )
+            h0, pi_0, _, _ = network.apply(params, h0, (obs_0, done[jnp.newaxis]))
             action_0 = pi_0.sample(seed=k0).squeeze(0)
-
-            h1, pi_1, _, _ = network.apply(
-                params, h1, (obs_1, done[jnp.newaxis])
-            )
+            h1, pi_1, _, _ = network.apply(params, h1, (obs_1, done[jnp.newaxis]))
             action_1 = pi_1.sample(seed=k1).squeeze(0)
 
-            env_act = {
-                env.agents[0]: action_0.squeeze(0),
-                env.agents[1]: action_1.squeeze(0),
-            }
+            env_act = {agents[0]: action_0.squeeze(0), agents[1]: action_1.squeeze(0)}
+            next_obs, next_state, reward, done_dict, info = env.step(k_env, state, env_act)
+            next_done = jnp.array([done_dict["__all__"]])
 
-            obs, state, reward, done_dict, info = env.step(k_env, state, env_act)
-            done = jnp.array([done_dict["__all__"]])
+            # 이벤트 수집 (done이면 0으로 마스킹 — 이미 끝난 에피소드)
+            step_events = jnp.zeros(event_dim)
+            ev_0 = info.get("shaped_reward_events", {}).get(agents[0], jnp.zeros(event_dim))
+            ev_1 = info.get("shaped_reward_events", {}).get(agents[1], jnp.zeros(event_dim))
+            step_events = (ev_0[:event_dim] + ev_1[:event_dim]) * (1.0 - done[0])
 
-            # 이벤트 수집
-            if "shaped_reward_events" in info:
-                for agent_id in env.agents:
-                    ev = info["shaped_reward_events"][agent_id]
-                    ep_events += np.array(ev[:event_dim])
+            return (next_obs, next_state, h0, h1, next_done, ep_events + step_events, key), None
 
-            if done_dict["__all__"]:
-                break
+        init_carry = (obs, state, h0, h1, done, jnp.zeros(event_dim), key)
+        (_, _, _, _, _, ep_events, _), _ = jax.lax.scan(_step, init_carry, None, max_steps)
+        return ep_events
 
-        total_events += ep_events
-
-    avg_events = total_events / max(n_episodes, 1)
+    keys = jax.random.split(jax.random.PRNGKey(0), n_episodes)
+    all_events = jax.jit(jax.vmap(_run_one_episode))(keys)  # (n_episodes, EVENT_DIM)
+    avg_events = np.array(all_events.mean(axis=0))
     return avg_events

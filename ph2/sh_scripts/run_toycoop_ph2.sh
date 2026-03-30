@@ -46,7 +46,7 @@ RANDOM_RESET_ARGS=""
 
 # 보조 모듈 (실제 사용되는 것만)
 : "${ACTION_PREDICTION:=True}"
-: "${SAVE_EVAL_CHECKPOINTS:=True}"
+: "${SAVE_EVAL_CHECKPOINTS:=False}"
 
 # CT 모드
 : "${USE_CT:=0}"
@@ -113,15 +113,14 @@ echo "  GPUs: $DEFAULT_GPUS  |  CT: $USE_CT"
 echo "  random_reset: $RANDOM_RESET"
 echo "============================================="
 
-# 기본 실행
-run_ph2 "$DEFAULT_GPUS" 0.1 1.0 1
-
-# 파라미터 스윕 예시:
-# for omega in 0.1 0.5 1.0; do
-#   for k in 1 2 3; do
-#     run_ph2 "$DEFAULT_GPUS" "$omega" 1.0 "$k"
-#   done
-# done
+# omega × sigma × k sweep (action prediction 모드, CT OFF)
+for omega in 1 2 3 4 5; do
+  for sigma in 5.0 3.0 2.0 1.0; do
+    for k in 1 2; do
+      run_ph2 "$DEFAULT_GPUS" "$omega" "$sigma" "$k"
+    done
+  done
+done
 
 echo "============================================="
 echo "  ToyCoop PH2 Pipeline 완료"

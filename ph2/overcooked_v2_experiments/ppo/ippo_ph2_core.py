@@ -130,6 +130,13 @@ def make_train(
     transformer_pred_coef = float(config.get("TRANSFORMER_PRED_COEF", 1.0))
     transformer_cycle_coef = float(config.get("TRANSFORMER_CYCLE_COEF", 0.5))
     transformer_v3 = bool(config.get("TRANSFORMER_V3", False))
+
+    # Z Prediction / Cycle Loss settings (CT OFF 모드 전용)
+    z_prediction_enabled = bool(config.get("Z_PREDICTION_ENABLED", False))
+    z_pred_loss_coef = float(config.get("Z_PRED_LOSS_COEF", 1.0))
+    cycle_loss_enabled = bool(config.get("CYCLE_LOSS_ENABLED", False))
+    cycle_loss_coef = float(config.get("CYCLE_LOSS_COEF", 0.1))
+
     # OV1 vs OV2 감지: env kwargs에 agent_view_size 있으면 partial obs (OV2)
     # OV2 → CT recon target은 per-actor full obs (get_obs_default 활용)
     # OV1 → agent 0의 full obs를 모든 actor에 동일하게 사용 (PH1 pool과 동일)
@@ -517,6 +524,24 @@ def make_train(
                     _np["params"]["cycle_transformer"][k] = v
             network_params = freeze(_np)
 
+        # CycleDecoder init (CT OFF cycle loss용) — cycle_decode method 호출 시 필요한 params
+        if cycle_loss_enabled and not transformer_action:
+            from flax.core import freeze, unfreeze
+            # CycleDecoder 입력 차원: z_pred(128) + pred(6) = 134 또는 pred(6) 또는 z_pred(128)
+            _cd_in_dim = 0
+            if z_prediction_enabled:
+                _cd_in_dim += model_config["GRU_HIDDEN_DIM"]
+            if action_prediction:
+                _cd_in_dim += ACTION_DIM
+            if _cd_in_dim > 0:
+                _dummy_cd_in = jnp.zeros((1, _cd_in_dim), dtype=jnp.float32)
+                _cd_vars = network.init(_rng, _dummy_cd_in, method=network.cycle_decode)
+                _np = unfreeze(network_params)
+                for k, v in unfreeze(_cd_vars)["params"].items():
+                    if k not in _np["params"]:
+                        _np["params"][k] = v
+                network_params = freeze(_np)
+
         if model_config["ANNEAL_LR"]:
             tx = optax.chain(
                 optax.clip_by_global_norm(model_config["MAX_GRAD_NORM"]),
@@ -679,17 +704,66 @@ def make_train(
 
                 # 에피소드 종료 시 blocked target 재샘플링
                 if config.get("PH1_ENABLED", False):
-                    # [STA-PH1] env별 pool에서 타겟 샘플링
-                    # ph1_pool_states: (Envs, Pool, H, W, C_full)
-                    pool_size = ph1_pool_states.shape[1]
-
                     rng, _rng = jax.random.split(rng)
                     rng_envs = jax.random.split(_rng, model_config["NUM_ENVS"])
 
                     current_global_step = update_step * model_config["NUM_STEPS"] * model_config["NUM_ENVS"]
                     is_ph1_warmup = current_global_step < ph1_warmup_steps
 
-                    if ph1_multi_penalty_enabled:
+                    if env_name == "ToyCoop":
+                        # ---------------------------------------------------------
+                        # ToyCoop: pool 미사용, 현재 goal 기준으로 k개 synthetic
+                        # penalty state 직접 생성 (agent_pos만 랜덤, goal 겹침 없음)
+                        # ---------------------------------------------------------
+                        _tc_inner = env_state.env_state  # ToyCoop State
+                        _tc_all_pos = jnp.array(
+                            [[x, y] for x in range(5) for y in range(5)]
+                        )  # (25, 2)
+
+                        def _gen_toycoop_targets_one_env(rng_e, gp, ogp):
+                            # green goal과 겹치지 않는 위치 마스크
+                            mask = jnp.ones(25, dtype=jnp.bool_)
+                            match0 = jnp.all(_tc_all_pos == gp[0], axis=-1)
+                            match1 = jnp.all(_tc_all_pos == gp[1], axis=-1)
+                            mask = mask & ~match0 & ~match1
+                            valid_idx = jnp.where(mask, size=23)[0]
+
+                            def _gen_one(rng_k):
+                                perm = jax.random.permutation(rng_k, valid_idx.shape[0])
+                                a0 = _tc_all_pos[valid_idx[perm[0]]]
+                                a1 = _tc_all_pos[valid_idx[perm[1]]]
+                                agent_pos = jnp.stack([a0, a1])
+                                # obs 렌더링: (H, W, 4)
+                                obs_grid = jnp.zeros((5, 5, 4))
+                                obs_grid = obs_grid.at[agent_pos[0, 1], agent_pos[0, 0], 0].set(1)
+                                obs_grid = obs_grid.at[agent_pos[1, 1], agent_pos[1, 0], 1].set(1)
+                                obs_grid = obs_grid.at[gp[:, 1], gp[:, 0], 2].set(1)
+                                obs_grid = obs_grid.at[ogp[:, 1], ogp[:, 0], 3].set(1)
+                                return obs_grid  # (5, 5, 4)
+
+                            rngs_k = jax.random.split(rng_e, ph1_penalty_slots)
+                            return jax.vmap(_gen_one)(rngs_k)  # (k, 5, 5, 4)
+
+                        new_targets_multi = jax.vmap(_gen_toycoop_targets_one_env)(
+                            rng_envs,
+                            _tc_inner.goal_pos,
+                            _tc_inner.other_goal_pos,
+                        )  # (NUM_ENVS, k, 5, 5, 4)
+
+                        if not ph1_multi_penalty_enabled:
+                            new_targets = new_targets_multi[:, 0]  # (E, 5, 5, 4)
+                        else:
+                            new_targets = new_targets_multi  # (E, k, 5, 5, 4)
+
+                        # warmup 기간에는 -1 (None target)
+                        none_target = jnp.full_like(new_targets, -1.0)
+                        new_targets = jnp.where(is_ph1_warmup, none_target, new_targets)
+
+                    else:
+                        # 기존 OV2: pool에서 v-gap sampling
+                        pool_size = ph1_pool_states.shape[1]
+
+                    if env_name != "ToyCoop" and ph1_multi_penalty_enabled:
 
                         def _sample_multi_target(r, pool_env, probs_env):
                             none_targets = jnp.full(
@@ -719,7 +793,8 @@ def make_train(
                         new_targets = jax.vmap(_sample_multi_target)(
                             rng_envs, ph1_pool_states, ph1_probs
                         )
-                    else:
+                    elif env_name != "ToyCoop":
+                        # OV2 single-target: pool에서 v-gap sampling
 
                         def _sample_target(r, probs_env):
                             # If warmup or pool not ready, force normal (index = pool_size)
@@ -1131,8 +1206,10 @@ def make_train(
                     global_full_next_env0 = _extract_global_full_obs(env_state)  # (E, H, W, C_full)
 
                     # Update env-specific ring buffer pool: (E, Pool, H, W, C_full)
-                    ph1_pool_states = jnp.roll(ph1_pool_states, shift=-1, axis=1)
-                    ph1_pool_states = ph1_pool_states.at[:, -1].set(global_full_next_env0)
+                    # ToyCoop: pool 미사용 (synthetic penalty state 직접 생성)
+                    if env_name != "ToyCoop":
+                        ph1_pool_states = jnp.roll(ph1_pool_states, shift=-1, axis=1)
+                        ph1_pool_states = ph1_pool_states.at[:, -1].set(global_full_next_env0)
                 
                 # [STA-PH1] Apply Latent Distance Penalty
                 # Calculate Distance: || z(next_obs) - z(blocked) ||
@@ -1145,39 +1222,56 @@ def make_train(
                     and ("blocked_emb" in ph1_extras)
                     and (ph1_extras["blocked_emb"] is not None)
                 ):
-                    # Latent distance is computed in the *blocked/global* encoder space.
-                    # z_next comes from global full state, not from execution observation.
                     global_full_next_actor = jnp.concatenate(
                         [global_full_next_env0, global_full_next_env0], axis=0
                     )  # (Actors, H, W, C_full)
 
-                    z_next = network.apply(
-                        train_state.params,
-                        global_full_next_actor,
-                        method=network.encode_blocked,
-                    ).squeeze()  # (Actors, D or D_proj)
-                    z_tilde_slots_src = ph1_extras.get("blocked_emb_slots", None)
-                    if z_tilde_slots_src is not None:
-                        z_tilde_slots = (
-                            z_tilde_slots_src[0]
-                            if z_tilde_slots_src.ndim >= 4
-                            else z_tilde_slots_src
-                        )
-                        if z_tilde_slots.ndim == 2:
-                            z_tilde_slots = z_tilde_slots[:, None, :]
+                    if env_name == "ToyCoop":
+                        # ToyCoop: raw vector distance (binary 0/1 obs → flatten → L2)
+                        # MLP encoder 경유 없이 직접 비교 — 학습 불변, 해석 가능
+                        z_next = global_full_next_actor.reshape(
+                            global_full_next_actor.shape[0], -1
+                        ).astype(jnp.float32)  # (Actors, 100)
+
+                        # blocked_states_actor: (Actors, H, W, C) or (Actors, K, H, W, C)
+                        if blocked_states_actor.ndim >= 5:
+                            # multi-penalty: (Actors, K, H, W, C) → (Actors, K, 100)
+                            z_tilde_slots = blocked_states_actor.reshape(
+                                blocked_states_actor.shape[0], blocked_states_actor.shape[1], -1
+                            ).astype(jnp.float32)
+                        else:
+                            # single: (Actors, H, W, C) → (Actors, 1, 100)
+                            z_tilde_slots = blocked_states_actor.reshape(
+                                blocked_states_actor.shape[0], -1
+                            ).astype(jnp.float32)[:, None, :]
+                        # -1.0 sentinel → 0.0 (미생성 state 보호)
+                        z_tilde_slots = jnp.where(z_tilde_slots == -1.0, 0.0, z_tilde_slots)
                     else:
-                        z_tilde_src = ph1_extras["blocked_emb"]
-                        z_tilde = (
-                            z_tilde_src[0] if z_tilde_src.ndim >= 3 else z_tilde_src
-                        )
-                        if z_tilde.ndim == 1:
-                            z_tilde = z_tilde[None, :]
-                        z_tilde_slots = z_tilde[:, None, :]
+                        # OV1/OV2: blocked_encoder MLP latent distance (기존)
+                        z_next = network.apply(
+                            train_state.params,
+                            global_full_next_actor,
+                            method=network.encode_blocked,
+                        ).squeeze()  # (Actors, D)
+                        z_tilde_slots_src = ph1_extras.get("blocked_emb_slots", None)
+                        if z_tilde_slots_src is not None:
+                            z_tilde_slots = (
+                                z_tilde_slots_src[0]
+                                if z_tilde_slots_src.ndim >= 4
+                                else z_tilde_slots_src
+                            )
+                            if z_tilde_slots.ndim == 2:
+                                z_tilde_slots = z_tilde_slots[:, None, :]
+                        else:
+                            z_tilde_src = ph1_extras["blocked_emb"]
+                            z_tilde = (
+                                z_tilde_src[0] if z_tilde_src.ndim >= 3 else z_tilde_src
+                            )
+                            if z_tilde.ndim == 1:
+                                z_tilde = z_tilde[None, :]
+                            z_tilde_slots = z_tilde[:, None, :]
 
                     num_slots = z_tilde_slots.shape[1]
-                    # ToyCoop 전용: pool 미충전 시 z_tilde에 NaN이 있을 수 있으므로 보호
-                    if env_name == "ToyCoop":
-                        z_tilde_slots = jnp.where(jnp.isfinite(z_tilde_slots), z_tilde_slots, 0.0)
                     z_next_slots = jnp.expand_dims(z_next, axis=1)
                     lat_dist_slots = jnp.sqrt(
                         jnp.sum((z_next_slots - z_tilde_slots) ** 2, axis=-1)
@@ -1375,8 +1469,8 @@ def make_train(
                 # action (원본 정책 샘플)을 기준으로 계산 (action_for_env는 epsilon 혼합 후 값)
                 current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
 
-                # partner GRU z (v3: partner의 GRU hidden state를 supervision으로 사용)
-                if transformer_v3:
+                # partner GRU z (v3 또는 Z_PREDICTION: partner의 GRU hidden state를 supervision으로 사용)
+                if transformer_v3 or z_prediction_enabled:
                     _raw_gru = hstate[0] if transformer_action else hstate
                     current_partner_gru_z = jax.lax.stop_gradient(
                         jnp.roll(_raw_gru, shift=model_config["NUM_ENVS"], axis=0)
@@ -1658,6 +1752,42 @@ def make_train(
                         log_prob = pi.log_prob(traj_batch.action)
 
                         # --------------------------------------------------
+                        # Z Prediction + Cycle Loss (CT OFF 모드 전용)
+                        # --------------------------------------------------
+                        z_pred_loss = 0.0
+                        off_cycle_loss = 0.0
+
+                        if not transformer_action:
+                            # Z Prediction: MSE(z_partner_hat, sg(partner_gru_z))
+                            if z_prediction_enabled:
+                                _z_partner_hat = rerun_extras.get("z_partner_hat")
+                                if _z_partner_hat is not None:
+                                    _target_z = jax.lax.stop_gradient(traj_batch.partner_gru_z)
+                                    z_pred_diff = jnp.mean((_z_partner_hat - _target_z) ** 2, axis=-1)
+                                    z_pred_loss = _masked_mean(z_pred_diff, train_mask) * z_pred_loss_coef
+
+                            # Cycle Loss: sg(predictions) → CycleDecoder → z_hat ≈ sg(z_GRU)
+                            if cycle_loss_enabled:
+                                _cycle_parts = []
+                                if z_prediction_enabled and rerun_extras.get("z_partner_hat") is not None:
+                                    _cycle_parts.append(jax.lax.stop_gradient(rerun_extras["z_partner_hat"]))
+                                if action_prediction and pred_logits is not None:
+                                    _cycle_parts.append(jax.lax.stop_gradient(pred_logits))
+
+                                if _cycle_parts:
+                                    _cycle_in = jnp.concatenate(_cycle_parts, axis=-1)
+                                    # Flatten T*B for method call, then reshape
+                                    _T, _B = _cycle_in.shape[:2]
+                                    _cycle_in_flat = _cycle_in.reshape(_T * _B, -1)
+                                    _z_hat_flat = network.apply(
+                                        params, _cycle_in_flat, method=network.cycle_decode,
+                                    )
+                                    _z_hat = _z_hat_flat.reshape(_T, _B, -1)
+                                    _gru_target = jax.lax.stop_gradient(rerun_extras["gru_output"])
+                                    _cycle_diff = jnp.mean((_z_hat - _gru_target) ** 2, axis=-1)
+                                    off_cycle_loss = _masked_mean(_cycle_diff, train_mask) * cycle_loss_coef
+
+                        # --------------------------------------------------
                         # CycleTransformer auxiliary losses
                         # (only when transformer_action=True; zero otherwise)
                         # --------------------------------------------------
@@ -1873,6 +2003,8 @@ def make_train(
                             + model_config["VF_COEF"] * value_loss
                             - model_config["ENT_COEF"] * entropy
                             + pred_loss
+                            + z_pred_loss
+                            + off_cycle_loss
                             + ct_recon_loss
                             + ct_action_loss
                             + ct_cycle_loss
@@ -1891,6 +2023,8 @@ def make_train(
                             ct_action_loss,
                             ct_cycle_loss,
                             ct_recon_per_channel,  # v2: (C_full,), v1: zeros(1)
+                            z_pred_loss,
+                            off_cycle_loss,
                         )
 
                     def _perform_update():
@@ -1922,7 +2056,7 @@ def make_train(
                         ) if transformer_v2 else jnp.zeros(1)
                         return (train_state, mb_rng), (
                             0.0,
-                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, _dummy_per_ch),
+                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, _dummy_per_ch, 0.0, 0.0),
                         )
 
                     # jax.debug.print(
@@ -2082,6 +2216,8 @@ def make_train(
                 ct_action_loss,
                 ct_cycle_loss,
                 ct_recon_per_channel,  # v2: (C_full,), v1: zeros(1)
+                z_pred_loss,
+                off_cycle_loss,
             ) = aux_data
 
             # PPO 학습 손실 메트릭 추가
@@ -2094,6 +2230,8 @@ def make_train(
             metric["pred_accuracy"] = pred_accuracy # 파트너 행동 예측 정확도
             metric["state_pred_z_loss"] = state_pred_z_loss
             metric["state_pred_action_loss"] = state_pred_action_loss
+            metric["z_pred_loss"] = z_pred_loss          # partner GRU z 복원 손실
+            metric["off_cycle_loss"] = off_cycle_loss    # CT OFF cycle consistency 손실
             metric["ct_recon_loss"] = ct_recon_loss
             metric["ct_action_loss"] = ct_action_loss
             metric["ct_cycle_loss"] = ct_cycle_loss
@@ -2369,7 +2507,8 @@ def make_train(
             next_ph1_pool_states = ph1_pool_states
             next_ph1_probs = ph1_probs
 
-            if ph1_enabled:
+            if ph1_enabled and env_name != "ToyCoop":
+                # ToyCoop은 pool/v-gap 미사용 (synthetic penalty state 직접 생성)
                 use_partner_pred = (
                     ph1_enabled
                     and use_ph1_partner_pred

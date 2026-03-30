@@ -45,6 +45,22 @@ def detect_checkpoint_ct_mode(train_state_or_params) -> bool:
     return "cycle_transformer" in inner
 
 
+def detect_checkpoint_z_prediction(train_state_or_params) -> bool:
+    """체크포인트가 Z_PREDICTION 모드로 훈련된 것인지 자동 감지.
+
+    params 트리에 "z_predictor" 키 유무로 판단.
+    config["Z_PREDICTION_ENABLED"]을 직접 사용하는 것이 권장됨.
+    """
+    if hasattr(train_state_or_params, "params"):
+        params = train_state_or_params.params
+    else:
+        params = train_state_or_params
+
+    state_dict = serialization.to_state_dict(params)
+    inner = state_dict.get("params", state_dict)
+    return "z_predictor" in inner
+
+
 def _resolve_num_updates(model_cfg: Dict[str, Any]) -> int:
     if "NUM_UPDATES" in model_cfg:
         return int(model_cfg["NUM_UPDATES"])

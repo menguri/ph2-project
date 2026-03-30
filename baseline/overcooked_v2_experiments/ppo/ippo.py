@@ -601,6 +601,10 @@ def make_train(
                 # --------------------------------------------------------------
                 info["policy_entropy"] = policy_entropy
 
+                # shaped_reward_events는 per-agent dict(E, EVENT_DIM)이므로
+                # (NUM_ACTORS,) reshape와 호환되지 않음 → 별도 보관 후 제외
+                _shaped_reward_events = info.pop("shaped_reward_events", None)
+
                 info = jax.tree_util.tree_map(
                     lambda x: x.reshape((model_config["NUM_ACTORS"])), info
                 )

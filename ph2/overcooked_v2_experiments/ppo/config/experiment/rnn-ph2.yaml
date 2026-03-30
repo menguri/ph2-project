@@ -59,9 +59,12 @@ PH2_FIXED_IND_PROB: 0.5
 # If True, spec/ind share the action predictor ("shared_predictor") parameters.
 # Default False preserves legacy PH2 behavior and checkpoint compatibility.
 SHARED_PREDICTION: false
-# Cycle loss: decoder(pred_logits) -> z_hat vs stop_grad(z), MSE
+# Cycle loss (CT OFF): sg(predictions) → CycleDecoder → z_hat ≈ sg(z_GRU), MSE
+# ACTION_PREDICTION만 → sg(pred_logits)(6) → z_hat
+# Z_PREDICTION + ACTION_PREDICTION → sg(z_partner_hat, pred_logits)(134) → z_hat
 CYCLE_LOSS_ENABLED: false
 CYCLE_LOSS_COEF: 0.1
-# Latent mode: concat both h (64-dim) and action_logits (6-dim) to policy embedding
-# embedding dim: 128+64+6=198 (ON) vs 128+6=134 (OFF, default)
-LATENT_MODE: false
+# Partner Z prediction: sg(z_GRU) → ZPredictor → z_partner_hat ≈ partner_gru_z, MSE
+# sg(z_partner_hat)를 policy input에 concat → dim: 128+128+6=262 (CT와 동일)
+Z_PREDICTION_ENABLED: false
+Z_PRED_LOSS_COEF: 1.0

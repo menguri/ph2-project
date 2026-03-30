@@ -16,15 +16,15 @@ model:
   GRU_HIDDEN_DIM: 64
   FC_DIM_SIZE: 64
   LR: 0.0003
-  ENT_COEF: 0.0
-  VF_COEF: 0.5
+  ENT_COEF: 0.01             # 원본 HSP default 0.01
+  VF_COEF: 0.1               # MEP와 동일
   GAE_LAMBDA: 0.95
   NUM_ENVS: 64
   NUM_STEPS: 128
-  UPDATE_EPOCHS: 4
-  NUM_MINIBATCHES: 4
+  UPDATE_EPOCHS: 15           # 원본 HSP ppo_epoch=15
+  NUM_MINIBATCHES: 1          # 원본 HSP num_mini_batch=1
   CLIP_EPS: 0.2
-  MAX_GRAD_NORM: 0.5
+  MAX_GRAD_NORM: 0.1          # MEP와 동일
   TOTAL_TIMESTEPS: 1e7
   REW_SHAPING_HORIZON: 0    # utility weight만 사용, shaping annealing 없음
   ANNEAL_LR: True

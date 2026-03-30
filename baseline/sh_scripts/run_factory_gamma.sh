@@ -21,7 +21,7 @@ run_gamma() {
       --layout "${layout}" \
       --gpus "${gpus}" \
       --seeds 1 \
-      --extra "+GAMMA_S2_METHOD=${method}"
+      --extra "++GAMMA_S2_METHOD=${method}"
 }
 
 # 개별 S1/S2도 여전히 지원 (레거시)

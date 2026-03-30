@@ -70,6 +70,8 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${ACTION_PREDICTION:=}"
 : "${CYCLE_LOSS_ENABLED:=}"
 : "${CYCLE_LOSS_COEF:=}"
+: "${Z_PREDICTION_ENABLED:=}"
+: "${Z_PRED_LOSS_COEF:=}"
 : "${LATENT_MODE:=}"
 : "${SHARED_PREDICTION:=}"
 : "${SAVE_EVAL_CHECKPOINTS:=}"
@@ -268,6 +270,8 @@ while [[ $# -gt 0 ]]; do
     --action-prediction) ACTION_PREDICTION="$2"; shift 2;;
     --cycle-loss-enabled) CYCLE_LOSS_ENABLED="$2"; shift 2;;
     --cycle-loss-coef) CYCLE_LOSS_COEF="$2"; shift 2;;
+    --z-prediction-enabled) Z_PREDICTION_ENABLED="$2"; shift 2;;
+    --z-pred-loss-coef) Z_PRED_LOSS_COEF="$2"; shift 2;;
     --latent-mode) LATENT_MODE="$2"; shift 2;;
     --shared-prediction) SHARED_PREDICTION="$2"; shift 2;;
     --save-eval-checkpoints) SAVE_EVAL_CHECKPOINTS="$2"; shift 2;;
@@ -615,6 +619,12 @@ if [[ -n "$CYCLE_LOSS_ENABLED" ]]; then
 fi
 if [[ -n "$CYCLE_LOSS_COEF" ]]; then
   PY_ARGS+=("CYCLE_LOSS_COEF=$CYCLE_LOSS_COEF")
+fi
+if [[ -n "$Z_PREDICTION_ENABLED" ]]; then
+  PY_ARGS+=("Z_PREDICTION_ENABLED=$Z_PREDICTION_ENABLED")
+fi
+if [[ -n "$Z_PRED_LOSS_COEF" ]]; then
+  PY_ARGS+=("Z_PRED_LOSS_COEF=$Z_PRED_LOSS_COEF")
 fi
 if [[ -n "$LATENT_MODE" ]]; then
   PY_ARGS+=("LATENT_MODE=$LATENT_MODE")

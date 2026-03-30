@@ -91,6 +91,8 @@ def single_run_with_viz(config):
         print("[RUNDBG] <<< wandb.init 성공 / context 진입")
         run_id = run.id
         print(f"[RUNDBG] wandb run_id = {run_id}")
+        # wandb name에 run_id 포함 (UI에서 구분 용이)
+        run.name = f"{run_name}_{run_id}"
 
         run_base_dir = Path(get_run_base_dir(run_id, config)).resolve()
         print(f"[RUNDBG] run_base_dir = {run_base_dir}")
@@ -681,7 +683,7 @@ def single_run_with_viz(config):
         do_eval = True
 
     if do_eval:
-        cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 500)
+        cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 100)
         print(f"[EVAL] cross-play 평가 (num_seeds={cross_seeds}, no_viz=True)")
         print(f"[EVAL] → reward_summary_cross.csv 저장 위치: {run_base_dir}")
         visualize_ppo_policy(

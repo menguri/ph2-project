@@ -300,7 +300,7 @@ def make_train_mep_s2(config):
                 running_returns[partner_idx],
             )
             new_ret = running_returns.at[partner_idx].set(
-                0.9 * running_returns[partner_idx] + 0.1 * ep_return
+                0.95 * running_returns[partner_idx] + 0.05 * ep_return
             )
 
             # ---- GAE + PPO UPDATE ----------------------------------------

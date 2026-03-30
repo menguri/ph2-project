@@ -130,7 +130,7 @@ class ToyCoop(MultiAgentEnv):
     ) -> Tuple[Dict[str, chex.Array], State, Dict[str, float], Dict[str, bool], Dict]:
         """Perform single timestep state transition."""
         acts = jnp.array([actions["agent_0"], actions["agent_1"]])
-        next_state, reward = self.step_agents(key, state, acts)
+        next_state, reward, event_vectors = self.step_agents(key, state, acts)
 
         next_state = next_state.replace(time=state.time + 1)
         done = self.is_terminal(next_state)
@@ -141,7 +141,13 @@ class ToyCoop(MultiAgentEnv):
         shaped_reward = {"agent_0": 0, "agent_1": 0}
         dones = {"agent_0": done, "agent_1": done, "__all__": done}
 
-        return obs, next_state, rewards, dones, {"shaped_reward": shaped_reward}
+        return obs, next_state, rewards, dones, {
+            "shaped_reward": shaped_reward,
+            "shaped_reward_events": {
+                "agent_0": event_vectors[0],  # (3,) [at_upper, at_lower, collision]
+                "agent_1": event_vectors[1],  # (3,)
+            },
+        }
 
     @partial(jax.jit, static_argnums=[0])
     def step_agents(
@@ -149,8 +155,13 @@ class ToyCoop(MultiAgentEnv):
         key: chex.PRNGKey,
         state: State,
         actions: chex.Array,
-    ) -> Tuple[State, float]:
-        """Update agent positions and calculate rewards."""
+    ) -> Tuple[State, float, chex.Array]:
+        """Update agent positions and calculate rewards.
+
+        Returns:
+            next_state, reward, event_vectors (2, 3)
+            event_vectors[i] = [at_upper_goal, at_lower_goal, collision]
+        """
         # Calculate next positions
         next_pos = state.agent_pos + self.action_to_dir[actions]
 
@@ -214,7 +225,27 @@ class ToyCoop(MultiAgentEnv):
             pink_reward + green_reward,
         )
 
-        return state.replace(agent_pos=next_pos), reward - self.step_cost
+        # --- HSP event vector: [at_upper_goal, at_lower_goal, collision] ---
+        # upper/lower를 goal_pos의 y좌표로 결정 (y 작을수록 upper)
+        # random_reset 환경에서도 spatial position 기반으로 호환
+        goal_y = state.goal_pos[:, 1]  # (2,) green goal의 y좌표
+        upper_idx = jnp.argmin(goal_y)
+        upper_goal = state.goal_pos[upper_idx]
+        lower_goal = state.goal_pos[1 - upper_idx]
+
+        def _agent_events(pos):
+            at_upper = jnp.all(pos == upper_goal)
+            at_lower = jnp.all(pos == lower_goal)
+            return jnp.array([
+                at_upper.astype(jnp.float32),
+                at_lower.astype(jnp.float32),
+                would_collide.astype(jnp.float32),
+            ])
+
+        event_vectors = jnp.stack([_agent_events(next_pos[0]),
+                                    _agent_events(next_pos[1])])  # (2, 3)
+
+        return state.replace(agent_pos=next_pos), reward - self.step_cost, event_vectors
 
     @partial(jax.jit, static_argnums=[0])
     def get_obs(self, state: State) -> Dict[str, chex.Array]:

@@ -18,7 +18,7 @@ RUNS_BASE="${PROJECT_DIR}/runs"
 # =============================================================================
 # 공통 설정 (모든 알고리즘 공유)
 # =============================================================================
-DEFAULT_GPUS="${1:-6,7}"
+DEFAULT_GPUS="${1:-0,1}"
 : "${RANDOM_RESET:=true}"
 ENV_DEVICE="cpu"
 TOYCOOP_NENVS=512
@@ -101,35 +101,68 @@ run_gamma() {
       --exp rnn-gamma-toycoop \
       --seeds 1 \
       --tags "toycoop,gamma" \
-      --extra "+GAMMA_S2_METHOD=$method"
+      --extra "++GAMMA_S2_METHOD=$method"
 }
 
 run_hsp() {
   local gpus=${1:-$DEFAULT_GPUS}
-  echo "====== [HSP] ToyCoop  gpus=$gpus (S1→Greedy→S2 자동) ======"
+  echo "====== [HSP] ToyCoop  gpus=$gpus (S1→Greedy→S2 자동, EVENT_DIM=3) ======"
   ./run_user_wandb.sh $(_common_args "$gpus") \
-      --exp rnn-hsp-toycoop \
+      --exp rnn-hsp-dualdest \
       --seeds 1 \
-      --tags "toycoop,hsp"
+      --tags "toycoop,hsp,event3"
 }
 
 # =============================================================================
-# 실행 — 원하는 줄만 주석 해제
+# 실행 — SP → FCP population 복사 → E3T → MEP → HSP → GAMMA 순차
 # =============================================================================
 echo "============================================="
-echo "  ToyCoop Baseline Pipeline"
+echo "  ToyCoop Baseline Pipeline (전체 순차)"
 echo "  GPUs: $DEFAULT_GPUS"
 echo "  random_reset: $RANDOM_RESET"
 echo "============================================="
 
-# run_sp   "$DEFAULT_GPUS" 10
-# run_e3t  "$DEFAULT_GPUS" 10 0.2
-run_fcp  "$DEFAULT_GPUS" 10
-# run_mep  "$DEFAULT_GPUS"
-# run_gamma "$DEFAULT_GPUS" "rl"
-# run_gamma "$DEFAULT_GPUS" "vae"
-# run_hsp  "$DEFAULT_GPUS"
+# # --- (1) SP: 10 seeds (FCP population 용) ---
+# run_sp "$DEFAULT_GPUS" 10
+
+# # --- (2) SP → FCP population 복사 ---
+# SP_RUN_NAME=$(ls -td "${RUNS_BASE}"/*ToyCoop*sp* 2>/dev/null | head -1 | xargs basename)
+# if [[ -z "$SP_RUN_NAME" ]]; then
+#   echo "[ERROR] SP run not found in ${RUNS_BASE}!" >&2
+#   exit 1
+# fi
+# echo "[INFO] SP run: ${SP_RUN_NAME}"
+
+# cd "$PROJECT_DIR" || exit 1
+# bash sh_scripts/copy_fcp.sh "${SP_RUN_NAME}"
+
+# # fcp_populations/{SP_RUN_NAME} → fcp_populations/toy_coop_sp 으로 이름 변경
+# FCP_SRC="fcp_populations/${SP_RUN_NAME}"
+# FCP_DST="fcp_populations/toy_coop_sp"
+# if [[ -d "$FCP_DST" ]]; then
+#   echo "[WARN] ${FCP_DST} already exists, removing..."
+#   rm -rf "$FCP_DST"
+# fi
+# mv "$FCP_SRC" "$FCP_DST"
+# echo "[INFO] FCP population ready: ${FCP_DST}"
+# cd "$SCRIPT_DIR" || exit 1
+
+# # --- (3) FCP ---
+# run_fcp "$DEFAULT_GPUS" 10
+
+# # --- (4) E3T ---
+# run_e3t "$DEFAULT_GPUS" 10 0.2
+
+# # --- (5) MEP (S1 → S2 통합) ---
+# run_mep "$DEFAULT_GPUS"
+
+# --- (7) GAMMA (S1 → S2 VAE) ---
+run_gamma "$DEFAULT_GPUS" "vae"
+
+# --- (6) HSP (S1 → Greedy Selection → S2 통합, EVENT_DIM=3) ---
+run_hsp "$DEFAULT_GPUS"
 
 echo "============================================="
 echo "  ToyCoop Baseline Pipeline 완료"
+echo "  PH2는 ph2/sh_scripts/run_toycoop_ph2.sh 에서 실행"
 echo "============================================="
