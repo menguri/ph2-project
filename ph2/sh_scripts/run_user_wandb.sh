@@ -72,6 +72,8 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${CYCLE_LOSS_COEF:=}"
 : "${Z_PREDICTION_ENABLED:=}"
 : "${Z_PRED_LOSS_COEF:=}"
+: "${PH1_PAIR_MODE:=}"
+: "${PH1_RAW_DISTANCE:=}"
 : "${LATENT_MODE:=}"
 : "${SHARED_PREDICTION:=}"
 : "${SAVE_EVAL_CHECKPOINTS:=}"
@@ -276,6 +278,8 @@ while [[ $# -gt 0 ]]; do
     --action-prediction) ACTION_PREDICTION="$2"; shift 2;;
     --cycle-loss-enabled) CYCLE_LOSS_ENABLED="$2"; shift 2;;
     --cycle-loss-coef) CYCLE_LOSS_COEF="$2"; shift 2;;
+    --pair-mode) PH1_PAIR_MODE="$2"; shift 2;;
+    --ph1-raw-distance) PH1_RAW_DISTANCE="$2"; shift 2;;
     --z-prediction-enabled) Z_PREDICTION_ENABLED="$2"; shift 2;;
     --z-pred-loss-coef) Z_PRED_LOSS_COEF="$2"; shift 2;;
     --latent-mode) LATENT_MODE="$2"; shift 2;;
@@ -631,6 +635,12 @@ if [[ -n "$Z_PREDICTION_ENABLED" ]]; then
 fi
 if [[ -n "$Z_PRED_LOSS_COEF" ]]; then
   PY_ARGS+=("Z_PRED_LOSS_COEF=$Z_PRED_LOSS_COEF")
+fi
+if [[ -n "$PH1_PAIR_MODE" ]]; then
+  PY_ARGS+=("PH1_PAIR_MODE=$PH1_PAIR_MODE")
+fi
+if [[ -n "$PH1_RAW_DISTANCE" ]]; then
+  PY_ARGS+=("PH1_RAW_DISTANCE=$PH1_RAW_DISTANCE")
 fi
 if [[ -n "$LATENT_MODE" ]]; then
   PY_ARGS+=("LATENT_MODE=$LATENT_MODE")

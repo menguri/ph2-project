@@ -55,6 +55,8 @@ CYCLE_LOSS_ENABLED: false
 CYCLE_LOSS_COEF: 0.1
 Z_PREDICTION_ENABLED: false
 Z_PRED_LOSS_COEF: 1.0
+PH1_PAIR_MODE: false   # --pair-mode로 활성화
+PH1_RAW_DISTANCE: false  # true: raw L2, false: MLP latent distance
 
 model:
   OBS_ENCODER: "MLP"

@@ -14,7 +14,7 @@ cd "$(dirname "$0")" || exit 1
 # =============================================================================
 # 공통 설정
 # =============================================================================
-DEFAULT_GPUS="${1:-6,7}"
+DEFAULT_GPUS="${1:-0,3}"
 : "${RANDOM_RESET:=true}"
 ENV_DEVICE="cpu"
 NENVS=512
@@ -39,7 +39,7 @@ RANDOM_RESET_ARGS=""
 : "${PH1_MULTI_PENALTY_SINGLE_WEIGHT:=1.0}"
 : "${PH1_MULTI_PENALTY_OTHER_WEIGHT:=1.0}"
 : "${PH1_EPSILON:=0.2}"
-: "${PH1_WARMUP_STEPS:=1000000}"
+: "${PH1_WARMUP_STEPS:=10000000}"
 
 : "${PH2_EPSILON:=0.2}"
 : "${PH2_FIXED_IND_PROB:=0.5}"   # ind 매칭 확률 (0.5 = spec-spec 50%, spec-ind/ind-ind 50%)
@@ -47,8 +47,6 @@ RANDOM_RESET_ARGS=""
 # 보조 모듈 (실제 사용되는 것만)
 : "${ACTION_PREDICTION:=True}"
 : "${SAVE_EVAL_CHECKPOINTS:=False}"
-: "${PH1_PAIR_MODE:=True}"
-: "${PH1_RAW_DISTANCE:=False}"
 
 # CT 모드
 : "${USE_CT:=0}"
@@ -99,8 +97,6 @@ run_ph2() {
       --ph2-epsilon "$PH2_EPSILON" \
       --action-prediction "$ACTION_PREDICTION" \
       --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
-      --pair-mode "${PH1_PAIR_MODE}" \
-      --ph1-raw-distance "${PH1_RAW_DISTANCE}" \
       --tags "toycoop,ph2,k${max_k},${ct_tag}" \
       $RANDOM_RESET_ARGS \
       $ct_args
@@ -118,9 +114,9 @@ echo "  random_reset: $RANDOM_RESET"
 echo "============================================="
 
 # omega × sigma × k sweep (action prediction 모드, CT OFF)
-for omega in 1 2 3 4 5 6 7 8 9 10; do
-  for sigma in 5.0 4.0 3.0 2.0 1.0 0.0; do
-    for k in 1 2; do
+for omega in 1 2 3 4 5; do
+  for sigma in 5.0 3.0 2.0 1.0; do
+    for k in 3 4; do
       run_ph2 "$DEFAULT_GPUS" "$omega" "$sigma" "$k"
     done
   done

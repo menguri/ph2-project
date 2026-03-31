@@ -5,19 +5,33 @@ Webapp trajectory pickle → BC 학습용 numpy 변환 (포지션별 분리).
 사용법:
     python code/extract.py --traj-dir ../webapp/data/trajectories --out-dir data/bc
 
+    # obs_adapter 버그 수정 후 obs 재계산:
+    python code/extract.py --traj-dir ../webapp/data/trajectories --out-dir data/bc --recompute-obs
+
 출력:
     data/bc/{layout}/pos_{i}/
-        obs.npy       # (N, H, W, C) uint8
+        obs.npy       # (N, H, W, C) int32
         actions.npy   # (N,) int32
         metadata.json # 에피소드 정보
 """
 import argparse
 import json
 import pickle
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+
+
+# webapp layout 이름 → overcooked-ai layout 이름 매핑
+LAYOUT_NAME_MAP = {
+    "cramped_room": "cramped_room",
+    "asymm_advantages": "asymmetric_advantages",
+    "coord_ring": "coordination_ring",
+    "forced_coord": "forced_coordination",
+    "counter_circuit": "counter_circuit",
+}
 
 
 def load_all_trajectories(traj_dir: str):
@@ -31,14 +45,34 @@ def load_all_trajectories(traj_dir: str):
     return episodes
 
 
-def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None):
+def _setup_recompute():
+    """obs 재계산에 필요한 모듈 임포트 및 초기화."""
+    # webapp/app/game/obs_adapter.py를 import하기 위해 path 추가
+    webapp_root = Path(__file__).resolve().parent.parent.parent / "webapp"
+    sys.path.insert(0, str(webapp_root))
+
+    from app.game.obs_adapter import overcooked_state_to_jaxmarl_obs
+    from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, OvercookedState
+
+    return overcooked_state_to_jaxmarl_obs, OvercookedGridworld, OvercookedState
+
+
+def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None,
+                       recompute_obs: bool = False):
     """trajectory pickle → 레이아웃/포지션별 numpy arrays."""
     episodes = load_all_trajectories(traj_dir)
     print(f"총 {len(episodes)}개 에피소드 로드")
 
+    # recompute 모드 설정
+    if recompute_obs:
+        overcooked_state_to_jaxmarl_obs, OvercookedGridworld, OvercookedState = _setup_recompute()
+        mdp_cache = {}  # layout별 mdp 캐싱
+        print("  [recompute-obs] state dict에서 obs를 재계산합니다.")
+
     # 레이아웃 + 포지션별 그룹핑
     # key: (layout, human_player_index)
     grouped = defaultdict(lambda: {"obs": [], "actions": [], "metadata": []})
+    skipped_no_state = 0
 
     for ep in episodes:
         layout = ep.get("layout", "unknown")
@@ -48,13 +82,43 @@ def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None):
         pos = ep.get("human_player_index", 0)
         key = (layout, pos)
 
+        # recompute 모드: layout별 mdp 준비
+        if recompute_obs:
+            if layout not in mdp_cache:
+                overcooked_layout = LAYOUT_NAME_MAP.get(layout, layout)
+                try:
+                    mdp_cache[layout] = OvercookedGridworld.from_layout_name(overcooked_layout)
+                except Exception as e:
+                    print(f"  [경고] layout '{layout}' ({overcooked_layout}) mdp 생성 실패: {e}")
+                    mdp_cache[layout] = None
+            mdp = mdp_cache[layout]
+
         transitions = ep.get("transitions", [])
         for t in transitions:
-            obs = t.get("obs_human")
             action = t.get("action_human")
-            if obs is not None and action is not None:
-                grouped[key]["obs"].append(obs)
-                grouped[key]["actions"].append(action)
+            if action is None:
+                continue
+
+            if recompute_obs:
+                # state dict에서 obs 재생성
+                state_dict = t.get("state")
+                if state_dict is None or mdp is None:
+                    skipped_no_state += 1
+                    continue
+                try:
+                    state = OvercookedState.from_dict(state_dict)
+                    obs = overcooked_state_to_jaxmarl_obs(state, mdp, pos)
+                except Exception as e:
+                    skipped_no_state += 1
+                    continue
+            else:
+                # 기존 방식: pickle에 저장된 obs_human 사용
+                obs = t.get("obs_human")
+                if obs is None:
+                    continue
+
+            grouped[key]["obs"].append(obs)
+            grouped[key]["actions"].append(action)
 
         grouped[key]["metadata"].append({
             "episode_id": ep.get("episode_id"),
@@ -66,6 +130,9 @@ def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None):
             "human_player_index": pos,
         })
 
+    if recompute_obs and skipped_no_state > 0:
+        print(f"  [경고] state dict 없거나 복원 실패로 {skipped_no_state}건 스킵")
+
     if not grouped:
         print("데이터 없음")
         return
@@ -75,7 +142,7 @@ def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None):
             print(f"  {layout}/pos_{pos}: obs 없음, 스킵")
             continue
 
-        obs_array = np.stack(data["obs"]).astype(np.uint8)
+        obs_array = np.stack(data["obs"]).astype(np.int32)
         actions_array = np.array(data["actions"], dtype=np.int32)
 
         out_path = Path(out_dir) / layout / f"pos_{pos}"
@@ -90,6 +157,7 @@ def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None):
             "num_episodes": len(data["metadata"]),
             "layout": layout,
             "position": pos,
+            "recomputed_obs": recompute_obs,
             "episodes": data["metadata"],
         }
         with open(out_path / "metadata.json", "w") as f:
@@ -107,5 +175,7 @@ if __name__ == "__main__":
                         help="출력 디렉토리")
     parser.add_argument("--layout", default=None,
                         help="특정 레이아웃만 필터링")
+    parser.add_argument("--recompute-obs", action="store_true",
+                        help="state dict에서 obs를 재계산 (obs_adapter 버그 수정 후 사용)")
     args = parser.parse_args()
-    export_by_position(args.traj_dir, args.out_dir, args.layout)
+    export_by_position(args.traj_dir, args.out_dir, args.layout, args.recompute_obs)

@@ -217,7 +217,12 @@ class GameSession:
         return result
 
     def _auto_cook_full_pots(self, state):
-        """JaxMARL 호환: pot에 재료 3개가 차면 interact 없이 자동 요리 시작."""
+        """JaxMARL 호환: pot에 재료 3개가 차면 interact 없이 자동 요리 시작.
+
+        JaxMARL에서는 auto_cook + grid_update(timer-1)가 같은 스텝에서 일어남.
+        overcooked-ai에서는 step_environment_effects가 이미 실행된 후 이 함수가 호출되므로,
+        begin_cooking() 후 cook()을 한 번 호출하여 1스텝 오프셋을 보정한다.
+        """
         for pos in self.mdp.get_pot_locations():
             if state.has_object(pos):
                 obj = state.get_object(pos)
@@ -226,6 +231,7 @@ class GameSession:
                     and not obj.is_ready
                     and len(obj.ingredients) >= 3):
                     obj.begin_cooking()
+                    obj.cook()  # 1스텝 보정: JaxMARL과 타이밍 동기화
 
     def force_end(self):
         """비정상 종료 시 trajectory 저장."""

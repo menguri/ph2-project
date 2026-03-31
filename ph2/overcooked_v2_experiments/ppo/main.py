@@ -686,6 +686,8 @@ def single_run_with_viz(config):
         cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 100)
         print(f"[EVAL] cross-play 평가 (num_seeds={cross_seeds}, no_viz=True)")
         print(f"[EVAL] → reward_summary_cross.csv 저장 위치: {run_base_dir}")
+        # PH2는 ind policy로 eval (spec은 학습 보조용)
+        _policy_source = "ind" if "PH2" in alg_name else "params"
         visualize_ppo_policy(
             run_base_dir,
             key=jax.random.PRNGKey(config["SEED"]),
@@ -693,6 +695,7 @@ def single_run_with_viz(config):
             num_seeds=cross_seeds,
             cross=True,
             no_viz=True,
+            policy_source=_policy_source,
         )
 
     print("[RUNDBG] ===== single_run_with_viz 종료 =====")

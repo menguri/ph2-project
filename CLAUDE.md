@@ -211,6 +211,12 @@ CycleEncoder(sg(z_hat), sg(a_hat)) → C_prime (D=128)
 - **설문**: fluency, contribution, trust, human_likeness, obstruction, frustration, play_again (Likert 1-7) + open_text
 - **실행**: `cd webapp && JAX_PLATFORMS=cpu uvicorn app.main:app --port 8000 --loop asyncio`
 
+### ToyCoop penalty distance: raw L2 → MLP latent distance (2026-03-31)
+- **파일**: `ippo_ph2_core.py`
+- ToyCoop penalty 거리 계산을 raw pixel-space L2에서 `encode_blocked()` MLP latent distance로 변경
+- `PH1_RAW_DISTANCE` config flag 추가 (기본값 `false` → MLP latent, `true` → 기존 raw L2)
+- 기존 forward pass에서 이미 `blocked_emb_slots`를 계산하고 있었으나 ToyCoop에서만 무시하고 있었음 → 해당 분기 조건을 `env_name == "ToyCoop"` → `ph1_raw_distance`로 변경
+
 ### 현재 작업 중
 - (없음)
 

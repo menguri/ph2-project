@@ -68,4 +68,7 @@ CYCLE_LOSS_COEF: 0.1
 # sg(z_partner_hat)를 policy input에 concat → dim: 128+128+6=262 (CT와 동일)
 Z_PREDICTION_ENABLED: false
 Z_PRED_LOSS_COEF: 1.0
+# Pair mode: penalty state를 (원본 + Ch0↔Ch1 swap) 쌍으로 만들어 agent 순서 무관하게 penalty 적용
+# ToyCoop 전용 — OV1/OV2에서는 false
+PH1_PAIR_MODE: false
 SAVE_EVAL_CHECKPOINTS: True

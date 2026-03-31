@@ -1,25 +1,30 @@
 """
-Phase 3: Observation Adapter — overcooked-ai state → JaxMARL obs (H, W, C).
+Observation Adapter — overcooked-ai state → JaxMARL obs (H, W, C).
 
-⚠️ 위험지점 #1: 채널 매핑이 정확해야 모델이 올바르게 동작.
-JaxMARL의 get_obs_default() (overcooked.py:587-731)을 numpy로 재구현.
+JaxMARL의 get_obs_default() (overcooked.py:592-736)을 numpy로 재구현.
+모든 인코딩은 JaxMARL의 비트 연산 결과와 100% 동일해야 한다.
 
 채널 구조 (cramped_room, 1 ingredient, 30 channels):
   [0]     self agent position (binary grid)
-  [1-4]   self agent direction (one-hot: E, S, W, N)
+  [1-4]   self agent direction (one-hot: UP=0, DOWN=1, RIGHT=2, LEFT=3)
   [5-6]   self agent inventory (plate bit, cooked bit)
-  [7]     self agent inventory ingredient 0
+  [7]     self agent inventory ingredient 0 (개수: 0~3)
   [8]     other agent position
-  [9-12]  other agent direction
+  [9-12]  other agent direction (same order)
   [13-14] other agent inventory (plate, cooked)
-  [15]    other agent inventory ingredient 0
+  [15]    other agent inventory ingredient 0 (개수: 0~3)
   [16-21] static objects (wall, goal, pot, recipe_ind, button_recipe, plate_pile)
   [22]    ingredient pile 0 (onion pile)
   [23-24] ingredients on grid (plate bit, cooked bit)
-  [25]    ingredients on grid ingredient 0
-  [26-27] recipe indicators (plate bit, cooked bit)
-  [28]    recipe indicators ingredient 0
-  [29]    pot timer
+  [25]    ingredients on grid ingredient 0 (개수: 0~3)
+  [26-28] recipe indicators (plate, cooked, ingredient 0)
+  [29]    pot timer (JaxMARL: 카운트다운, POT_COOK_TIME에서 0으로)
+
+JaxMARL DynamicObject 비트 인코딩:
+  bit 0: PLATE (1)
+  bit 1: COOKED (2)
+  bits 2-3: ingredient 0 개수 (0~3)
+  bits 4-5: ingredient 1 개수 (0~3)  (num_ingredients > 1일 때)
 """
 import numpy as np
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, OvercookedState
@@ -36,14 +41,65 @@ TERRAIN_TO_STATIC = {
     " ": 0,   # EMPTY
 }
 
-# Direction index mapping (overcooked-ai orientation to JaxMARL direction index)
-# overcooked-ai: (0,-1)=NORTH, (0,1)=SOUTH, (-1,0)=WEST, (1,0)=EAST
+# JaxMARL Direction enum: UP=0, DOWN=1, RIGHT=2, LEFT=3
+# overcooked-ai orientation: (0,-1)=NORTH/UP, (0,1)=SOUTH/DOWN, (1,0)=EAST/RIGHT, (-1,0)=WEST/LEFT
 ORIENTATION_TO_DIR_IDX = {
-    (1, 0): 0,    # EAST  → right
-    (0, 1): 1,    # SOUTH → down
-    (-1, 0): 2,   # WEST  → left
-    (0, -1): 3,   # NORTH → up
+    (0, -1): 0,   # NORTH → UP=0
+    (0, 1): 1,    # SOUTH → DOWN=1
+    (1, 0): 2,    # EAST  → RIGHT=2
+    (-1, 0): 3,   # WEST  → LEFT=3
 }
+
+# JaxMARL POT_COOK_TIME (settings.py)
+POT_COOK_TIME = 20
+
+
+def _encode_dynamic_object(obj, is_cooking=False, is_ready=False, num_ingredients=1):
+    """
+    overcooked-ai 오브젝트 → JaxMARL bitpacked 정수값.
+
+    JaxMARL DynamicObject 인코딩:
+      PLATE = 1 << 0 = 1
+      COOKED = 1 << 1 = 2
+      ingredient(idx) = (1 << 2) << (2 * idx)
+        ingredient(0) = 4, ingredient(1) = 16, ...
+      재료 개수 누적: 양파 3개 = 4*3 = 12 → bits 2-3 = 3
+    """
+    val = 0
+    if obj.name == "dish":
+        val = 1  # PLATE
+    elif obj.name == "onion":
+        val = 1 << 2  # ingredient(0) = 4
+    elif obj.name == "tomato" and num_ingredients > 1:
+        val = 1 << 4  # ingredient(1) = 16
+    elif obj.name == "soup":
+        # 팟 안의 수프 상태에 따라 비트 설정
+        # JaxMARL: 요리 완성(COOKED 비트) = is_ready 또는 is_cooking 완료
+        if is_ready:
+            val |= 1 | 2  # PLATE | COOKED
+        elif is_cooking:
+            val |= 2  # COOKED만 (요리 진행 중)
+        # else: 부분 수프 (재료만 넣음, 아직 요리 시작 안 함) → plate=0, cooked=0
+
+        # 재료 개수 누적 (각 재료당 4씩 더함)
+        for ing in obj.ingredients:
+            if ing == "onion":
+                val += (1 << 2)  # 4 per onion
+            elif ing == "tomato" and num_ingredients > 1:
+                val += (1 << 4)  # 16 per tomato
+    return val
+
+
+def _bitpacked_to_channels(val, num_ingredients=1):
+    """
+    JaxMARL _ingridient_layers() 재현.
+    bitpacked 정수 → [plate, cooked, ing0_count, ing1_count, ...] 리스트.
+
+    shift = [0, 1, 2, 4, ...]  →  mask = [0x1, 0x1, 0x3, 0x3, ...]
+    """
+    shifts = [0, 1] + [2 * (i + 1) for i in range(num_ingredients)]
+    masks = [0x1, 0x1] + [0x3] * num_ingredients
+    return [(int(val) >> s) & m for s, m in zip(shifts, masks)]
 
 
 def overcooked_state_to_jaxmarl_obs(
@@ -62,7 +118,7 @@ def overcooked_state_to_jaxmarl_obs(
         num_ingredients: number of ingredient types (default 1 for onion-only layouts)
 
     Returns:
-        obs: np.ndarray shape (H, W, C) dtype uint8
+        obs: np.ndarray shape (H, W, C) dtype int32 (JaxMARL과 동일)
     """
     terrain = mdp.terrain_mtx
     height = len(terrain)
@@ -70,7 +126,7 @@ def overcooked_state_to_jaxmarl_obs(
 
     # 채널 수 계산: 18 + 4*(num_ingredients + 2)
     num_channels = 18 + 4 * (num_ingredients + 2)
-    obs = np.zeros((height, width, num_channels), dtype=np.uint8)
+    obs = np.zeros((height, width, num_channels), dtype=np.int32)
 
     other_idx = 1 - agent_idx
     players = state.players
@@ -84,28 +140,18 @@ def overcooked_state_to_jaxmarl_obs(
         y, x = player.position[1], player.position[0]
         # position
         obs[y, x, start_ch] = 1
-        # direction (one-hot)
+        # direction (one-hot, JaxMARL 순서: UP=0, DOWN=1, RIGHT=2, LEFT=3)
         dir_idx = ORIENTATION_TO_DIR_IDX.get(player.orientation, 0)
         obs[y, x, start_ch + 1 + dir_idx] = 1
-        # inventory
-        inv_ch = start_ch + 5  # plate bit, cooked bit, then ingredients
+        # inventory (bitpacked → channel decomposition)
+        inv_ch = start_ch + 5
         held = player.held_object
         if held is not None:
-            if held.name == "dish":
-                obs[y, x, inv_ch] = 1  # plate bit
-            elif held.name == "soup":
-                obs[y, x, inv_ch] = 1      # plate bit
-                obs[y, x, inv_ch + 1] = 1  # cooked bit
-                # ingredients in soup
-                for ing in held.ingredients:
-                    if ing == "onion":
-                        obs[y, x, inv_ch + 2] = 1
-                    elif ing == "tomato" and num_ingredients > 1:
-                        obs[y, x, inv_ch + 3] = 1
-            elif held.name == "onion":
-                obs[y, x, inv_ch + 2] = 1
-            elif held.name == "tomato" and num_ingredients > 1:
-                obs[y, x, inv_ch + 3] = 1
+            inv_val = _encode_dynamic_object(held, is_cooking=False, is_ready=False,
+                                              num_ingredients=num_ingredients)
+            channels = _bitpacked_to_channels(inv_val, num_ingredients)
+            for i, v in enumerate(channels):
+                obs[y, x, inv_ch + i] = v
 
     ch = 0
     # Self agent: channels 0 ~ (6 + num_ingredients)
@@ -118,7 +164,7 @@ def overcooked_state_to_jaxmarl_obs(
     ch += agent_ch_size
 
     # === Static object layers (6 channels) ===
-    static_encoding = [1, 4, 5, 6, 7, 9]  # WALL, GOAL, POT, RECIPE_IND, BUTTON_RECIPE, PLATE_PILE
+    # JaxMARL 순서: WALL, GOAL, POT, RECIPE_INDICATOR, BUTTON_RECIPE_INDICATOR, PLATE_PILE
     for r in range(height):
         for c in range(width):
             terrain_char = terrain[r][c]
@@ -144,41 +190,43 @@ def overcooked_state_to_jaxmarl_obs(
     ch += num_ingredients
 
     # === Ingredients on grid (2 + num_ingredients channels) ===
-    # Dynamic objects on the grid (not held by players, not in pots)
+    # JaxMARL: state.grid[:,:,1]의 bitpacked 값을 _ingridient_layers()로 디코딩
     for obj_pos, obj in state.objects.items():
         y, x = obj_pos[1], obj_pos[0]
-        if obj.name == "dish":
-            obs[y, x, ch] = 1
-        elif obj.name == "onion":
-            obs[y, x, ch + 2] = 1
-        elif obj.name == "tomato" and num_ingredients > 1:
-            obs[y, x, ch + 3] = 1
-        elif obj.name == "soup":
-            obs[y, x, ch] = 1      # plate
-            obs[y, x, ch + 1] = 1  # cooked
-            for ing in obj.ingredients:
-                if ing == "onion":
-                    obs[y, x, ch + 2] = 1
-                elif ing == "tomato" and num_ingredients > 1:
-                    obs[y, x, ch + 3] = 1
+        is_cooking = getattr(obj, "is_cooking", False)
+        is_ready = getattr(obj, "is_ready", False)
+        obj_val = _encode_dynamic_object(obj, is_cooking, is_ready, num_ingredients)
+        channels = _bitpacked_to_channels(obj_val, num_ingredients)
+        for i, v in enumerate(channels):
+            obs[y, x, ch + i] = v
     ch += 2 + num_ingredients
 
     # === Recipe indicators (2 + num_ingredients channels) ===
-    # JaxMARL에서는 recipe indicator가 있는 셀에 레시피 정보를 인코딩
-    # overcooked-ai에서는 항상 onion soup이 기본 레시피 (all_orders)
-    # 여기서는 간단히 모든 pot 위치에 레시피 = onion으로 인코딩
+    # 표준 레이아웃(cramped_room 등)에는 RECIPE_INDICATOR 셀이 없음 → 0으로 둠
+    # v2 레이아웃(cramped_room_v2 등)에는 "R" 셀이 있을 수 있으나 현재 webapp에서 미사용
     ch += 2 + num_ingredients
 
     # === Extra layers ===
-    # Pot timer layer
+    # Pot timer layer — JaxMARL: 카운트다운 (POT_COOK_TIME에서 시작, 매 스텝 -1, 0이면 완성)
+    # overcooked-ai: cooking_tick은 카운트업 (0에서 시작, 매 스텝 +1)
+    # 변환: jaxmarl_timer = cook_time - cooking_tick
     for obj_pos, obj in state.objects.items():
         if hasattr(obj, "name") and obj.name == "soup":
             y, x = obj_pos[1], obj_pos[0]
-            # pot에 있는 soup의 cooking tick
-            if hasattr(obj, "cooking_tick"):
-                obs[y, x, ch] = min(obj.cooking_tick, 255)
-            elif hasattr(obj, "_cooking_tick"):
-                obs[y, x, ch] = min(obj._cooking_tick, 255)
+            # 팟 위치인지 확인
+            if terrain[y][x] == "P":
+                is_cooking = getattr(obj, "is_cooking", False)
+                is_ready = getattr(obj, "is_ready", False)
+                if is_cooking and not is_ready:
+                    # overcooked-ai: _cooking_tick은 1부터 시작, 매 스텝 +1
+                    cooking_tick = getattr(obj, "_cooking_tick", 0) or 0
+                    try:
+                        cook_time = obj.cook_time
+                    except (ValueError, AttributeError):
+                        cook_time = POT_COOK_TIME
+                    # JaxMARL 카운트다운: cook_time - cooking_tick
+                    obs[y, x, ch] = max(0, cook_time - cooking_tick)
+                # is_ready → timer = 0 (기본값), 부분 수프(아직 요리 안 시작) → timer = 0
 
     return obs
 

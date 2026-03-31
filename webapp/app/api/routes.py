@@ -43,6 +43,15 @@ def init_routes(config: dict):
     if not model_path.is_absolute():
         model_path = Path(__file__).resolve().parent.parent.parent / model_dir
     _models_by_layout = scan_models_dir(str(model_path.resolve()))
+    # 특정 알고리즘만 필터링 (테스트용, None이면 전체)
+    _algo_filter = config.get("agent", {}).get("algo_filter", None)
+    if _algo_filter:
+        _models_by_layout = {
+            layout: [m for m in models if m["algo_name"] in _algo_filter]
+            for layout, models in _models_by_layout.items()
+        }
+        _models_by_layout = {k: v for k, v in _models_by_layout.items() if v}
+        print(f"[init] Algo filter: {_algo_filter}")
     total = sum(len(v) for v in _models_by_layout.values())
     print(f"[init] Found {total} model checkpoints in {model_path}")
     for layout, models in _models_by_layout.items():

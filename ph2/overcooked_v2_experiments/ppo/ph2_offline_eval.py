@@ -579,7 +579,7 @@ def main():
             config.get("PH2_SPEC_USE_BLOCKED_INPUT", True)
         )
         config_ind["LEARNER_USE_BLOCKED_INPUT"] = bool(
-            config.get("PH2_IND_USE_BLOCKED_INPUT", True)
+            config.get("PH2_IND_USE_BLOCKED_INPUT", False)
         )
 
         policy_spec = PPOPolicy(params=params_spec, config=config_spec, stochastic=False)

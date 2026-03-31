@@ -18,7 +18,7 @@ RUNS_BASE="${PROJECT_DIR}/runs"
 # =============================================================================
 # 공통 설정 (모든 알고리즘 공유)
 # =============================================================================
-DEFAULT_GPUS="${1:-0,1}"
+DEFAULT_GPUS="${1:-4,5}"
 : "${RANDOM_RESET:=true}"
 ENV_DEVICE="cpu"
 TOYCOOP_NENVS=512
@@ -153,8 +153,8 @@ echo "============================================="
 # # --- (4) E3T ---
 # run_e3t "$DEFAULT_GPUS" 10 0.2
 
-# # --- (5) MEP (S1 → S2 통합) ---
-# run_mep "$DEFAULT_GPUS"
+# --- (5) MEP (S1 → S2 통합) ---
+run_mep "$DEFAULT_GPUS"
 
 # --- (7) GAMMA (S1 → S2 VAE) ---
 run_gamma "$DEFAULT_GPUS" "vae"

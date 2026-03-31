@@ -58,7 +58,11 @@ def _ph_param_suffix(config) -> str:
     ct_on = _as_bool(config.get("TRANSFORMER_ACTION", False))
     ct_str = "_ct1" if ct_on else "_ct0"
 
-    return f"_e{eps}_o{omega}_s{sigma}{k_str}{ct_str}"
+    # Pair mode
+    pair_on = _as_bool(config.get("PH1_PAIR_MODE", False))
+    pair_str = "_pair" if pair_on else ""
+
+    return f"_e{eps}_o{omega}_s{sigma}{k_str}{ct_str}{pair_str}"
 
 
 def _infer_run_suffix(config) -> str:

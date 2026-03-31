@@ -102,9 +102,14 @@ def make_train(
     )
     ph1_pool_size = int(config.get("PH1_POOL_SIZE", 100))
     ph1_multi_penalty_enabled = bool(config.get("PH1_MULTI_PENALTY_ENABLED", False))
+    ph1_pair_mode = bool(config.get("PH1_PAIR_MODE", False))
     ph1_max_penalty_count = int(config.get("PH1_MAX_PENALTY_COUNT", 1))
     ph1_max_penalty_count = max(1, ph1_max_penalty_count)
     ph1_penalty_slots = ph1_max_penalty_count if ph1_multi_penalty_enabled else 1
+    # pair_mode: 각 penalty position이 (원본 + swap) 2개씩 → 슬롯 수 2배
+    if ph1_pair_mode:
+        ph1_penalty_slots = ph1_penalty_slots * 2
+    ph1_raw_distance = bool(config.get("PH1_RAW_DISTANCE", False))
     ph1_multi_penalty_single_weight = float(
         config.get("PH1_MULTI_PENALTY_SINGLE_WEIGHT", 2.0)
     )
@@ -466,7 +471,7 @@ def make_train(
         if use_blocked_input_learner:
             if config.get("PH1_ENABLED", False):
                 # PH1 always uses global full state as blocked target
-                if ph1_multi_penalty_enabled:
+                if ph1_multi_penalty_enabled or ph1_pair_mode:
                     init_shape = (
                         1,
                         model_config["NUM_ENVS"],
@@ -733,7 +738,6 @@ def make_train(
                                 a0 = _tc_all_pos[valid_idx[perm[0]]]
                                 a1 = _tc_all_pos[valid_idx[perm[1]]]
                                 agent_pos = jnp.stack([a0, a1])
-                                # obs 렌더링: (H, W, 4)
                                 obs_grid = jnp.zeros((5, 5, 4))
                                 obs_grid = obs_grid.at[agent_pos[0, 1], agent_pos[0, 0], 0].set(1)
                                 obs_grid = obs_grid.at[agent_pos[1, 1], agent_pos[1, 0], 1].set(1)
@@ -741,19 +745,31 @@ def make_train(
                                 obs_grid = obs_grid.at[ogp[:, 1], ogp[:, 0], 3].set(1)
                                 return obs_grid  # (5, 5, 4)
 
-                            rngs_k = jax.random.split(rng_e, ph1_penalty_slots)
-                            return jax.vmap(_gen_one)(rngs_k)  # (k, 5, 5, 4)
+                            # 원래 position 개수만큼 생성 (pair는 후처리)
+                            _base_slots = ph1_penalty_slots // 2 if ph1_pair_mode else ph1_penalty_slots
+                            rngs_k = jax.random.split(rng_e, _base_slots)
+                            base_targets = jax.vmap(_gen_one)(rngs_k)  # (_base_slots, 5, 5, 4)
+
+                            if ph1_pair_mode:
+                                # Ch0↔Ch1 swap 버전 생성 → 원본과 interleave
+                                ch0 = base_targets[:, :, :, 0]
+                                ch1 = base_targets[:, :, :, 1]
+                                swapped = base_targets.at[:, :, :, 0].set(ch1).at[:, :, :, 1].set(ch0)
+                                # interleave: [orig_0, swap_0, orig_1, swap_1, ...]
+                                paired = jnp.stack([base_targets, swapped], axis=1)  # (_base, 2, 5, 5, 4)
+                                return paired.reshape(-1, 5, 5, 4)  # (_base*2, 5, 5, 4)
+                            return base_targets  # (_base_slots, 5, 5, 4)
 
                         new_targets_multi = jax.vmap(_gen_toycoop_targets_one_env)(
                             rng_envs,
                             _tc_inner.goal_pos,
                             _tc_inner.other_goal_pos,
-                        )  # (NUM_ENVS, k, 5, 5, 4)
+                        )  # (E, k*M, 5, 5, 4) where M=2 if pair_mode else 1
 
-                        if not ph1_multi_penalty_enabled:
-                            new_targets = new_targets_multi[:, 0]  # (E, 5, 5, 4)
+                        if ph1_multi_penalty_enabled or ph1_pair_mode:
+                            new_targets = new_targets_multi  # (E, ph1_penalty_slots, 5, 5, 4)
                         else:
-                            new_targets = new_targets_multi  # (E, k, 5, 5, 4)
+                            new_targets = new_targets_multi[:, 0]  # (E, 5, 5, 4)
 
                         # warmup 기간에는 -1 (None target)
                         none_target = jnp.full_like(new_targets, -1.0)
@@ -1226,9 +1242,9 @@ def make_train(
                         [global_full_next_env0, global_full_next_env0], axis=0
                     )  # (Actors, H, W, C_full)
 
-                    if env_name == "ToyCoop":
-                        # ToyCoop: raw vector distance (binary 0/1 obs → flatten → L2)
-                        # MLP encoder 경유 없이 직접 비교 — 학습 불변, 해석 가능
+                    if ph1_raw_distance:
+                        # raw vector distance (binary 0/1 obs → flatten → L2)
+                        # PH1_RAW_DISTANCE=true 시 MLP encoder 경유 없이 직접 비교
                         z_next = global_full_next_actor.reshape(
                             global_full_next_actor.shape[0], -1
                         ).astype(jnp.float32)  # (Actors, 100)
@@ -1247,7 +1263,7 @@ def make_train(
                         # -1.0 sentinel → 0.0 (미생성 state 보호)
                         z_tilde_slots = jnp.where(z_tilde_slots == -1.0, 0.0, z_tilde_slots)
                     else:
-                        # OV1/OV2: blocked_encoder MLP latent distance (기존)
+                        # blocked_encoder MLP latent distance (기본값: 모든 환경)
                         z_next = network.apply(
                             train_state.params,
                             global_full_next_actor,
@@ -1276,6 +1292,14 @@ def make_train(
                     lat_dist_slots = jnp.sqrt(
                         jnp.sum((z_next_slots - z_tilde_slots) ** 2, axis=-1)
                     )
+                    # pair_mode: 2개씩 묶어서 min distance → agent 순서 무관 penalty
+                    if ph1_pair_mode and lat_dist_slots.shape[1] >= 2:
+                        n_pairs = lat_dist_slots.shape[1] // 2
+                        dist_pairs = lat_dist_slots[:, :n_pairs * 2].reshape(
+                            lat_dist_slots.shape[0], n_pairs, 2
+                        )
+                        lat_dist_slots = jnp.min(dist_pairs, axis=-1)  # (Actors, n_pairs)
+
                     if blocked_states_actor is not None:
                         if blocked_states_actor.ndim >= 5:
                             flat_blocks = blocked_states_actor.reshape(
@@ -1295,6 +1319,14 @@ def make_train(
                             (model_config["NUM_ACTORS"], num_slots),
                             dtype=jnp.bool_,
                         )
+                    # pair_mode: valid_slots도 2개씩 묶기 (둘 중 하나라도 valid이면 valid)
+                    if ph1_pair_mode and valid_slots.shape[1] >= 2:
+                        n_vp = valid_slots.shape[1] // 2
+                        valid_pairs = valid_slots[:, :n_vp * 2].reshape(
+                            valid_slots.shape[0], n_vp, 2
+                        )
+                        valid_slots = jnp.any(valid_pairs, axis=-1)  # (Actors, n_pairs)
+                        num_slots = n_vp
                     if valid_slots.shape[1] == 1 and num_slots > 1:
                         valid_slots = jnp.tile(valid_slots, (1, num_slots))
                     valid_slots = valid_slots[:, :num_slots]
@@ -2662,7 +2694,8 @@ def make_train(
             partner_pos = jnp.stack([partner_y, partner_x], axis=-1)
             if ph1_enabled:
                 # PH1 blocked target is always the global full state.
-                if ph1_multi_penalty_enabled:
+                # ph1_penalty_slots는 이미 pair_mode 반영됨 (×2)
+                if ph1_multi_penalty_enabled or ph1_pair_mode:
                     init_shape = (
                         model_config["NUM_ENVS"],
                         ph1_penalty_slots,

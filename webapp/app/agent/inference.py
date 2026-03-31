@@ -179,9 +179,10 @@ class ModelManager:
     def _make_forward_fn(self):
         """네트워크별 JIT forward 함수 생성."""
         network = self.network
-        # ind policy는 blocked_encoder가 없으므로 blocked_states 불필요
-        # blocked_encoder가 params에 있는 경우에만 dummy blocked_states 전달
-        has_blocked = "blocked_encoder" in self.params
+        # PH2 ind policy는 blocked_states를 사용하지 않음 (LEARNER_USE_BLOCKED_INPUT=False)
+        # params에 blocked_encoder가 있더라도, ind로 로드된 경우 blocked_states 전달 안 함
+        is_ind = (self.source == "ph2")  # PH2는 항상 ind policy 로드
+        has_blocked = ("blocked_encoder" in self.params) and (not is_ind)
 
         if has_blocked:
             ph1_k = int(self.config.get("PH1_MAX_PENALTY_COUNT", 1))
