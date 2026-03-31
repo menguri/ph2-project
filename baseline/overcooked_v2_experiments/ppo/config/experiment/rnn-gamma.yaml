@@ -18,13 +18,13 @@ GAMMA_S2_METHOD: "vae"   # VAE 기반 파트너 생성 (population+VAE 혼합)
 
 # VAE 하이퍼파라미터 (method=vae 시 사용)
 GAMMA_VAE_Z_DIM: 16
-GAMMA_VAE_HIDDEN_DIM: 64
-GAMMA_VAE_LR: 0.001
-GAMMA_VAE_EPOCHS: 100
+GAMMA_VAE_HIDDEN_DIM: 256      # 논문 Table 2: 256
+GAMMA_VAE_LR: 0.0005           # 논문 Table 2: 5e-4
+GAMMA_VAE_EPOCHS: 500          # 논문 Table 2: 500
 GAMMA_VAE_BATCH_SIZE: 64
 GAMMA_VAE_CHUNK_LENGTH: 100
-GAMMA_VAE_KL_PENALTY: 0.1
-GAMMA_VAE_KL_INIT: 0.01
+GAMMA_VAE_KL_PENALTY: 1.0     # 논문 Table 2: β=1.0
+GAMMA_VAE_KL_INIT: 0.0        # 논문 Table 2: β 초기값 0.0
 GAMMA_VAE_ROLLOUT_EPISODES: 100    # population rollout 수집 에피소드 수
 GAMMA_VAE_Z_CHANGE_PROB: 0.0       # 0=에피소드 내 z 고정, >0이면 매 step 교체 확률
 

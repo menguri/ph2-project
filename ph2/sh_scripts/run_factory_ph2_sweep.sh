@@ -74,7 +74,7 @@ run_ph2_ct_v3() {
 }
 
 # =============================================================================
-# (2) grounded_coord_simple sweep: PH2 + PH2-CT v3
+# (2) grounded_coord_simple sweep: PH2
 #     penalty_count ∈ {1, 2, 3, 4}
 #     omega ∈ {3.0, 10.0}
 #     sigma ∈ {2.0, 3.0}
@@ -84,36 +84,8 @@ echo "  (2) PH2 — grounded_coord_simple sweep"
 echo "============================================================"
 for omega in 10.0 3.0; do
   for sigma in 2.0 3.0; do
-    for k in 1 2 3 4; do
+    for k in 2 3 4; do
       run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$omega" "$sigma" "$k"
-    done
-  done
-done
-
-echo "============================================================"
-echo "  (2) PH2-CT v3 — grounded_coord_simple sweep"
-echo "============================================================"
-for omega in 10.0 3.0; do
-  for sigma in 2.0 3.0; do
-    for k in 1 2 3 4; do
-      run_ph2_ct_v3 "$SWEEP_GPUS" "grounded_coord_simple" "$omega" "$sigma" "$k"
-    done
-  done
-done
-
-# =============================================================================
-# (3) forced_coord — 패널티 영향 축소 방향 sweep
-#     omega를 작게 (패널티 강도 ↓): {1.0, 3.0, 5.0}
-#     sigma를 크게 (패널티 범위 ↓): {3.0, 5.0, 10.0}
-#     penalty_count: {1, 2}
-# =============================================================================
-echo "============================================================"
-echo "  (3) PH2 — forced_coord sweep (패널티 축소 방향)"
-echo "============================================================"
-for omega in 1.0 3.0 5.0; do
-  for sigma in 3.0 5.0 10.0; do
-    for k in 1 2; do
-      run_ph2 "$SWEEP_GPUS" "forced_coord" "$omega" "$sigma" "$k"
     done
   done
 done
@@ -151,5 +123,31 @@ for omega in 10.0 3.0; do
     for k in 1 2 3 4; do
       run_ph2_zp "$SWEEP_GPUS" "grounded_coord_simple" "$omega" "$sigma" "$k"
     done
+  done
+done
+
+# echo "============================================================"
+# echo "  (2) PH2-CT v3 — grounded_coord_simple sweep"
+# echo "============================================================"
+# for omega in 10.0 3.0; do
+#   for sigma in 2.0 3.0; do
+#     for k in 1 2 3 4; do
+#       run_ph2_ct_v3 "$SWEEP_GPUS" "grounded_coord_simple" "$omega" "$sigma" "$k"
+#     done
+#   done
+# done
+
+# =============================================================================
+# (3) forced_coord — 패널티 영향 축소 방향 sweep
+#     omega를 작게 (패널티 강도 ↓): {1.0, 3.0, 5.0}
+#     sigma를 크게 (패널티 범위 ↓): {3.0, 5.0, 10.0}
+#     penalty_count: {1, 2}
+# =============================================================================
+echo "============================================================"
+echo "  (3) PH2 — forced_coord sweep (패널티 축소 방향)"
+echo "============================================================"
+for omega in 2.0 3.0 4.0; do
+  for sigma in 4.0 5.0 6.0; do
+    run_ph2 "$SWEEP_GPUS" "forced_coord" "$omega" "$sigma" "1"
   done
 done

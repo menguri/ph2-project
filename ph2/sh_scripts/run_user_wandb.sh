@@ -88,10 +88,12 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${TRANSFORMER_V3:=}"
 
 # XLA_FLAGS: 기본 CUDA data dir 설정
-: "${XLA_FLAGS:=--xla_gpu_cuda_data_dir=${CUDA_HOME:-/usr/local/cuda-12.2}}"
+: "${XLA_FLAGS:=--xla_gpu_cuda_data_dir=${CUDA_HOME:-/usr/local/cuda-12.9}}"
 
-# cuPTI 경로 (CUDA 12.2 기준)
-if [ -d "/usr/local/cuda-12.2/extras/CUPTI/lib64" ]; then
+# cuPTI 경로 (CUDA 12.9 기준)
+if [ -d "/usr/local/cuda-12.9/extras/CUPTI/lib64" ]; then
+  export LD_LIBRARY_PATH="/usr/local/cuda-12.9/lib64:/usr/local/cuda-12.9/extras/CUPTI/lib64:${LD_LIBRARY_PATH:-}"
+elif [ -d "/usr/local/cuda-12.2/extras/CUPTI/lib64" ]; then
   export LD_LIBRARY_PATH="/usr/local/cuda-12.2/lib64:/usr/local/cuda-12.2/extras/CUPTI/lib64:${LD_LIBRARY_PATH:-}"
 fi
 
@@ -155,7 +157,7 @@ fi
 : "${JAX_PLATFORMS:=}"
 
 # CUDA 경로 설정 (필요 시 사용자 지정 가능)
-: "${CUDA_HOME:=/usr/local/cuda-12.2}"
+: "${CUDA_HOME:=/usr/local/cuda-12.9}"
 
 # PTX 경고 억제 토글 및 패턴
 : "${SUPPRESS_PTX_WARN:=1}"
@@ -194,6 +196,10 @@ else
   echo "[INFO] Skipping system CUDA libs (USE_SYSTEM_CUDA_LIBS=0)."
   echo "       We'll unset LD_LIBRARY_PATH and XLA_FLAGS at Python launch to avoid lib conflicts."
 fi
+
+# JAX가 cuda_nvcc 패키지 대신 시스템 CUDA를 사용하도록 설정
+# (nvidia-cuda-nvcc-cu12 namespace 패키지의 __file__=None 버그 우회)
+export CUDA_ROOT="${CUDA_HOME}"
 
 # 공통 환경 변수 export
 export JAX_PLATFORMS
@@ -743,5 +749,5 @@ if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
   done
 fi
 
-env -u LD_LIBRARY_PATH XLA_FLAGS="${RUNTIME_XLA_FLAGS}" \
+env -u LD_LIBRARY_PATH XLA_FLAGS="${RUNTIME_XLA_FLAGS}" PATH="/usr/local/cuda-12.9/bin:${PATH}" \
   python overcooked_v2_experiments/ppo/main.py "${PY_ARGS[@]}" 2>&1 | filter_ptx

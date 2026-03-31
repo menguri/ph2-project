@@ -34,10 +34,12 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${FCP_DEVICE:=cpu}"
 
 # XLA_FLAGS: 기본 CUDA data dir 설정
-: "${XLA_FLAGS:=--xla_gpu_cuda_data_dir=${CUDA_HOME:-/usr/local/cuda-12.2}}"
+: "${XLA_FLAGS:=--xla_gpu_cuda_data_dir=${CUDA_HOME:-/usr/local/cuda-12.9}}"
 
-# cuPTI 경로 (CUDA 12.2 기준)
-if [ -d "/usr/local/cuda-12.2/extras/CUPTI/lib64" ]; then
+# cuPTI 경로 (CUDA 12.9 우선, fallback 12.2)
+if [ -d "/usr/local/cuda-12.9/extras/CUPTI/lib64" ]; then
+  export LD_LIBRARY_PATH="/usr/local/cuda-12.9/lib64:/usr/local/cuda-12.9/extras/CUPTI/lib64:${LD_LIBRARY_PATH:-}"
+elif [ -d "/usr/local/cuda-12.2/extras/CUPTI/lib64" ]; then
   export LD_LIBRARY_PATH="/usr/local/cuda-12.2/lib64:/usr/local/cuda-12.2/extras/CUPTI/lib64:${LD_LIBRARY_PATH:-}"
 fi
 
@@ -65,7 +67,7 @@ fi
 : "${JAX_PLATFORMS:=}"
 
 # CUDA 경로 설정 (필요 시 사용자 지정 가능)
-: "${CUDA_HOME:=/usr/local/cuda-12.2}"
+: "${CUDA_HOME:=/usr/local/cuda-12.9}"
 
 # PTX 경고 억제 토글 및 패턴
 : "${SUPPRESS_PTX_WARN:=1}"
@@ -108,6 +110,7 @@ fi
 # 공통 환경 변수 export
 export JAX_PLATFORMS
 export CUDA_HOME
+export CUDA_ROOT="${CUDA_HOME}"   # nvidia-cuda-nvcc-cu12 __file__=None 버그 우회
 export LD_LIBRARY_PATH
 
 # GPU 설정 확인 메시지
@@ -412,7 +415,7 @@ else
 fi
 
 # 3) 파이썬 진단 (가상환경 활성화 후)
-env -u LD_LIBRARY_PATH -u XLA_FLAGS python - <<'PY' 2>&1 | filter_ptx
+env -u LD_LIBRARY_PATH -u XLA_FLAGS PATH="/usr/local/cuda-12.9/bin:${PATH}" python - <<'PY' 2>&1 | filter_ptx
 import os
 import jax
 import sys
@@ -433,4 +436,5 @@ PY
 # 3) 실험 실행
 cd "${PROJECT_DIR}"
 env -u LD_LIBRARY_PATH -u XLA_FLAGS \
+  PATH="/usr/local/cuda-12.9/bin:${PATH}" \
   python overcooked_v2_experiments/ppo/main.py "${PY_ARGS[@]}" 2>&1 | filter_ptx

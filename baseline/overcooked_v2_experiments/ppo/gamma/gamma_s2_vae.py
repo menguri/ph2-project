@@ -45,57 +45,84 @@ class S2Transition(NamedTuple):
 # =====================================================================
 
 def _collect_population_rollouts(pop_params, config, env, network, n_episodes, rng):
-    """Population self-play rollout을 raw obs + action으로 수집."""
+    """Population self-play rollout 수집 — JAX JIT + lax.scan + vmap 버전.
+
+    Python for 루프 대신 jax.lax.scan(steps) + jax.vmap(episodes)로 전체 JIT 컴파일.
+    done 이후 스텝은 invalid_mask로 마킹하고 이후 Python 단에서 필터링.
+    """
     model_config = config["model"]
     GRU_HIDDEN_DIM = model_config["GRU_HIDDEN_DIM"]
     N = jax.tree_util.tree_leaves(pop_params)[0].shape[0]
     max_steps = 400
+    eps_per_member = max(n_episodes // N, 1)
 
-    all_obs = []     # raw observations
-    all_actions = []
+    def _rollout_single_episode(member_params, rng):
+        """단일 에피소드 롤아웃 (lax.scan, 고정 max_steps)."""
+        rng, k_reset = jax.random.split(rng)
+        obs, state = env.reset(k_reset)
+        h0 = ActorCriticRNN.initialize_carry(1, GRU_HIDDEN_DIM)
+        h1 = ActorCriticRNN.initialize_carry(1, GRU_HIDDEN_DIM)
+        done = jnp.zeros((1,), dtype=jnp.bool_)
 
+        def _step(carry, _):
+            obs, state, h0, h1, done, rng = carry
+
+            obs_0 = obs[env.agents[0]][jnp.newaxis, jnp.newaxis]  # (1,1,*obs)
+            obs_1 = obs[env.agents[1]][jnp.newaxis, jnp.newaxis]
+
+            rng, k0, k1, k_env = jax.random.split(rng, 4)
+            h0, pi_0, _, _ = network.apply(member_params, h0, (obs_0, done[jnp.newaxis]))
+            a0 = pi_0.sample(seed=k0).squeeze(0)
+            h1, pi_1, _, _ = network.apply(member_params, h1, (obs_1, done[jnp.newaxis]))
+            a1 = pi_1.sample(seed=k1).squeeze(0)
+
+            env_act = {env.agents[0]: a0.squeeze(), env.agents[1]: a1.squeeze()}
+            obs_next, state_next, _, done_dict, _ = env.step(k_env, state, env_act)
+            done_next = jnp.array([done_dict["__all__"]])
+
+            # done=True면 이미 에피소드 완료 → 이 스텝의 obs/action은 무효
+            rec_invalid = done.squeeze()
+            rec_obs_0 = obs[env.agents[0]]
+            rec_obs_1 = obs[env.agents[1]]
+            rec_a0 = a0.squeeze()
+            rec_a1 = a1.squeeze()
+
+            return (obs_next, state_next, h0, h1, done_next, rng), \
+                   (rec_obs_0, rec_obs_1, rec_a0, rec_a1, rec_invalid)
+
+        init_carry = (obs, state, h0, h1, done, rng)
+        _, (obs_0_seq, obs_1_seq, act_0_seq, act_1_seq, invalid_mask) = jax.lax.scan(
+            _step, init_carry, None, max_steps,
+        )
+        # obs_0_seq: (max_steps, *obs_shape), invalid_mask: (max_steps,)
+        return obs_0_seq, obs_1_seq, act_0_seq, act_1_seq, invalid_mask
+
+    # eps_per_member 에피소드를 vmap으로 병렬화 + JIT
+    _rollout_member = jax.jit(jax.vmap(_rollout_single_episode, in_axes=(None, 0)))
+
+    all_obs, all_actions = [], []
     for member_idx in range(N):
         member_params = jax.tree_util.tree_map(lambda x: x[member_idx], pop_params)
+        rng, member_rng = jax.random.split(rng)
+        ep_rngs = jax.random.split(member_rng, eps_per_member)
 
-        for ep in range(n_episodes // N):
-            rng, k_reset = jax.random.split(rng)
-            obs, state = env.reset(k_reset)
+        obs_0_all, obs_1_all, act_0_all, act_1_all, invalid_all = _rollout_member(
+            member_params, ep_rngs,
+        )
+        # (eps_per_member, max_steps, ...)
+        obs_0_all  = np.array(obs_0_all)
+        obs_1_all  = np.array(obs_1_all)
+        act_0_all  = np.array(act_0_all)
+        act_1_all  = np.array(act_1_all)
+        invalid_all = np.array(invalid_all)
 
-            h0 = ActorCriticRNN.initialize_carry(1, GRU_HIDDEN_DIM)
-            h1 = ActorCriticRNN.initialize_carry(1, GRU_HIDDEN_DIM)
-            done = jnp.zeros((1,), dtype=jnp.bool_)
-
-            ep_obs_0, ep_obs_1, ep_act_0, ep_act_1 = [], [], [], []
-
-            for step in range(max_steps):
-                obs_0 = obs[env.agents[0]][jnp.newaxis, jnp.newaxis]  # (1,1,...)
-                obs_1 = obs[env.agents[1]][jnp.newaxis, jnp.newaxis]
-
-                rng, k0, k1, k_env = jax.random.split(rng, 4)
-                h0, pi_0, _, _ = network.apply(member_params, h0, (obs_0, done[jnp.newaxis]))
-                a0 = pi_0.sample(seed=k0).squeeze(0)
-
-                h1, pi_1, _, _ = network.apply(member_params, h1, (obs_1, done[jnp.newaxis]))
-                a1 = pi_1.sample(seed=k1).squeeze(0)
-
-                # raw obs 저장 (VAE 자체 encoder가 처리)
-                ep_obs_0.append(np.array(obs[env.agents[0]]))
-                ep_obs_1.append(np.array(obs[env.agents[1]]))
-                ep_act_0.append(int(a0.squeeze()))
-                ep_act_1.append(int(a1.squeeze()))
-
-                env_act = {env.agents[0]: a0.squeeze(), env.agents[1]: a1.squeeze()}
-                obs, state, reward, done_dict, info = env.step(k_env, state, env_act)
-                done = jnp.array([done_dict["__all__"]])
-
-                if done_dict["__all__"]:
-                    break
-
-            if len(ep_obs_0) > 10:
-                all_obs.append(np.stack(ep_obs_0))
-                all_actions.append(np.array(ep_act_0))
-                all_obs.append(np.stack(ep_obs_1))
-                all_actions.append(np.array(ep_act_1))
+        for ep in range(eps_per_member):
+            T = int(np.sum(~invalid_all[ep]))
+            if T > 10:
+                all_obs.append(obs_0_all[ep, :T])
+                all_actions.append(act_0_all[ep, :T])
+                all_obs.append(obs_1_all[ep, :T])
+                all_actions.append(act_1_all[ep, :T])
 
     print(f"[VAE] Collected {len(all_obs)} trajectories from {N} members")
     return all_obs, all_actions
@@ -120,14 +147,14 @@ def _prepare_chunks(all_obs, all_actions, chunk_length):
 def _train_vae(config, all_obs, all_actions, obs_shape, rng):
     """VAE를 ELBO loss로 학습. raw obs를 직접 처리 (자체 obs encoder)."""
     z_dim = config.get("GAMMA_VAE_Z_DIM", 16)
-    hidden_dim = config.get("GAMMA_VAE_HIDDEN_DIM", 64)
+    hidden_dim = config.get("GAMMA_VAE_HIDDEN_DIM", 256)
     action_dim = config["model"]["ACTION_DIM"]
-    vae_lr = config.get("GAMMA_VAE_LR", 1e-3)
-    vae_epochs = config.get("GAMMA_VAE_EPOCHS", 100)
+    vae_lr = config.get("GAMMA_VAE_LR", 5e-4)
+    vae_epochs = config.get("GAMMA_VAE_EPOCHS", 500)
     batch_size = config.get("GAMMA_VAE_BATCH_SIZE", 64)
     chunk_length = config.get("GAMMA_VAE_CHUNK_LENGTH", 100)
-    kl_penalty_final = config.get("GAMMA_VAE_KL_PENALTY", 0.1)
-    kl_penalty_init = config.get("GAMMA_VAE_KL_INIT", 0.01)
+    kl_penalty_final = config.get("GAMMA_VAE_KL_PENALTY", 1.0)
+    kl_penalty_init = config.get("GAMMA_VAE_KL_INIT", 0.0)
     obs_encoder_type = config["model"].get("OBS_ENCODER", "CNN")
 
     vae = GAMMAVAE(
@@ -142,7 +169,8 @@ def _train_vae(config, all_obs, all_actions, obs_shape, rng):
     dummy_carry = jnp.zeros((batch_size, hidden_dim))
     vae_params = vae.init(init_rng, dummy_obs, dummy_act, dummy_carry, dummy_carry, init_rng)
 
-    tx = optax.adam(vae_lr)
+    weight_decay = config.get("GAMMA_VAE_WEIGHT_DECAY", 1e-4)
+    tx = optax.adamw(vae_lr, weight_decay=weight_decay)
     opt_state = tx.init(vae_params)
 
     chunks_obs, chunks_act = _prepare_chunks(all_obs, all_actions, chunk_length)

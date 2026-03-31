@@ -27,7 +27,7 @@ model:
   NUM_ENVS: 64
   NUM_STEPS: 128
   UPDATE_EPOCHS: 8            # 원본 MEP STEPS_PER_UPDATE=8
-  NUM_MINIBATCHES: 5          # 원본 MEP MINIBATCHES=5
+  NUM_MINIBATCHES: 4          # 원본 MEP MINIBATCHES=5 (NUM_ENVS=64 기준 4로 조정)
   CLIP_EPS: 0.05              # 원본 MEP CLIPPING=0.05
   MAX_GRAD_NORM: 0.1          # 원본 MEP MAX_GRAD_NORM=0.1
   TOTAL_TIMESTEPS: 1e7       # S1 timesteps (원본 GAMMA 10M)

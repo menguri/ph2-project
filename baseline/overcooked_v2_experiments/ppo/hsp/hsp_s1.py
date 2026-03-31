@@ -323,10 +323,15 @@ def make_train_hsp_s1(config):
                     )
                     return (gae, value), gae
 
+                # Reward normalization (논문 Table 9: use reward normalization=True)
+                rewards = traj.reward
+                if model_config.get("USE_REWARD_NORM", True):
+                    rewards = rewards / (rewards.std() + 1e-8)
+
                 _, advantages = jax.lax.scan(
                     _get_adv,
                     (jnp.zeros_like(last_val), last_val),
-                    (traj.done, traj.critic_value, traj.reward),
+                    (traj.done, traj.critic_value, rewards),
                     reverse=True,
                     unroll=16,
                 )
@@ -366,9 +371,17 @@ def make_train_hsp_s1(config):
                         v_cl = mb_val_old + (value - mb_val_old).clip(
                             -model_config["CLIP_EPS"], model_config["CLIP_EPS"]
                         )
-                        critic_loss = 0.5 * jnp.maximum(
-                            jnp.square(value - mb_targets),
-                            jnp.square(v_cl - mb_targets),
+                        # Huber loss (논문 Table 9: huber loss, delta=10.0)
+                        delta = model_config.get("HUBER_DELTA", 10.0)
+                        def _huber(x):
+                            return jnp.where(
+                                jnp.abs(x) <= delta,
+                                0.5 * x ** 2,
+                                delta * (jnp.abs(x) - 0.5 * delta),
+                            )
+                        critic_loss = jnp.maximum(
+                            _huber(value - mb_targets),
+                            _huber(v_cl - mb_targets),
                         ).mean()
                         entropy = pi.entropy().mean()
                         total = (

@@ -34,7 +34,7 @@ class ObsEncoder(nn.Module):
         else:
             x = nn.Conv(32, (3, 3), padding="SAME")(obs)
             x = nn.relu(x)
-            x = nn.Conv(32, (3, 3), padding="SAME")(x)
+            x = nn.Conv(64, (3, 3), padding="SAME")(x)
             x = nn.relu(x)
             x = nn.Conv(32, (3, 3), padding="SAME")(x)
             x = nn.relu(x)
@@ -151,7 +151,7 @@ class GAMMAVAE(nn.Module):
     자체 ObsEncoder 내장 — raw observation을 직접 처리.
     원본의 VAEModel 구조와 동일.
     """
-    hidden_dim: int = 64
+    hidden_dim: int = 256
     z_dim: int = 16
     action_dim: int = 6
     obs_encoder_type: str = "CNN"

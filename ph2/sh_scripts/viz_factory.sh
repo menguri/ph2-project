@@ -22,7 +22,7 @@ AUTO_BEFORE_RUN=""
 AUTO_FROM_RUN="20260303-000027_31hadyvh_grounded_coord_simple_e3t_ph2"
 AUTO_TO_RUN="20260303-192651_a0t7uvpt_grounded_coord_simple_e3t_ph2_ct1_e0p2_o20_s3"
 AUTO_GPU_IDX=2
-AUTO_BATCH_SIZE=2
+AUTO_BATCH_SIZE=4
 AUTO_PRESET_EVAL_MODE="cross-play" # cross-play | eval-analysis | eval-viz
 AUTO_MAX_STEPS=400
 AUTO_PH1_CROSS_NUM_SEEDS=3
@@ -31,10 +31,10 @@ AUTO_PH2_CROSS_NUM_SEEDS=5
 
 # Optional manual fallback commands (used only when AUTO_DISCOVER_PRESETS=false).
 PRESET_FACTORY_COMMANDS=(
-  "./run_visualize.sh --gpu 3 --dir runs/20260325-073652_7o4r2661_forced_coord_e3t_ph2_e0p2_o3_s2_k1_ct0 --cross --num_seeds 5 --no_viz"
-  "./run_visualize.sh --gpu 5 --dir runs/20260325-104721_k4nvndnn_forced_coord_e3t_ph2_e0p2_o2_s2_k1_ct0 --cross --num_seeds 5 --no_viz"
-#   "./run_visualize.sh --gpu 1 --dir runs/20260323-234414_98wk74ol_grounded_coord_simple_e3t_ph2_e0p2_o10_s2_k1_ct0 --cross --num_seeds 5 --no_viz"
-  # "./run_visualize.sh --gpu 7 --dir runs/20260313-004534_6u0sqroe_forced_coord_e3t_ph2_e0p2_o10_s2 --cross --num_seeds 5 --no_viz"
+  "./run_visualize.sh --gpu 3 --dir runs/20260324-135005_pd2vmzrq_forced_coord_e3t_ph2_e0p2_o2_s2_k1_ct0 --cross --num_seeds 5 --no_viz"
+  "./run_visualize.sh --gpu 5 --dir runs/20260324-173318_7b41jx1b_forced_coord_e3t_ph2_e0p2_o2_s3_k1_ct0 --cross --num_seeds 5 --no_viz"
+  "./run_visualize.sh --gpu 1 --dir runs/20260324-211550_i3fqxg2i_forced_coord_e3t_ph2_e0p2_o1_s3_k1_ct0 --cross --num_seeds 5 --no_viz"
+  "./run_visualize.sh --gpu 7 --dir runs/20260325-005836_fvask5bu_forced_coord_e3t_ph2_e0p2_o1_s2_k1_ct0 --cross --num_seeds 5 --no_viz"
   # "./run_visualize.sh --gpu 2 --dir runs/20260306-160646_r5awqode_cramped_room_e3t_ph2_ct0_e0p2_o10_s2 --cross --num_seeds 5"
   # "./run_visualize.sh --gpu 3 --dir runs/20260306-201807_u99vy5ws_forced_coord_e3t_ph2_ct0_e0p2_o10_s2 --cross --num_seeds 5"
 )
