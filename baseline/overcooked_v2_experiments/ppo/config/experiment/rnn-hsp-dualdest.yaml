@@ -22,19 +22,21 @@ model:
   OBS_ENCODER: "MLP"
   GRU_HIDDEN_DIM: 64
   FC_DIM_SIZE: 64
-  LR: 0.0003
+  LR: 0.0005                   # 논문 Table 9: 5e-4
   NUM_ENVS: 512
   NUM_STEPS: 100
-  UPDATE_EPOCHS: 15           # 원본 HSP ppo_epoch=15
-  NUM_MINIBATCHES: 1          # 원본 HSP num_mini_batch=1
-  TOTAL_TIMESTEPS: 1e7        # S1 per-policy
-  S2_TOTAL_TIMESTEPS: 3e7     # S2
-  ENT_COEF: 0.01              # 원본 HSP default
-  VF_COEF: 0.1                # MEP와 동일
-  MAX_GRAD_NORM: 0.1          # MEP와 동일
+  UPDATE_EPOCHS: 15            # 논문 Table 9: 15
+  NUM_MINIBATCHES: 1           # 논문 Table 9: 1
+  TOTAL_TIMESTEPS: 1e7         # S1 per-policy
+  S2_TOTAL_TIMESTEPS: 3e7      # S2
+  ENT_COEF: 0.01               # 논문 Table 9: 0.01
+  VF_COEF: 0.1                 # 논문 Table 9: 0.1
+  MAX_GRAD_NORM: 10.0          # 논문 Table 9: 10.0
+  HUBER_DELTA: 10.0            # 논문 Table 9: huber loss delta=10.0
+  USE_REWARD_NORM: True        # 논문 Table 9: reward normalization=True
   CLIP_EPS: 0.2
-  GAE_LAMBDA: 0.95
-  REW_SHAPING_HORIZON: 0      # S1: utility weight만, no annealing
-  S2_REW_SHAPING_HORIZON: 3e7 # S2: S2_TOTAL_TIMESTEPS와 일치
+  GAE_LAMBDA: 0.95             # 논문 Table 9: 0.95
+  REW_SHAPING_HORIZON: 0       # S1: utility weight만, no annealing
+  S2_REW_SHAPING_HORIZON: 3e7  # S2: S2_TOTAL_TIMESTEPS와 일치
   ANNEAL_LR: True
   LR_WARMUP: 0.05
