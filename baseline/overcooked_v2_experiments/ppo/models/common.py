@@ -70,13 +70,17 @@ class CNN(nn.Module):
 
 
 class CNNSimple(nn.Module):
+    """원본 E3T-Overcooked와 동일한 3-layer CNN (5x5/3x3/3x3).
+    features: conv filter 수 (원본 NUM_FILTERS=25, 기본값 32)
+    """
     output_size: int = 64
+    features: int = 32
     activation: Callable[..., Any] = nn.relu
 
     @nn.compact
     def __call__(self, x, train=False):
         x = nn.Conv(
-            features=32,
+            features=self.features,
             kernel_size=(5, 5),
             kernel_init=orthogonal(jnp.sqrt(2)),
             bias_init=constant(0.0),
@@ -84,7 +88,7 @@ class CNNSimple(nn.Module):
         x = self.activation(x)
 
         x = nn.Conv(
-            features=32,
+            features=self.features,
             kernel_size=(3, 3),
             kernel_init=orthogonal(jnp.sqrt(2)),
             bias_init=constant(0.0),
@@ -92,7 +96,7 @@ class CNNSimple(nn.Module):
         x = self.activation(x)
 
         x = nn.Conv(
-            features=32,
+            features=self.features,
             kernel_size=(3, 3),
             kernel_init=orthogonal(jnp.sqrt(2)),
             bias_init=constant(0.0),
@@ -105,6 +109,42 @@ class CNNSimple(nn.Module):
             features=self.output_size,
             kernel_init=orthogonal(jnp.sqrt(2)),
             bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+
+        return x
+
+
+class CNNGamma(nn.Module):
+    """GAMMA 논문 Cooperator policy CNN: [32,64,32] all 3×3, SAME padding, ReLU."""
+    output_size: int = 64
+    activation: Callable[..., Any] = nn.relu
+
+    @nn.compact
+    def __call__(self, x, train=False):
+        x = nn.Conv(
+            features=32, kernel_size=(3, 3), padding="SAME",
+            kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+
+        x = nn.Conv(
+            features=64, kernel_size=(3, 3), padding="SAME",
+            kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+
+        x = nn.Conv(
+            features=32, kernel_size=(3, 3), padding="SAME",
+            kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0),
+        )(x)
+        x = self.activation(x)
+
+        x = x.reshape((x.shape[0], -1))
+
+        x = nn.Dense(
+            features=self.output_size,
+            kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0),
         )(x)
         x = self.activation(x)
 

@@ -7,7 +7,7 @@ from flax.linen import remat
 import distrax
 from flax.linen.initializers import constant, orthogonal
 from .abstract import ActorCriticBase
-from .common import CNN, MLP
+from .common import CNN, CNNSimple, CNNGamma, MLP
 from .e3t import PartnerPredictor
 
 
@@ -82,16 +82,32 @@ class ActorCriticRNN(ActorCriticBase):
 
         obs, dones = x
 
-        if self.config["ACTIVATION"] == "relu":
-            activation = nn.relu
-        else:
+        act_name = self.config.get("ACTIVATION", "relu")
+        if act_name == "leaky_relu":
+            activation = nn.leaky_relu
+        elif act_name == "tanh":
             activation = nn.tanh
+        else:
+            activation = nn.relu
 
-        # OBS_ENCODER: "MLP" 이면 _FlattenMLP 사용 (ToyCoop 등), 기본값 "CNN"
+        # OBS_ENCODER: "MLP" | "CNNSimple" | "CNN" (기본값)
         encoder_type = self.config.get("OBS_ENCODER", "CNN").upper()
         if encoder_type == "MLP":
             embed_model = _FlattenMLP(
                 hidden_size=self.config.get("FC_DIM_SIZE", 128),
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                activation=activation,
+            )
+        elif encoder_type == "CNNSIMPLE":
+            # 원본 E3T-Overcooked와 동일 구조 (5x5/3x3/3x3)
+            embed_model = CNNSimple(
+                output_size=self.config["GRU_HIDDEN_DIM"],
+                features=self.config.get("CNN_FEATURES", 32),
+                activation=activation,
+            )
+        elif encoder_type == "CNNGAMMA":
+            # GAMMA 논문 Cooperator policy CNN: [32,64,32] 3×3 SAME
+            embed_model = CNNGamma(
                 output_size=self.config["GRU_HIDDEN_DIM"],
                 activation=activation,
             )

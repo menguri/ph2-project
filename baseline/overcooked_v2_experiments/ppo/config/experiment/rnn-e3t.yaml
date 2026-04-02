@@ -1,15 +1,19 @@
 # @package _global_
 defaults:
-  - override /model: rnn
+  - override /model: rnn-e3t
 
 # E3T 알고리즘 설정
 ALG_NAME: "E3T"
 
-# 파트너가 무작위 행동을 취할 확률 (0.5 = 50%)
+# 파트너가 무작위 행동을 취할 확률 (원본 RAND=0.3~0.7, 고정 0.5)
 E3T_EPSILON: 0.5
 
-# 파트너 예측 컴포넌트 사용 여부 (False: predictor 없이 IPPO 베이스라인과 동일)
+# 파트너 예측 컴포넌트 사용
 USE_PREDICTION: True
 
 # 파트너 예측 손실 계수
 PRED_LOSS_COEF: 1.0
+
+# JSD loss (원본 E3T에서 action distribution 다양성 장려, 계수 0.01)
+USE_JSD_LOSS: True
+JSD_LOSS_COEF: 0.01

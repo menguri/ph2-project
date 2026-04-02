@@ -1,0 +1,5 @@
+# @package _global_
+defaults:
+  - override /model: rnn-cole
+
+# COLE-sync Self-Play — 추가 override 없음 (rnn-cole.yaml이 전부)

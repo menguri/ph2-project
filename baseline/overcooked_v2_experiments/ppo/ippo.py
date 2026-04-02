@@ -862,6 +862,27 @@ def make_train(
 
                             pred_loss = pred_loss * config.get("PRED_LOSS_COEF", 1.0)
 
+                        # JSD Loss: action distribution 다양성 장려 (원본 E3T 0.01 계수)
+                        jsd_loss = jnp.float32(0.0)
+                        if alg_name == "E3T" and config.get("USE_JSD_LOSS", False) and pred_logits is not None:
+                            is_ego_flat = traj_batch.is_ego
+                            # policy의 action 분포와 predictor의 action 분포 간 JSD 계산
+                            policy_probs = jax.nn.softmax(pi.logits, axis=-1)
+                            pred_probs = jax.nn.softmax(pred_logits, axis=-1)
+                            # M = 0.5 * (P + Q)
+                            m_probs = 0.5 * (policy_probs + pred_probs)
+                            kl_policy = jnp.sum(
+                                policy_probs * (jnp.log(policy_probs + 1e-8) - jnp.log(m_probs + 1e-8)),
+                                axis=-1,
+                            )
+                            kl_pred = jnp.sum(
+                                pred_probs * (jnp.log(pred_probs + 1e-8) - jnp.log(m_probs + 1e-8)),
+                                axis=-1,
+                            )
+                            jsd_per_sample = 0.5 * (kl_policy + kl_pred)
+                            jsd_loss = (jsd_per_sample * is_ego_flat).sum() / (is_ego_flat.sum() + 1e-8)
+                            jsd_loss = jsd_loss * config.get("JSD_LOSS_COEF", 0.01)
+
                         print("value shape", value.shape)
                         print("targets shape", targets.shape)
                         print("pi shape", pi.logits.shape)
@@ -922,9 +943,10 @@ def make_train(
                             + model_config["VF_COEF"] * value_loss
                             - model_config["ENT_COEF"] * entropy
                             + pred_loss
+                            + jsd_loss
                         )
 
-                        return total_loss, (value_loss, loss_actor, entropy, ratio, pred_loss, pred_accuracy)
+                        return total_loss, (value_loss, loss_actor, entropy, ratio, pred_loss, pred_accuracy, jsd_loss)
 
                     def _perform_update():
                         grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
@@ -949,7 +971,7 @@ def make_train(
 
                     def _no_op():
                         # jax.debug.print("No update")
-                        return train_state, (0.0, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+                        return train_state, (0.0, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
 
                     # jax.debug.print(
                     #     "train_mask {x}, {y}",
@@ -1052,16 +1074,17 @@ def make_train(
 
             # 손실 함수 관련 메트릭 추출
             total_loss, aux_data = loss_info
-            value_loss, loss_actor, entropy, ratio, pred_loss, pred_accuracy = aux_data
+            value_loss, loss_actor, entropy, ratio, pred_loss, pred_accuracy, jsd_loss = aux_data
 
             # PPO 학습 손실 메트릭 추가
-            metric["total_loss"] = total_loss      # 전체 손실 (actor + value + entropy + pred)
+            metric["total_loss"] = total_loss      # 전체 손실 (actor + value + entropy + pred + jsd)
             metric["value_loss"] = value_loss      # 가치 함수(critic) MSE 손실
             metric["loss_actor"] = loss_actor      # 정책(actor) clipped surrogate 손실
             metric["entropy"] = entropy            # 정책 엔트로피 (탐험 정도)
             metric["ratio"] = ratio                # PPO ratio (new_prob / old_prob)
             metric["pred_loss"] = pred_loss        # 파트너 행동 예측 손실
             metric["pred_accuracy"] = pred_accuracy # 파트너 행동 예측 정확도
+            metric["jsd_loss"] = jsd_loss          # JSD 다양성 손실
 
             # 모든 메트릭 값을 배치/스텝 차원에 대해 평균 계산 (스칼라로 축약)
             metric = jax.tree_util.tree_map(lambda x: x.mean(), metric)

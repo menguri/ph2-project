@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - override /model: rnn-cole
+
+# COLE-sync FCP — ego 1개만 학습, population annealing 없음 (COLE에 없음)
+NUM_SEEDS: 1

@@ -1,0 +1,27 @@
+# COLE-Platform 원본 PPO 하이퍼파라미터 기준 (SP/FCP용)
+# Network만 CNN+GRU(128)로 유지 (2D grid obs 필수), PPO params는 COLE 동일
+
+"TYPE": "RNN"
+"FC_DIM_SIZE": 128
+"GRU_HIDDEN_DIM": 128
+"ACTIVATION": "relu"
+
+# COLE PPO params (pantheonrl/algos/modular/learn.py 기본값)
+"LR": 3e-4                # COLE 기본 3e-4
+"ANNEAL_LR": False         # COLE: 상수 LR (스케줄 없음)
+"GAMMA": 0.99
+"GAE_LAMBDA": 0.95
+"VF_COEF": 0.5
+"ENT_COEF": 0.0            # COLE: entropy bonus 없음
+"MAX_GRAD_NORM": 0.5       # COLE 기본 0.5
+"CLIP_EPS": 0.2
+
+# 병렬 환경 — COLE 원본(1개)에 가깝게 최소화
+"NUM_ENVS": 5
+"NUM_STEPS": 256
+"UPDATE_EPOCHS": 10         # COLE: n_epochs=10
+"NUM_MINIBATCHES": 5        # 5 envs × 2 agents = 10 actors, minibatch=2 actors
+
+# 학습 길이
+"TOTAL_TIMESTEPS": 3e7
+"REW_SHAPING_HORIZON": 0    # COLE: reward annealing 없음

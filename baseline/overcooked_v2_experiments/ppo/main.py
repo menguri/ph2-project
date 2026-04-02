@@ -176,14 +176,13 @@ def single_run_with_viz(config):
         def params_for(run_num, ck_idx):
             def _sel(x):
                 arr = x
-                # (num_runs, num_checkpoints, ...)
-                if arr.ndim >= 2 and arr.shape[1] == num_checkpoints:
+                # num_runs는 이미 확정됨 — leaf별 shape 재판정 대신 확정값 사용
+                # num_runs > 1: buffer shape = (num_runs, num_checkpoints, *param_shape)
+                # num_runs == 1: buffer shape = (num_checkpoints, *param_shape)
+                if num_runs > 1:
                     return arr[run_num][ck_idx]
-                # (num_checkpoints, ...)
-                if arr.shape[0] == num_checkpoints:
+                else:
                     return arr[ck_idx]
-                # fallback (희귀 케이스): 동일 가정
-                return arr[run_num][ck_idx]
 
             return jax.tree_util.tree_map(_sel, checkpoints)
 

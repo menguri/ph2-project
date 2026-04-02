@@ -1,31 +1,32 @@
 # @package _global_
-# GAMMA Stage 2: Adaptive agent training (MEP S2와 동일 알고리즘, GRU_HIDDEN_DIM=64)
+# GAMMA Stage 2: Adaptive agent — 논문 기준 파라미터
+# GAMMA_POPULATION_DIR은 런타임에 CLI로 주입: +GAMMA_POPULATION_DIR=<path>
 defaults:
   - override /model: rnn
 
 ALG_NAME: "GAMMA_S2"
 
 MEP_USE_PRIORITIZED_SAMPLING: True
-MEP_PRIORITIZED_ALPHA: 1.0
-# GAMMA_POPULATION_DIR은 런타임에 CLI로 주입: +GAMMA_POPULATION_DIR=<path>
+MEP_PRIORITIZED_ALPHA: 3.0       # 원본 ALPHA=3.0
 
 NUM_SEEDS: 10
 NUM_CHECKPOINTS: 3
 
 model:
-  GRU_HIDDEN_DIM: 64
-  FC_DIM_SIZE: 64
-  LR: 0.0003
-  ENT_COEF: 0.01
-  VF_COEF: 0.1              # MEP와 동일
-  GAE_LAMBDA: 0.95
-  NUM_ENVS: 64
-  NUM_STEPS: 128
-  UPDATE_EPOCHS: 4
-  NUM_MINIBATCHES: 4
-  CLIP_EPS: 0.05             # MEP와 동일
-  MAX_GRAD_NORM: 10.0
-  TOTAL_TIMESTEPS: 3e7
-  REW_SHAPING_HORIZON: 3e7   # TOTAL_TIMESTEPS와 일치
-  ANNEAL_LR: True
-  LR_WARMUP: 0.05
+  "GRU_HIDDEN_DIM": 64
+  "FC_DIM_SIZE": 64
+  "OBS_ENCODER": "CNNGamma"
+  "ACTIVATION": "relu"
+  "LR": 5e-4
+  "ANNEAL_LR": False
+  "ENT_COEF": 0.01
+  "VF_COEF": 1.0
+  "GAE_LAMBDA": 0.95
+  "CLIP_EPS": 0.2
+  "MAX_GRAD_NORM": 10.0
+  "UPDATE_EPOCHS": 15
+  "NUM_MINIBATCHES": 1
+  "NUM_ENVS": 200               # 논문 S2: 200 parallel envs
+  "NUM_STEPS": 400
+  "TOTAL_TIMESTEPS": 3e7        # 30M 유지
+  "REW_SHAPING_HORIZON": 3e7    # 전체 기간

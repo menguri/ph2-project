@@ -4,11 +4,11 @@ cd "$(dirname "$0")" || exit 1
 
 # ===============================
 # SP Experiment Factory Script
+# COLE-Platform PPO 파라미터 기준 (rnn-sp-cole → rnn-cole.yaml)
+# 모든 하이퍼파라미터는 config에 정의됨, CLI override 불필요
 # ===============================
-EXP="rnn-sp"
+EXP="rnn-sp-cole"
 ENV_DEVICE="cpu"
-NENVS=64
-NSTEPS=128
 
 run_sp() {
     local gpus=$1
@@ -20,8 +20,7 @@ run_sp() {
         --env $env \
         --exp $EXP \
         --env-device $ENV_DEVICE \
-        --nenvs $NENVS \
-        --nsteps $NSTEPS $extra"
+        --tags sp-cole $extra"
 
     if [ -n "$layout" ]; then
         cmd="$cmd --layout $layout"

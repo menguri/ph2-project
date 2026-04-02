@@ -1,52 +1,60 @@
 # @package _global_
 # GAMMA 통합 config: S1(population) → S2(adaptive) 자동 진행
-# GAMMA_S2_METHOD: "rl" (기본) 또는 "vae" (VAE 기반 파트너 생성)
+# GAMMA 논문 Table 기준 파라미터
 defaults:
   - override /model: rnn
 
 ALG_NAME: "GAMMA"
 
-# Population (S1) — MEP S1과 동일
-MEP_POPULATION_SIZE: 4
-MEP_ENTROPY_ALPHA: 0.1       # MEP와 동일 (원본 MEP ENTROPY_POOL=0.1)
+# Population (S1)
+MEP_POPULATION_SIZE: 5           # 논문/원본 default=5
+MEP_ENTROPY_ALPHA: 0.01          # 원본 mep_entropy_alpha=0.01
 
 # Adaptive (S2)
 MEP_USE_PRIORITIZED_SAMPLING: True
-MEP_PRIORITIZED_ALPHA: 1.0
+MEP_PRIORITIZED_ALPHA: 3.0       # 원본 ALPHA=3.0
 S2_NUM_SEEDS: 10
-GAMMA_S2_METHOD: "vae"   # VAE 기반 파트너 생성 (population+VAE 혼합)
+GAMMA_S2_METHOD: "vae"
 
-# VAE 하이퍼파라미터 (method=vae 시 사용)
+# VAE (논문 Table 기준 — 이미 일치)
 GAMMA_VAE_Z_DIM: 16
-GAMMA_VAE_HIDDEN_DIM: 256      # 논문 Table 2: 256
-GAMMA_VAE_LR: 0.0005           # 논문 Table 2: 5e-4
-GAMMA_VAE_EPOCHS: 500          # 논문 Table 2: 500
+GAMMA_VAE_HIDDEN_DIM: 256
+GAMMA_VAE_LR: 0.0005
+GAMMA_VAE_EPOCHS: 500
 GAMMA_VAE_BATCH_SIZE: 64
 GAMMA_VAE_CHUNK_LENGTH: 100
-GAMMA_VAE_KL_PENALTY: 1.0     # 논문 Table 2: β=1.0
-GAMMA_VAE_KL_INIT: 0.0        # 논문 Table 2: β 초기값 0.0
-GAMMA_VAE_ROLLOUT_EPISODES: 100    # population rollout 수집 에피소드 수
-GAMMA_VAE_Z_CHANGE_PROB: 0.0       # 0=에피소드 내 z 고정, >0이면 매 step 교체 확률
+GAMMA_VAE_KL_PENALTY: 1.0
+GAMMA_VAE_KL_INIT: 0.0
+GAMMA_VAE_ROLLOUT_EPISODES: 100
+GAMMA_VAE_Z_CHANGE_PROB: 0.0
 
 NUM_SEEDS: 1
 NUM_CHECKPOINTS: 3
 
 model:
-  GRU_HIDDEN_DIM: 64
-  FC_DIM_SIZE: 64
-  LR: 0.0003
-  ENT_COEF: 0.01
-  VF_COEF: 0.1              # MEP와 동일
-  GAE_LAMBDA: 0.95
-  NUM_ENVS: 64
-  NUM_STEPS: 128
-  UPDATE_EPOCHS: 4
-  NUM_MINIBATCHES: 4
-  CLIP_EPS: 0.05             # MEP와 동일
-  MAX_GRAD_NORM: 10.0
-  TOTAL_TIMESTEPS: 1e7       # S1 (원본 GAMMA 10M)
-  S2_TOTAL_TIMESTEPS: 3e7    # S2
-  REW_SHAPING_HORIZON: 1e7   # S1: TOTAL_TIMESTEPS와 일치
-  S2_REW_SHAPING_HORIZON: 3e7  # S2: S2_TOTAL_TIMESTEPS와 일치
-  ANNEAL_LR: True
-  LR_WARMUP: 0.05
+  # Network — 논문 Cooperator: [32,64,32] 3×3 CNN, GRU(64), FC(64), ReLU
+  "GRU_HIDDEN_DIM": 64
+  "FC_DIM_SIZE": 64
+  "OBS_ENCODER": "CNNGamma"       # 논문 [32,64,32] all 3×3
+  "ACTIVATION": "relu"
+
+  # PPO — 논문 Table 기준
+  "LR": 5e-4                      # 논문 lr=0.0005
+  "ANNEAL_LR": False               # 논문에 없음
+  "ENT_COEF": 0.01
+  "VF_COEF": 1.0                   # 원본 코드 value_loss_coef=1.0
+  "GAE_LAMBDA": 0.95
+  "CLIP_EPS": 0.2                  # 논문 clip=0.2
+  "MAX_GRAD_NORM": 10.0
+  "UPDATE_EPOCHS": 15              # 논문 ppo_epoch=15
+  "NUM_MINIBATCHES": 1             # 논문 full batch (num_mini_batch=1)
+
+  # S1 환경 — 원본 n_rollout_threads=100
+  "NUM_ENVS": 100
+  "NUM_STEPS": 400                 # 논문 episode_length=400
+
+  # 학습 길이
+  "TOTAL_TIMESTEPS": 1e7           # S1
+  "S2_TOTAL_TIMESTEPS": 3e7        # S2 (30M 유지)
+  "REW_SHAPING_HORIZON": 1e7       # S1: 전체 기간
+  "S2_REW_SHAPING_HORIZON": 3e7    # S2: 전체 기간 (논문: shaping=전체)

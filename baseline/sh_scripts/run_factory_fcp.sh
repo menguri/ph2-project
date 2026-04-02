@@ -9,19 +9,15 @@ cd "$(dirname "$0")" || exit 1
 # ==============================================================================
 
 # Common Configuration
-EXP="rnn-fcp"
+# COLE-Platform PPO 파라미터 기준 (rnn-fcp-cole → rnn-cole.yaml)
+# 모든 하이퍼파라미터는 config에 정의됨, CLI override 불필요
+# Population annealing 없음 (COLE에 없음)
+EXP="rnn-fcp-cole"
 ENV_DEVICE="cpu"
-NENVS=64
-NSTEPS=128
 
 # FCP Specific Settings
 FCP_DEVICE="gpu"
-SEEDS=10
-
-# Population annealing settings for FCP mixed training
-: "${POP_ANNEAL_ENABLE:=0}"
-: "${POP_ANNEAL_HORIZON:=1000000}"
-: "${POP_ANNEAL_BEGIN:=0}"
+SEEDS=1
 
 # Function to get FCP path based on env
 get_fcp_path() {
@@ -88,11 +84,6 @@ run_fcp() {
     echo "STARTING FCP EXPERIMENT"
     echo "ENV: $env, LAYOUT: $layout"
     echo "GPUS: $gpus"
-    if [[ "$POP_ANNEAL_ENABLE" == "1" ]]; then
-        echo "Population Anneal: ON (horizon=$POP_ANNEAL_HORIZON, begin=$POP_ANNEAL_BEGIN)"
-    else
-        echo "Population Anneal: OFF"
-    fi
     echo "================================================================================"
     
     local fcp_path=$(get_fcp_path $env)
@@ -102,21 +93,16 @@ run_fcp() {
         --env $env \
         --exp $EXP \
         --env-device $ENV_DEVICE \
-        --nenvs $NENVS \
-        --nsteps $NSTEPS \
         --seeds $SEEDS \
-        --fcp-device $FCP_DEVICE"
+        --fcp-device $FCP_DEVICE \
+        --tags fcp-cole"
 
     if [ -n "$fcp_path" ]; then
         cmd="$cmd --fcp $fcp_path"
     fi
-        
+
     if [ -n "$layout" ]; then
         cmd="$cmd --layout $layout"
-    fi
-
-    if [[ "$POP_ANNEAL_ENABLE" == "1" ]]; then
-        cmd="$cmd --pop-anneal-horizon $POP_ANNEAL_HORIZON --pop-anneal-begin $POP_ANNEAL_BEGIN"
     fi
     
     echo "Executing: $cmd"

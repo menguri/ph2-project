@@ -1,30 +1,31 @@
 # @package _global_
-# GAMMA Stage 1: Population training with entropy bonus (MEP S1과 동일 알고리즘, GRU_HIDDEN_DIM=64)
+# GAMMA Stage 1: Population training — 논문 기준 파라미터
 defaults:
   - override /model: rnn
 
 ALG_NAME: "GAMMA_S1"
 
-MEP_POPULATION_SIZE: 4
-MEP_ENTROPY_ALPHA: 0.1       # MEP와 동일
+MEP_POPULATION_SIZE: 5           # 원본 default=5
+MEP_ENTROPY_ALPHA: 0.01          # 원본 mep_entropy_alpha=0.01
 
 NUM_SEEDS: 1
 NUM_CHECKPOINTS: 3
 
 model:
-  GRU_HIDDEN_DIM: 64
-  FC_DIM_SIZE: 64
-  LR: 0.0003
-  ENT_COEF: 0.01
-  VF_COEF: 0.1              # MEP와 동일
-  GAE_LAMBDA: 0.95
-  NUM_ENVS: 64
-  NUM_STEPS: 128
-  UPDATE_EPOCHS: 4
-  NUM_MINIBATCHES: 4
-  CLIP_EPS: 0.05             # MEP와 동일
-  MAX_GRAD_NORM: 10.0
-  TOTAL_TIMESTEPS: 1e7       # 원본 GAMMA S1 10M
-  REW_SHAPING_HORIZON: 1e7   # TOTAL_TIMESTEPS와 일치
-  ANNEAL_LR: True
-  LR_WARMUP: 0.05
+  "GRU_HIDDEN_DIM": 64
+  "FC_DIM_SIZE": 64
+  "OBS_ENCODER": "CNNGamma"
+  "ACTIVATION": "relu"
+  "LR": 5e-4
+  "ANNEAL_LR": False
+  "ENT_COEF": 0.01
+  "VF_COEF": 1.0
+  "GAE_LAMBDA": 0.95
+  "CLIP_EPS": 0.2
+  "MAX_GRAD_NORM": 10.0
+  "UPDATE_EPOCHS": 15
+  "NUM_MINIBATCHES": 1
+  "NUM_ENVS": 100
+  "NUM_STEPS": 400
+  "TOTAL_TIMESTEPS": 1e7
+  "REW_SHAPING_HORIZON": 1e7

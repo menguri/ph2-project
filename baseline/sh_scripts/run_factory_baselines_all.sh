@@ -1,82 +1,98 @@
 #!/usr/bin/env bash
 # =============================================================================
-# MEP, GAMMA (vae), HSP — OV1 + OV2 전 레이아웃 실험
-# GPU 6,7 / S2 10 seeds
+# 전체 Baseline 실험: SP, E3T, FCP, MEP, GAMMA — OV1 전 레이아웃
+# 각 알고리즘의 config에 파라미터가 전부 정의되어 있으므로 별도 override 불필요.
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
-# GPU 할당 (S1+S2 모두 같은 프로세스에서 순차 실행 — 동일 GPU 사용)
-GPUS="6,7"
+GPUS="3,7"
+ENV_DEVICE="cpu"
 
-# --- OV1 layouts ---
 OV1_LAYOUTS=(cramped_room asymm_advantages coord_ring forced_coord counter_circuit)
 
-# --- OV2 layouts ---
-OV2_LAYOUTS=(grounded_coord_simple grounded_coord_ring demo_cook_simple demo_cook_wide test_time_simple test_time_wide)
-
-ALL_LAYOUTS=("${OV1_LAYOUTS[@]}" "${OV2_LAYOUTS[@]}")
-
 # =============================================================================
-# GAMMA (vae)
+# 1. SP (COLE-sync)
 # =============================================================================
-run_gamma() {
-  local layout=$1
-  echo "[GAMMA vae] layout=${layout} | GPU ${GPUS} (S2: 10 seeds)"
+echo "============================================================"
+echo "  SP (COLE-sync) — OV1"
+echo "============================================================"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  echo "[SP] ${layout}"
   ./run_user_wandb.sh \
-    --exp rnn-gamma \
+    --exp rnn-sp-cole \
     --env "${layout}" \
-    --layout "${layout}" \
     --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --tags sp-cole
+done
+
+# =============================================================================
+# 2. E3T (원본 E3T-Overcooked sync)
+# =============================================================================
+echo "============================================================"
+echo "  E3T — OV1"
+echo "============================================================"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  echo "[E3T] ${layout}"
+  ./run_user_wandb.sh \
+    --exp rnn-e3t \
+    --env "${layout}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --tags e3t
+done
+
+# =============================================================================
+# 3. FCP (COLE-sync) — SP population 필요
+# =============================================================================
+echo "============================================================"
+echo "  FCP (COLE-sync) — OV1"
+echo "============================================================"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  FCP_DIR="fcp_populations/${layout}_sp"
+  if [ ! -d "${FCP_DIR}" ]; then
+    echo "[FCP] SKIP ${layout} — population 없음: ${FCP_DIR}"
+    continue
+  fi
+  echo "[FCP] ${layout}"
+  ./run_user_wandb.sh \
+    --exp rnn-fcp-cole \
+    --env "${layout}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --fcp "${FCP_DIR}" \
     --seeds 1 \
-    --extra "++GAMMA_S2_METHOD=vae"
-}
-
-echo "============================================================"
-echo "  GAMMA (vae) — All layouts"
-echo "============================================================"
-for layout in "${ALL_LAYOUTS[@]}"; do
-  run_gamma "$layout"
+    --tags fcp-cole
 done
 
 # =============================================================================
-# HSP
+# 4. MEP (원본 MEP sync)
 # =============================================================================
-run_hsp() {
-  local layout=$1
-  echo "[HSP] layout=${layout} | GPU ${GPUS} (S2: 10 seeds)"
-  ./run_user_wandb.sh \
-    --exp rnn-hsp \
-    --env "${layout}" \
-    --layout "${layout}" \
-    --gpus "${GPUS}" \
-    --seeds 1
-}
-
 echo "============================================================"
-echo "  HSP — All layouts"
+echo "  MEP — OV1"
 echo "============================================================"
-for layout in "${ALL_LAYOUTS[@]}"; do
-  run_hsp "$layout"
-done
-
-# =============================================================================
-# MEP
-# =============================================================================
-run_mep() {
-  local layout=$1
-  echo "[MEP] layout=${layout} | GPU ${GPUS} (S2: 10 seeds)"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  echo "[MEP] ${layout}"
   ./run_user_wandb.sh \
     --exp rnn-mep \
     --env "${layout}" \
-    --layout "${layout}" \
     --gpus "${GPUS}" \
     --seeds 1
-}
+done
 
+# =============================================================================
+# 5. GAMMA (논문 sync, VAE mode)
+# =============================================================================
 echo "============================================================"
-echo "  MEP — All layouts"
+echo "  GAMMA (vae) — OV1"
 echo "============================================================"
-for layout in "${ALL_LAYOUTS[@]}"; do
-  run_mep "$layout"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  echo "[GAMMA vae] ${layout}"
+  ./run_user_wandb.sh \
+    --exp rnn-gamma \
+    --env "${layout}" \
+    --gpus "${GPUS}" \
+    --seeds 1 \
+    --extra "++GAMMA_S2_METHOD=vae"
 done
