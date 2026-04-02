@@ -160,12 +160,16 @@ class ActorCriticRNN(ActorCriticBase):
             )
         blocked_ln = nn.LayerNorm(name="blocked_encoder_ln")
 
-        if blocked_states.ndim == 5:
-            # (T, B, H, W, C) — Overcooked grid (forward pass에서 time dim 포함)
-            return blocked_ln(jax.vmap(blocked_model)(blocked_states))
-        # ndim <= 4: direct call (penalty distance 계산 시 method=encode_blocked)
-        # OV2: (B, H, W, C), MPE: (B, obs_dim)
-        return blocked_ln(blocked_model(blocked_states))
+        if encoder_type == "MLP":
+            # MPE (1D obs): forward pass ndim==3 (T,B,D) → vmap, direct call ndim==2 (B,D) → 직접
+            if blocked_states.ndim >= 3:
+                return blocked_ln(jax.vmap(blocked_model)(blocked_states))
+            return blocked_ln(blocked_model(blocked_states))
+        else:
+            # Overcooked (grid obs): forward pass ndim==5 (T,B,H,W,C) → vmap, direct call ndim==4 (B,H,W,C) → 직접
+            if blocked_states.ndim == 5:
+                return blocked_ln(jax.vmap(blocked_model)(blocked_states))
+            return blocked_ln(blocked_model(blocked_states))
 
     @nn.compact
     def get_obs_embedding(self, obs):
