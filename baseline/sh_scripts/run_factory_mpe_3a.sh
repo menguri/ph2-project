@@ -50,11 +50,12 @@ run_sp() {
 # 최신 SP run을 찾아서 fcp_populations/mpe_spread_3a_sp/ 로 복사
 # =============================================================================
 build_fcp_population() {
+  # sh_scripts/ → baseline/ 기준으로 경로 설정
+  local POP_DIR="../${FCP_POP}"
   echo "============================================================"
-  echo "  FCP population 구성 (SP → ${FCP_POP})"
+  echo "  FCP population 구성 (SP → ${POP_DIR})"
   echo "============================================================"
 
-  # 최신 MPE_simple_spread SP run 디렉토리 찾기 (3a suffix 포함)
   SP_RUN=$(ls -dt ../runs/*MPE_simple_spread*_sp* 2>/dev/null | head -1)
 
   if [[ -z "$SP_RUN" ]]; then
@@ -64,24 +65,22 @@ build_fcp_population() {
 
   echo "[FCP-POP] SP run: ${SP_RUN}"
 
-  # 기존 population 삭제 후 재구성
-  rm -rf "$FCP_POP"
-  mkdir -p "$FCP_POP"
+  rm -rf "$POP_DIR"
+  mkdir -p "$POP_DIR"
 
-  # run_* 디렉토리를 8개씩 묶어서 fcp_N 그룹으로 복사
   counter=0
   subdir_counter=0
   for run in "$SP_RUN"/run_*; do
     [[ ! -d "$run" ]] && continue
     if (( counter % 8 == 0 )); then
       subdir_counter=$((subdir_counter + 1))
-      mkdir -p "$FCP_POP/fcp_$subdir_counter"
+      mkdir -p "$POP_DIR/fcp_$subdir_counter"
     fi
-    cp -r "$run" "$FCP_POP/fcp_$subdir_counter/"
+    cp -r "$run" "$POP_DIR/fcp_$subdir_counter/"
     counter=$((counter + 1))
   done
 
-  echo "[FCP-POP] ${counter} runs → ${subdir_counter} groups → ${FCP_POP}"
+  echo "[FCP-POP] ${counter} runs → ${subdir_counter} groups → ${POP_DIR}"
 }
 
 # =============================================================================
@@ -126,8 +125,8 @@ run_mep() {
 # FCP — SP population 사용
 # =============================================================================
 run_fcp() {
-  if [[ ! -d "$FCP_POP" ]]; then
-    echo "[ERROR] FCP population 없음 (${FCP_POP}). build_fcp_population 먼저 실행하세요."
+  if [[ ! -d "../${FCP_POP}" ]]; then
+    echo "[ERROR] FCP population 없음 (../${FCP_POP}). build_fcp_population 먼저 실행하세요."
     return 1
   fi
 

@@ -90,7 +90,9 @@ run_sp() {
 # FCP population 자동 구성 (SP → fcp_populations/)
 # =============================================================================
 build_fcp_population() {
-  echo "===== FCP population 구성 (SP → ${FCP_POP}) ====="
+  # sh_scripts/ → baseline/ 기준으로 경로 설정
+  local POP_DIR="../${FCP_POP}"
+  echo "===== FCP population 구성 (SP → ${POP_DIR}) ====="
 
   SP_RUN=$(ls -dt ../runs/*MPE_simple_spread*${N_AGENTS}a*_sp* 2>/dev/null | head -1)
   if [[ -z "$SP_RUN" ]]; then
@@ -99,8 +101,8 @@ build_fcp_population() {
   fi
 
   echo "[FCP-POP] SP run: ${SP_RUN}"
-  rm -rf "$FCP_POP"
-  mkdir -p "$FCP_POP"
+  rm -rf "$POP_DIR"
+  mkdir -p "$POP_DIR"
 
   counter=0
   subdir_counter=0
@@ -108,12 +110,12 @@ build_fcp_population() {
     [[ ! -d "$run" ]] && continue
     if (( counter % 8 == 0 )); then
       subdir_counter=$((subdir_counter + 1))
-      mkdir -p "$FCP_POP/fcp_$subdir_counter"
+      mkdir -p "$POP_DIR/fcp_$subdir_counter"
     fi
-    cp -r "$run" "$FCP_POP/fcp_$subdir_counter/"
+    cp -r "$run" "$POP_DIR/fcp_$subdir_counter/"
     counter=$((counter + 1))
   done
-  echo "[FCP-POP] ${counter} runs → ${subdir_counter} groups"
+  echo "[FCP-POP] ${counter} runs → ${subdir_counter} groups → ${POP_DIR}"
 }
 
 # =============================================================================
@@ -156,8 +158,8 @@ run_mep() {
 # FCP
 # =============================================================================
 run_fcp() {
-  if [[ ! -d "$FCP_POP" ]]; then
-    echo "[ERROR] FCP population 없음 (${FCP_POP}). build_fcp_population 먼저."
+  if [[ ! -d "../${FCP_POP}" ]]; then
+    echo "[ERROR] FCP population 없음 (../${FCP_POP}). build_fcp_population 먼저."
     return 1
   fi
   echo "===== [FCP] MPE ${N_AGENTS}A ====="
@@ -180,19 +182,19 @@ run_fcp() {
 # 권장 순서: SP → build_fcp_population → E3T, FCP, MEP
 # =============================================================================
 # --- (1) SP ---
-run_sp
+# run_sp
 
 # --- (2) SP → FCP population 복사 ---
 build_fcp_population
 
 # --- (3) E3T ---
-run_e3t
+# run_e3t
 
 # --- (3) FCP ---
 run_fcp
 
 # --- (3) MEP ---
-run_mep
+# run_mep
 
 echo ""
 echo "============================================================"
