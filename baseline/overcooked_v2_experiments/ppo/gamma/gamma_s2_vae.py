@@ -56,46 +56,55 @@ def _collect_population_rollouts(pop_params, config, env, network, n_episodes, r
     max_steps = 400
     eps_per_member = max(n_episodes // N, 1)
 
+    num_env_agents = env.num_agents
+
     def _rollout_single_episode(member_params, rng):
-        """단일 에피소드 롤아웃 (lax.scan, 고정 max_steps)."""
+        """단일 에피소드 롤아웃 (lax.scan, 고정 max_steps). N-agent 지원."""
         rng, k_reset = jax.random.split(rng)
         obs, state = env.reset(k_reset)
-        h0 = ActorCriticRNN.initialize_carry(1, GRU_HIDDEN_DIM)
-        h1 = ActorCriticRNN.initialize_carry(1, GRU_HIDDEN_DIM)
+        # N개 에이전트 hstate 초기화
+        hstates = jnp.stack([
+            ActorCriticRNN.initialize_carry(1, GRU_HIDDEN_DIM)
+            for _ in range(num_env_agents)
+        ])  # (N, 1, GRU_HIDDEN_DIM)
         done = jnp.zeros((1,), dtype=jnp.bool_)
 
         def _step(carry, _):
-            obs, state, h0, h1, done, rng = carry
+            obs, state, hstates, done, rng = carry
 
-            obs_0 = obs[env.agents[0]][jnp.newaxis, jnp.newaxis]  # (1,1,*obs)
-            obs_1 = obs[env.agents[1]][jnp.newaxis, jnp.newaxis]
+            rng, k_env = jax.random.split(rng)
+            rng, *agent_keys = jax.random.split(rng, num_env_agents + 1)
 
-            rng, k0, k1, k_env = jax.random.split(rng, 4)
-            h0, pi_0, _, _ = network.apply(member_params, h0, (obs_0, done[jnp.newaxis]))
-            a0 = pi_0.sample(seed=k0).squeeze(0)
-            h1, pi_1, _, _ = network.apply(member_params, h1, (obs_1, done[jnp.newaxis]))
-            a1 = pi_1.sample(seed=k1).squeeze(0)
+            # 각 에이전트 행동 생성
+            new_hstates = []
+            actions_list = []
+            obs_list = []
+            for i in range(num_env_agents):
+                obs_i = obs[env.agents[i]][jnp.newaxis, jnp.newaxis]  # (1,1,*obs)
+                h_i = hstates[i]
+                h_new, pi_i, _, _ = network.apply(member_params, h_i, (obs_i, done[jnp.newaxis]))
+                a_i = pi_i.sample(seed=agent_keys[i]).squeeze(0)
+                new_hstates.append(h_new)
+                actions_list.append(a_i.squeeze())
+                obs_list.append(obs[env.agents[i]])
 
-            env_act = {env.agents[0]: a0.squeeze(), env.agents[1]: a1.squeeze()}
-            obs_next, state_next, _, done_dict, _ = env.step(k_env, state, env_act)
+            env_act = {env.agents[i]: actions_list[i] for i in range(num_env_agents)}
+            obs_next, state_next, _, done_dict, _ = env.step_env(k_env, state, env_act)
             done_next = jnp.array([done_dict["__all__"]])
 
-            # done=True면 이미 에피소드 완료 → 이 스텝의 obs/action은 무효
             rec_invalid = done.squeeze()
-            rec_obs_0 = obs[env.agents[0]]
-            rec_obs_1 = obs[env.agents[1]]
-            rec_a0 = a0.squeeze()
-            rec_a1 = a1.squeeze()
+            rec_obs = jnp.stack(obs_list)        # (N, *obs_shape)
+            rec_acts = jnp.stack(actions_list)    # (N,)
 
-            return (obs_next, state_next, h0, h1, done_next, rng), \
-                   (rec_obs_0, rec_obs_1, rec_a0, rec_a1, rec_invalid)
+            return (obs_next, state_next, jnp.stack(new_hstates), done_next, rng), \
+                   (rec_obs, rec_acts, rec_invalid)
 
-        init_carry = (obs, state, h0, h1, done, rng)
-        _, (obs_0_seq, obs_1_seq, act_0_seq, act_1_seq, invalid_mask) = jax.lax.scan(
+        init_carry = (obs, state, hstates, done, rng)
+        _, (obs_seq, act_seq, invalid_mask) = jax.lax.scan(
             _step, init_carry, None, max_steps,
         )
-        # obs_0_seq: (max_steps, *obs_shape), invalid_mask: (max_steps,)
-        return obs_0_seq, obs_1_seq, act_0_seq, act_1_seq, invalid_mask
+        # obs_seq: (max_steps, N, *obs_shape), act_seq: (max_steps, N), invalid_mask: (max_steps,)
+        return obs_seq, act_seq, invalid_mask
 
     # eps_per_member 에피소드를 vmap으로 병렬화 + JIT
     _rollout_member = jax.jit(jax.vmap(_rollout_single_episode, in_axes=(None, 0)))
@@ -106,23 +115,18 @@ def _collect_population_rollouts(pop_params, config, env, network, n_episodes, r
         rng, member_rng = jax.random.split(rng)
         ep_rngs = jax.random.split(member_rng, eps_per_member)
 
-        obs_0_all, obs_1_all, act_0_all, act_1_all, invalid_all = _rollout_member(
-            member_params, ep_rngs,
-        )
-        # (eps_per_member, max_steps, ...)
-        obs_0_all  = np.array(obs_0_all)
-        obs_1_all  = np.array(obs_1_all)
-        act_0_all  = np.array(act_0_all)
-        act_1_all  = np.array(act_1_all)
+        obs_all, act_all, invalid_all = _rollout_member(member_params, ep_rngs)
+        # obs_all: (eps, max_steps, N, *obs_shape), act_all: (eps, max_steps, N)
+        obs_all = np.array(obs_all)
+        act_all = np.array(act_all)
         invalid_all = np.array(invalid_all)
 
         for ep in range(eps_per_member):
             T = int(np.sum(~invalid_all[ep]))
             if T > 10:
-                all_obs.append(obs_0_all[ep, :T])
-                all_actions.append(act_0_all[ep, :T])
-                all_obs.append(obs_1_all[ep, :T])
-                all_actions.append(act_1_all[ep, :T])
+                for ai in range(num_env_agents):
+                    all_obs.append(obs_all[ep, :T, ai])
+                    all_actions.append(act_all[ep, :T, ai])
 
     print(f"[VAE] Collected {len(all_obs)} trajectories from {N} members")
     return all_obs, all_actions

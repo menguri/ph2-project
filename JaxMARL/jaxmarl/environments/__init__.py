@@ -24,3 +24,4 @@ from .storm import InTheGrid, InTheGrid_2p, InTheMatrix
 from .coin_game import CoinGame
 from .jaxnav import JaxNav
 from .toy_coop import ToyCoop
+from .grid_spread import GridSpread

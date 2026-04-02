@@ -386,6 +386,9 @@ def _make_s2_config(config):
     # S2 shaping horizon
     if "S2_REW_SHAPING_HORIZON" in s2.get("model", {}):
         s2["model"]["REW_SHAPING_HORIZON"] = s2["model"]["S2_REW_SHAPING_HORIZON"]
+    # S2 NUM_ENVS (HSP 논문: S1=100, S2=300)
+    if "S2_NUM_ENVS" in s2.get("model", {}):
+        s2["model"]["NUM_ENVS"] = s2["model"]["S2_NUM_ENVS"]
     return s2
 
 

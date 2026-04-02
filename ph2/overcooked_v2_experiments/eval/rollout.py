@@ -90,6 +90,8 @@ def get_rollout(
     _raw_name = getattr(env, 'name', '')
     if _raw_name == "ToyCoop":
         env_name = "ToyCoop"
+    elif _raw_name == "GridSpread":
+        env_name = "GridSpread"
     elif "MPE" in _raw_name or "Simple" in _raw_name or "Spread" in _raw_name or "Reference" in _raw_name:
         # MPE 환경: SimpleSpreadMPE, SimpleReferenceMPE 등
         env_name = f"MPE_{_raw_name}"

@@ -91,6 +91,7 @@ def make_train(
         env = jaxmarl.make(env_name, **env_kwargs)
 
     ACTION_DIM = env.action_space(env.agents[0]).n
+    is_spread = (env_name == "GridSpread")
     num_partners = env.num_agents - 1  # 2-agent: 1, 3-agent: 2
 
     model_config["ACTION_DIM"] = ACTION_DIM
@@ -517,8 +518,14 @@ def make_train(
                         )
 
                     # action_pick_mask = train_mask_flat
-                    # [Fix] FCP에서도 매 에피소드 랜덤하게 Ego/Partner 역할을 바꾸기 위해 is_ego를 사용
-                    action_pick_mask = is_ego
+                    if is_spread:
+                        # GridSpread: 각 non-ego agent 독립 50% 확률로 pool vs ego
+                        rng, rng_pool = jax.random.split(rng)
+                        _use_ego = jax.random.bernoulli(rng_pool, p=0.5, shape=(model_config["NUM_ACTORS"],))
+                        action_pick_mask = is_ego | _use_ego  # ego 항상 True, 나머지 50%
+                    else:
+                        # [Fix] FCP에서도 매 에피소드 랜덤하게 Ego/Partner 역할을 바꾸기 위해 is_ego를 사용
+                        action_pick_mask = is_ego
                     if use_population_annealing:
                         action_pick_mask = _make_train_mask(population_annealing_mask)
 
@@ -536,9 +543,10 @@ def make_train(
                     # True일 경우 무작위 행동을 선택
                     mix_mask = jax.random.bernoulli(rng_mix, p=e3t_epsilon, shape=(model_config["NUM_ACTORS"],))
                     
-                    # [중요] 파트너 에이전트(partner_actor_mask)인 경우에만 무작위 행동 혼합을 적용
-                    # Ego 에이전트는 자신의 정책을 그대로 따름
-                    mix_mask = mix_mask & partner_actor_mask
+                    # GridSpread: 전원 epsilon 적용 (ego 포함)
+                    # 기존: 파트너만 적용
+                    if not is_spread:
+                        mix_mask = mix_mask & partner_actor_mask
                     
                     # 3. 완전 무작위 행동 샘플링
                     rng, rng_rand = jax.random.split(rng)

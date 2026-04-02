@@ -70,7 +70,7 @@ def visualize_ppo_policy(
     env_kwargs_no_layout.pop("layout", None)
     # ToyCoop, MPE 등 layout 없는 환경 감지
     _env_name = config["env"].get("ENV_NAME", "overcooked_v2")
-    _non_overcooked_envs = ("ToyCoop", "MPE_simple_spread_v3", "MPE_simple_reference_v3")
+    _non_overcooked_envs = ("ToyCoop", "GridSpread", "MPE_simple_spread_v3", "MPE_simple_reference_v3")
     _env_name_override = _env_name if _env_name.startswith("MPE_") or _env_name in _non_overcooked_envs else None
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
@@ -98,24 +98,31 @@ def visualize_ppo_policy(
     # 3) cross-play 모드: 서로 다른 run 조합으로 PolicyPairing 구성
     if cross:
         num_runs = len(run_keys)
+        MAX_CROSS_COMBOS = 300  # self-play 제외 최대 cross-play 조합 수
 
-        # 예: num_actors=2면 (0,1), (1,0), (0,0), (1,1) ...
-        run_combinations = itertools.permutations(range(num_runs), num_actors)
-        run_combinations = list(run_combinations)
+        # self-play 조합은 항상 포함
+        self_play_combos = [[i] * num_actors for i in range(num_runs)]
 
-        # self-play 조합 추가
-        run_combinations += [[i] * num_actors for i in range(num_runs)]
-
-        # 특정 run을 고정 파트너로 쓰고 싶을 때
         if pairing_policy is not None:
-            run_combinations = [
+            # 특정 run을 고정 파트너로 쓰고 싶을 때
+            cross_combos = [
                 [pairing_policy, i] for i in range(num_runs) if i != pairing_policy
-            ]
-            run_combinations += [
+            ] + [
                 [i, pairing_policy] for i in range(num_runs) if i != pairing_policy
             ]
+        else:
+            all_cross_combos = list(itertools.permutations(range(num_runs), num_actors))
+            if len(all_cross_combos) <= MAX_CROSS_COMBOS:
+                cross_combos = [list(c) for c in all_cross_combos]
+            else:
+                # 조합 폭발 방지: 랜덤 샘플링 (GridSpread N≥4, MPE 5a/10a 등)
+                rng = np.random.default_rng(42)
+                indices = rng.choice(len(all_cross_combos), size=MAX_CROSS_COMBOS, replace=False)
+                cross_combos = [list(all_cross_combos[i]) for i in indices]
+                print(f"[EVAL] Cross-play: {len(all_cross_combos)} permutations → sampled {MAX_CROSS_COMBOS}")
 
-        print("Run combinations: ", run_combinations)
+        run_combinations = cross_combos + self_play_combos
+        print(f"Run combinations: {len(run_combinations)} total ({len(cross_combos)} cross + {len(self_play_combos)} self)")
 
         # 각 run의 ckpt_final만 모아놓기
         policy_pairings = [

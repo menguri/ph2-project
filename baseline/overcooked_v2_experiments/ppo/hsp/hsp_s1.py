@@ -22,6 +22,9 @@ from jaxmarl.wrappers.baselines import OvercookedV2LogWrapper, LogWrapper
 import wandb
 
 from overcooked_v2_experiments.ppo.models.rnn import ActorCriticRNN
+from overcooked_v2_experiments.ppo.utils.valuenorm import (
+    ValueNormState, valuenorm_update, valuenorm_normalize, valuenorm_denormalize,
+)
 
 
 class HSPTransition(NamedTuple):
@@ -71,6 +74,7 @@ def make_train_hsp_s1(config):
     model_config["ACTION_DIM"] = ACTION_DIM
 
     num_checkpoints = config.get("NUM_CHECKPOINTS", 3)
+    use_valuenorm = model_config.get("USE_VALUENORM", False)
 
     network = ActorCriticRNN(action_dim=ACTION_DIM, config=model_config)
 
@@ -202,7 +206,7 @@ def make_train_hsp_s1(config):
                 (
                     actor_state, env_state, last_obs, last_done,
                     hstate_0, hstate_1, swap_flags,
-                    ck_buf, update_step, rng,
+                    ck_buf, vn_state, update_step, rng,
                 ) = runner_state
 
                 # ---- ROLLOUT (self-play: 두 agent 모두 동일 params) ----
@@ -328,14 +332,28 @@ def make_train_hsp_s1(config):
                 if model_config.get("USE_REWARD_NORM", True):
                     rewards = rewards / (rewards.std() + 1e-8)
 
+                # ValueNorm: critic 출력을 원래 스케일로 denormalize 후 GAE 계산
+                if use_valuenorm:
+                    gae_values = valuenorm_denormalize(vn_state, traj.critic_value)
+                    gae_last_val = valuenorm_denormalize(vn_state, last_val)
+                else:
+                    gae_values = traj.critic_value
+                    gae_last_val = last_val
+
                 _, advantages = jax.lax.scan(
                     _get_adv,
-                    (jnp.zeros_like(last_val), last_val),
-                    (traj.done, traj.critic_value, rewards),
+                    (jnp.zeros_like(gae_last_val), gae_last_val),
+                    (traj.done, gae_values, rewards),
                     reverse=True,
                     unroll=16,
                 )
-                targets = advantages + traj.critic_value
+                # targets는 원래 스케일의 returns
+                targets = advantages + gae_values
+
+                # ValueNorm: 통계 업데이트 후 targets를 정규화
+                if use_valuenorm:
+                    vn_state = valuenorm_update(vn_state, targets)
+                    targets = valuenorm_normalize(vn_state, targets)
 
                 mb_size = NUM_ENVS // NUM_MINIBATCHES
                 init_h_mb = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
@@ -465,14 +483,16 @@ def make_train_hsp_s1(config):
                 runner_state = (
                     actor_state, env_state, last_obs, last_done,
                     hstate_0, hstate_1, swap_flags,
-                    ck_buf, update_step, rng,
+                    ck_buf, vn_state, update_step, rng,
                 )
                 return runner_state, metric
+
+            vn_state = ValueNormState.create()
 
             init_runner = (
                 actor_state, env_state, last_obs, last_done,
                 hstate_0, hstate_1, swap_flags,
-                ck_buf, jnp.int32(0), rng,
+                ck_buf, vn_state, jnp.int32(0), rng,
             )
             final_runner, metrics = jax.lax.scan(
                 _update_step, init_runner, None, NUM_UPDATES,

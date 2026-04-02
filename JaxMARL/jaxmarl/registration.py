@@ -30,6 +30,7 @@ from .environments import (
     CoinGame,
     JaxNav,
     ToyCoop,
+    GridSpread,
 )
 
 
@@ -122,6 +123,10 @@ def make(env_id: str, **env_kwargs):
     elif env_id == "ToyCoop":
         env = ToyCoop(**env_kwargs)
 
+    # 11. GridSpread
+    elif env_id == "GridSpread":
+        env = GridSpread(**env_kwargs)
+
     return env
 
 registered_envs = [
@@ -156,4 +161,5 @@ registered_envs = [
     "coin_game",
     "jaxnav",
     "ToyCoop",
+    "GridSpread",
 ]

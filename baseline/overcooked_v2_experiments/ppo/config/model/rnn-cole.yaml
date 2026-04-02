@@ -16,11 +16,11 @@
 "MAX_GRAD_NORM": 0.5       # COLE 기본 0.5
 "CLIP_EPS": 0.2
 
-# 병렬 환경 — COLE 원본(1개)에 가깝게 최소화
-"NUM_ENVS": 5
+# 병렬 환경
+"NUM_ENVS": 30
 "NUM_STEPS": 256
 "UPDATE_EPOCHS": 10         # COLE: n_epochs=10
-"NUM_MINIBATCHES": 5        # 5 envs × 2 agents = 10 actors, minibatch=2 actors
+"NUM_MINIBATCHES": 5
 
 # 학습 길이
 "TOTAL_TIMESTEPS": 3e7

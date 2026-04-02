@@ -80,7 +80,7 @@ def visualize_ppo_policy(
     env_kwargs_no_layout.pop("layout", None)
     # ToyCoop, MPE 등 layout 없는 환경 감지
     _env_name = config["env"].get("ENV_NAME", "overcooked_v2")
-    _env_name_override = _env_name if (_env_name == "ToyCoop" or _env_name.startswith("MPE_")) else None
+    _env_name_override = _env_name if (_env_name in ("ToyCoop", "GridSpread") or _env_name.startswith("MPE_")) else None
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,
@@ -364,7 +364,7 @@ def visualize_ppo_policy(
                         ]
                         policy_pairing = PolicyPairing(*policies)
                         _ekw = copy.deepcopy(env_kwargs)
-                        _layout = _ekw.pop("layout", _env_name if (_env_name == "ToyCoop" or _env_name.startswith("MPE_")) else None)
+                        _layout = _ekw.pop("layout", _env_name if (_env_name in ("ToyCoop", "GridSpread") or _env_name.startswith("MPE_")) else None)
                         return eval_pairing(
                             policy_pairing,
                             _layout,

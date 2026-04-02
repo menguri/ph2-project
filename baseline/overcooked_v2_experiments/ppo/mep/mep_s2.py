@@ -22,6 +22,9 @@ from jaxmarl.wrappers.baselines import OvercookedV2LogWrapper, LogWrapper
 import wandb
 
 from overcooked_v2_experiments.ppo.models.rnn import ActorCriticRNN
+from overcooked_v2_experiments.ppo.utils.valuenorm import (
+    ValueNormState, valuenorm_update, valuenorm_normalize, valuenorm_denormalize,
+)
 
 
 class MEPTransition(NamedTuple):
@@ -68,6 +71,7 @@ def make_train_mep_s2(config):
     prioritized_alpha = config.get("MEP_PRIORITIZED_ALPHA", 1.0)
     use_prioritized = config.get("MEP_USE_PRIORITIZED_SAMPLING", True)
     num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
+    use_valuenorm = model_config.get("USE_VALUENORM", False)
 
     network = ActorCriticRNN(action_dim=ACTION_DIM, config=model_config)
 
@@ -179,6 +183,7 @@ def make_train_mep_s2(config):
                 partner_hstate,
                 running_returns,
                 ck_buf,
+                vn_state,
                 update_step,
                 rng,
             ) = runner_state
@@ -373,14 +378,33 @@ def make_train_mep_s2(config):
                 )
                 return (gae, value), gae
 
+            # Reward normalization (HSP 논문 Table 9: use reward normalization=True)
+            rewards = traj.reward
+            if model_config.get("USE_REWARD_NORM", False):
+                rewards = rewards / (rewards.std() + 1e-8)
+
+            # ValueNorm: critic 출력을 원래 스케일로 denormalize 후 GAE 계산
+            if use_valuenorm:
+                gae_values = valuenorm_denormalize(vn_state, traj.critic_value)
+                gae_last_val = valuenorm_denormalize(vn_state, last_val)
+            else:
+                gae_values = traj.critic_value
+                gae_last_val = last_val
+
             _, advantages = jax.lax.scan(
                 _get_adv,
-                (jnp.zeros_like(last_val), last_val),
-                (traj.done, traj.critic_value, traj.reward),
+                (jnp.zeros_like(gae_last_val), gae_last_val),
+                (traj.done, gae_values, rewards),
                 reverse=True,
                 unroll=16,
             )
-            targets = advantages + traj.critic_value
+            # targets는 원래 스케일의 returns
+            targets = advantages + gae_values
+
+            # ValueNorm: 통계 업데이트 후 targets를 정규화
+            if use_valuenorm:
+                vn_state = valuenorm_update(vn_state, targets)
+                targets = valuenorm_normalize(vn_state, targets)
 
             mb_size = NUM_ENVS // NUM_MINIBATCHES
             init_h_mb = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
@@ -418,10 +442,24 @@ def make_train_mep_s2(config):
                     v_cl = mb_val_old + (value - mb_val_old).clip(
                         -model_config["CLIP_EPS"], model_config["CLIP_EPS"]
                     )
-                    critic_loss = 0.5 * jnp.maximum(
-                        jnp.square(value - mb_targets),
-                        jnp.square(v_cl - mb_targets),
-                    ).mean()
+                    # Huber loss (HSP 논문 Table 9: huber loss, delta=10.0)
+                    huber_delta = model_config.get("HUBER_DELTA", 0.0)
+                    if huber_delta > 0:
+                        def _huber(x):
+                            return jnp.where(
+                                jnp.abs(x) <= huber_delta,
+                                0.5 * x ** 2,
+                                huber_delta * (jnp.abs(x) - 0.5 * huber_delta),
+                            )
+                        critic_loss = jnp.maximum(
+                            _huber(value - mb_targets),
+                            _huber(v_cl - mb_targets),
+                        ).mean()
+                    else:
+                        critic_loss = 0.5 * jnp.maximum(
+                            jnp.square(value - mb_targets),
+                            jnp.square(v_cl - mb_targets),
+                        ).mean()
                     entropy = pi.entropy().mean()
                     total = (
                         actor_loss
@@ -507,7 +545,7 @@ def make_train_mep_s2(config):
                 actor_state,
                 env_state, last_obs, last_done,
                 actor_hstate, partner_hstate,
-                new_ret, ck_buf, update_step, rng,
+                new_ret, ck_buf, vn_state, update_step, rng,
             )
             return runner_state, metric
 
@@ -522,11 +560,13 @@ def make_train_mep_s2(config):
         else:
             init_partner_h = jnp.stack([init_h] * num_partners)
 
+        vn_state = ValueNormState.create()
+
         init_runner = (
             actor_state,
             env_state, last_obs, last_done,
             init_h, init_partner_h,
-            running_returns, ck_buf, jnp.int32(0), rng,
+            running_returns, ck_buf, vn_state, jnp.int32(0), rng,
         )
         final_runner, metrics = jax.lax.scan(
             _update_step, init_runner, None, NUM_UPDATES

@@ -9,6 +9,7 @@ import jaxmarl
 from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 from jaxmarl.viz.overcooked_v2_visualizer import OvercookedV2Visualizer
 from jaxmarl.viz.toy_coop_jitted_visualizer import render_state as toy_coop_render_state
+from jaxmarl.viz.grid_spread_visualizer import render_grid as _gs_render_grid, TILE_PIXELS as _GS_TILE
 
 
 def get_recipe_identifier(ingredients: List[int]) -> int:
@@ -54,6 +55,9 @@ def resolve_eval_engine(
                       float(v) if hasattr(v, 'item') else v
                       for k, v in mpe_kwargs.items()}
         return env_name_override, mpe_kwargs
+    if env_name_override == "GridSpread":
+        gs_kwargs = {k: v for k, v in env_kwargs.items() if k != "layout"}
+        return "GridSpread", gs_kwargs
 
     kwargs = dict(env_kwargs)
     kwargs["layout"] = layout
@@ -87,6 +91,10 @@ def make_eval_env(
         mpe_kwargs = _to_python_native({k: v for k, v in env_kwargs.items() if k != "layout"})
         env = jaxmarl.make(env_name_override, **mpe_kwargs)
         return env, env_name_override, mpe_kwargs
+    if env_name_override == "GridSpread":
+        gs_kwargs = _to_python_native({k: v for k, v in env_kwargs.items() if k != "layout"})
+        env = jaxmarl.make("GridSpread", **gs_kwargs)
+        return env, "GridSpread", gs_kwargs
 
     env_name, resolved_kwargs = resolve_eval_engine(
         layout=layout,
@@ -121,6 +129,8 @@ def extract_pos_yx(state, env_name: str):
         pos_x = state.agent_pos[:, 0]
         pos_y = state.agent_pos[:, 1]
         return pos_y, pos_x
+    if env_name == "GridSpread":
+        return state.agent_pos[:, 1], state.agent_pos[:, 0]
     # MPE: p_pos 사용 (x, y 순서)
     if env_name.startswith("MPE_"):
         # MPE state.p_pos: (num_entities, 2) — 에이전트 + 랜드마크
@@ -147,6 +157,12 @@ def render_state_frame(state, env_name: str, agent_view_size: Optional[int] = No
 
     if env_name == "ToyCoop":
         img = toy_coop_render_state(state)
+        return np.asarray(img)
+
+    if env_name == "GridSpread":
+        n_agents = state.agent_pos.shape[0]
+        h = int(jnp.max(state.goal_pos).item()) + 1
+        img = _gs_render_grid(state.agent_pos, state.goal_pos, n_agents, h, h, _GS_TILE)
         return np.asarray(img)
 
     # MPE: 시각화 미지원 (학습/평가에는 불필요)

@@ -187,6 +187,7 @@ def make_train(
         env = jaxmarl.make(env_name, **env_kwargs)
 
     ACTION_DIM = env.action_space(env.agents[0]).n
+    is_spread = (env_name == "GridSpread")
     num_partners = env.num_agents - 1  # 2-agent: 1, 3-agent: 2
     policy_pred_dim = ACTION_DIM * num_partners  # pred_logits 전체 차원
 
@@ -283,6 +284,10 @@ def make_train(
         # ToyCoop: state.agent_pos (2,2) → [x, y] 형태
         if env_name == "ToyCoop":
             pos = log_env_state.env_state.agent_pos  # (NUM_ENVS, 2, 2)
+            return pos[:, :, 1], pos[:, :, 0]  # y, x
+        # GridSpread: state.agent_pos (NUM_ENVS, n_agents, 2) — [x, y]
+        if is_spread:
+            pos = log_env_state.env_state.agent_pos  # (NUM_ENVS, n_agents, 2)
             return pos[:, :, 1], pos[:, :, 0]  # y, x
         # MPE: state.p_pos (NUM_ENVS, num_entities, 2) — 에이전트가 앞쪽
         if _is_mpe:
@@ -1058,11 +1063,18 @@ def make_train(
                             phase2_ind_match_env_state,
                         )
                         ind_match_actor = jnp.tile(phase2_ind_match_env, env.num_agents)
+                        if is_spread:
+                            # GridSpread: spec-ind에서 non-ego agent 독립 50% spec/ind
+                            rng, rng_pool = jax.random.split(rng)
+                            _use_ego = jax.random.bernoulli(rng_pool, p=0.5, shape=(model_config["NUM_ACTORS"],))
+                            spread_ind_mask = is_ego | _use_ego  # ego 항상 ind, 나머지 50%
+
                         if ph2_role == "spec":
                             # spec policy always acts in spec-match; in ind-match it acts as one side only.
+                            _ind_mask = spread_ind_mask if is_spread else train_mask_flat
                             action_pick_mask = jnp.where(
                                 ind_match_actor,
-                                train_mask_flat,
+                                _ind_mask,
                                 jnp.ones_like(train_mask_flat),
                             )
                             # spec updates only on spec-match samples.
@@ -1075,10 +1087,11 @@ def make_train(
                             # ind role:
                             #   ind_match_env=True  -> ind-ind (both actors are ind)
                             #   ind_match_env=False -> spec-ind (ind only on train_mask slots)
+                            _ind_mask = spread_ind_mask if is_spread else train_mask_flat
                             action_pick_mask = jnp.where(
                                 ind_match_actor,
                                 jnp.ones_like(train_mask_flat),
-                                train_mask_flat,
+                                _ind_mask,
                             )
                             # Update only samples where ind policy actually acted
                             # (all actors in ind-ind, train-mask slots in spec-ind).

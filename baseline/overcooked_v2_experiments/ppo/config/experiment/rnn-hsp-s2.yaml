@@ -1,12 +1,13 @@
 # @package _global_
-# HSP Stage 2: Adaptive agent training against selected HSP population (MEP S2와 동일)
+# HSP Stage 2: Adaptive agent training against selected HSP population
+# HSP 논문 Table 9 기준 파라미터 — Uniform sampling (논문: "not prioritized like MEP")
 defaults:
   - override /model: rnn
 
 ALG_NAME: "HSP_S2"
 
-MEP_USE_PRIORITIZED_SAMPLING: True
-MEP_PRIORITIZED_ALPHA: 1.0
+# Uniform sampling (논문 명시)
+MEP_USE_PRIORITIZED_SAMPLING: False
 # HSP_POPULATION_DIR은 런타임에 CLI로 주입: +HSP_POPULATION_DIR=<path>
 
 NUM_SEEDS: 10
@@ -15,17 +16,21 @@ NUM_CHECKPOINTS: 3
 model:
   GRU_HIDDEN_DIM: 64
   FC_DIM_SIZE: 64
-  LR: 0.0003
-  ENT_COEF: 0.01             # 원본 HSP default 0.01
-  VF_COEF: 0.1               # MEP와 동일
+  OBS_ENCODER: "CNNGamma"         # 논문 [32,64,32] 3×3 SAME
+  ACTIVATION: "relu"
+  LR: 5e-4                        # 논문 Table 9: 5e-4
+  ANNEAL_LR: False                 # 논문에 annealing 없음
+  ENT_COEF: 0.01                   # 원본 HSP default 0.01
+  VF_COEF: 1.0                     # 참조 코드 value_loss_coef=1.0
   GAE_LAMBDA: 0.95
-  NUM_ENVS: 64
-  NUM_STEPS: 128
-  UPDATE_EPOCHS: 15           # 원본 HSP ppo_epoch=15
-  NUM_MINIBATCHES: 1          # 원본 HSP num_mini_batch=1
   CLIP_EPS: 0.2
-  MAX_GRAD_NORM: 0.1          # MEP와 동일
-  TOTAL_TIMESTEPS: 3e7
-  REW_SHAPING_HORIZON: 3e7   # S2_TOTAL_TIMESTEPS와 일치
-  ANNEAL_LR: True
-  LR_WARMUP: 0.05
+  MAX_GRAD_NORM: 10.0              # 논문 Table 9: 10.0
+  UPDATE_EPOCHS: 15                # 원본 HSP ppo_epoch=15
+  NUM_MINIBATCHES: 1               # 원본 HSP num_mini_batch=1
+  HUBER_DELTA: 10.0                # 논문 Table 9: huber loss delta=10.0
+  USE_REWARD_NORM: True            # 논문 Table 9: reward normalization=True
+  USE_VALUENORM: True              # 논문 Table 9: use valuenorm=True
+  NUM_ENVS: 200                    # 논문 300 → 200 (GPU 메모리 제약)
+  NUM_STEPS: 400                   # 논문 episode_length=400
+  TOTAL_TIMESTEPS: 3e7             # 30M 유지
+  REW_SHAPING_HORIZON: 3e7         # S2: 전체 학습 기간
