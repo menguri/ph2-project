@@ -57,6 +57,50 @@ def _setup_recompute():
     return overcooked_state_to_jaxmarl_obs, OvercookedGridworld, OvercookedState
 
 
+def _load_mdp_for_layout(layout: str, OvercookedGridworld):
+    """JaxMARL OV2 호환 layout으로 OvercookedGridworld 생성.
+
+    webapp의 custom layout 파일을 우선 사용하고,
+    없으면 overcooked-ai 기본 layout으로 fallback.
+    이렇게 해야 RL 학습/eval (OV2 기준)과 obs shape이 일치함.
+    """
+    # webapp custom layout 경로 (JaxMARL OV2 grid와 일치하도록 만든 layout 파일)
+    webapp_layouts_dir = Path(__file__).resolve().parent.parent.parent / "webapp" / "app" / "game" / "layouts"
+
+    # webapp에서 사용하는 layout 이름 매핑
+    WEBAPP_LAYOUT_MAP = {
+        "counter_circuit": "jaxmarl_counter_circuit",
+        "forced_coord": "jaxmarl_forced_coordination",
+        "cramped_room": "jaxmarl_cramped_room",
+        "asymm_advantages": "jaxmarl_asymmetric_advantages",
+        "coord_ring": "jaxmarl_coordination_ring",
+    }
+
+    webapp_name = WEBAPP_LAYOUT_MAP.get(layout)
+    if webapp_name:
+        layout_file = webapp_layouts_dir / f"{webapp_name}.layout"
+        if layout_file.exists():
+            import json as _json
+            with open(layout_file) as f:
+                layout_dict = _json.loads(f.read())
+            grid = layout_dict.get("grid", layout_dict.get("layout"))
+            if isinstance(grid, str):
+                grid = [list(row) for row in grid.strip().split("\n")]
+            mdp = OvercookedGridworld.from_grid(
+                grid,
+                base_layout_params={"start_order_list": None},
+            )
+            print(f"    [layout] webapp custom layout 사용: {layout_file.name} ({len(grid)}×{len(grid[0])})")
+            return mdp
+
+    # fallback: overcooked-ai 기본 layout
+    overcooked_layout = LAYOUT_NAME_MAP.get(layout, layout)
+    mdp = OvercookedGridworld.from_layout_name(overcooked_layout)
+    h, w = mdp.shape
+    print(f"    [layout] OV1 기본 layout 사용: {overcooked_layout} ({h}×{w})")
+    return mdp
+
+
 def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None,
                        recompute_obs: bool = False):
     """trajectory pickle → 레이아웃/포지션별 numpy arrays."""
@@ -82,14 +126,13 @@ def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None,
         pos = ep.get("human_player_index", 0)
         key = (layout, pos)
 
-        # recompute 모드: layout별 mdp 준비
+        # recompute 모드: layout별 mdp 준비 (JaxMARL OV2 호환 layout 우선 사용)
         if recompute_obs:
             if layout not in mdp_cache:
-                overcooked_layout = LAYOUT_NAME_MAP.get(layout, layout)
                 try:
-                    mdp_cache[layout] = OvercookedGridworld.from_layout_name(overcooked_layout)
+                    mdp_cache[layout] = _load_mdp_for_layout(layout, OvercookedGridworld)
                 except Exception as e:
-                    print(f"  [경고] layout '{layout}' ({overcooked_layout}) mdp 생성 실패: {e}")
+                    print(f"  [경고] layout '{layout}' mdp 생성 실패: {e}")
                     mdp_cache[layout] = None
             mdp = mdp_cache[layout]
 

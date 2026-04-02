@@ -65,6 +65,44 @@ eval_one fcp forced_coord "$B/20260319-052532_p957gjsu_forced_coord_fcp"
 eval_one mep forced_coord "$B/20260319-191438_rbykepcg_forced_coord_m2"
 eval_one ph2 forced_coord "$P/20260324-173318_7b41jx1b_forced_coord_e3t_ph2_e0p2_o2_s3_k1_ct0" "--source ph2"
 
+# ── BC × BC (baseline) ──
+echo -e "\n──── BC × BC ────"
+CUDA_VISIBLE_DEVICES=$GPU python -c "
+import sys; sys.path.insert(0, 'code')
+from policy import setup_pythonpath, BCPolicy
+setup_pythonpath('baseline')
+from overcooked_v2_experiments.eval.policy import PolicyPairing
+from overcooked_v2_experiments.eval.rollout import get_rollout
+from overcooked_v2_experiments.eval.utils import make_eval_env
+import jax, numpy as np, csv, os
+
+layouts = ['cramped_room', 'asymm_advantages', 'coord_ring', 'counter_circuit', 'forced_coord']
+num_seeds = $SEEDS
+
+os.makedirs('results/bc_bc', exist_ok=True)
+rows = []
+for layout in layouts:
+    bc0 = BCPolicy.from_pretrained(f'models/{layout}/pos_0/seed_0')
+    bc1 = BCPolicy.from_pretrained(f'models/{layout}/pos_1/seed_0')
+    pairing = PolicyPairing(bc0, bc1)
+    env, _, _ = make_eval_env(layout, {})
+    rewards = []
+    for si in range(num_seeds):
+        key = jax.random.PRNGKey(si)
+        rollout = get_rollout(pairing, env, key, use_jit=True)
+        rewards.append(float(rollout.total_reward))
+    mean_r = np.mean(rewards)
+    std_r = np.std(rewards)
+    print(f'  BC×BC {layout}: {mean_r:.1f} ± {std_r:.1f}')
+    rows.append([layout, f'{mean_r:.2f}', f'{std_r:.2f}'])
+
+with open('results/bc_bc/scores.csv', 'w', newline='') as f:
+    w = csv.writer(f)
+    w.writerow(['layout', 'mean_reward', 'std_reward'])
+    w.writerows(rows)
+print('점수 저장: results/bc_bc/scores.csv')
+"
+
 echo -e "\n========================================"
-echo "완료. python generate_summary.py 로 요약"
+echo "완료."
 echo "========================================"

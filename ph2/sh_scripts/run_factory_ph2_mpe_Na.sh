@@ -17,9 +17,10 @@ cd "$(dirname "$0")" || exit 1
 # Agent 수 (첫 번째 인자, 기본 3)
 N_AGENTS=${1:-5}
 
-: "${GPUS:=4,5}"
+: "${GPUS:=5,7}"
 : "${SMOKE:=0}"
-: "${CROSS_PLAY_SEEDS:=10}"
+: "${CROSS_PLAY_SEEDS:=1}"
+: "${SKIP_EVAL:=1}"
 
 # 5a 이상에서는 cross-play eval seed 기본 1개
 if [[ "$N_AGENTS" -ge 5 && -z "${CROSS_PLAY_SEEDS_SET:-}" ]]; then
@@ -27,6 +28,7 @@ if [[ "$N_AGENTS" -ge 5 && -z "${CROSS_PLAY_SEEDS_SET:-}" ]]; then
 fi
 
 EXP="rnn-ph2-mpe-3a"
+NAME="rnn-ph2-mpe-${N_AGENTS}a"
 ENV="mpe_spread_${N_AGENTS}a"
 ENV_DEVICE="gpu"
 
@@ -60,8 +62,13 @@ ENV_DEVICE="gpu"
 
 PENALTY_COUNTS=(1 2 3 4)
 
-# cross-play seeds hydra override
+# cross-play seeds / eval skip hydra override
 XPLAY_ARG="--extra +CROSS_PLAY_SEEDS=${CROSS_PLAY_SEEDS}"
+if [[ "$SKIP_EVAL" == "1" ]]; then
+  EVAL_ARG="--extra +EVAL.ENABLED=False"
+else
+  EVAL_ARG=""
+fi
 
 if [[ "$SMOKE" == "1" ]]; then
   TOTAL_TS="--extra model.TOTAL_TIMESTEPS=100000"
@@ -111,7 +118,8 @@ run_ph2_mpe_Na() {
     --ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB" \
     --action-prediction "$ACTION_PREDICTION" \
     --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
-    $XPLAY_ARG $TOTAL_TS
+    --extra "++wandb.name=${NAME}" \
+    $XPLAY_ARG $EVAL_ARG $TOTAL_TS
 
   echo "[PH2-MPE-${N_AGENTS}A] k=${penalty_count} pred=${ACTION_PREDICTION} 완료"
   echo ""

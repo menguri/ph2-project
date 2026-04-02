@@ -17,10 +17,11 @@ cd "$SCRIPT_DIR" || exit 1
 N_AGENTS=${1:-5}
 
 # GPU / 공통 설정
-: "${GPUS:=1,2}"
+: "${GPUS:=0,1}"
 : "${NUM_SEEDS:=10}"
 : "${SMOKE:=0}"
-: "${CROSS_PLAY_SEEDS:=10}"
+: "${CROSS_PLAY_SEEDS:=1}"
+: "${SKIP_EVAL:=1}"
 
 # 5a 이상에서는 cross-play eval seed 기본 1개
 if [[ "$N_AGENTS" -ge 5 && -z "${CROSS_PLAY_SEEDS_SET:-}" ]]; then
@@ -33,14 +34,25 @@ NENVS=256
 NSTEPS=128
 FCP_POP="fcp_populations/${ENV}_sp"
 
-# 3a 이상 공통 experiment config (하이퍼파라미터 동일)
+# 3a 이상 공통 experiment config (하이퍼파라미터 동일, yaml은 3a 공유)
 EXP_SP="rnn-sp-mpe-3a"
 EXP_E3T="rnn-e3t-mpe-3a"
 EXP_FCP="rnn-fcp-mpe-3a"
 EXP_MEP="rnn-mep-mpe-3a"
 
-# cross-play seeds를 hydra override로 전달
+# wandb run name에 실제 agent 수 반영
+NAME_SP="rnn-sp-mpe-${N_AGENTS}a"
+NAME_E3T="rnn-e3t-mpe-${N_AGENTS}a"
+NAME_FCP="rnn-fcp-mpe-${N_AGENTS}a"
+NAME_MEP="rnn-mep-mpe-${N_AGENTS}a"
+
+# cross-play seeds / eval skip을 hydra override로 전달
 XPLAY_ARG="--extra +CROSS_PLAY_SEEDS=${CROSS_PLAY_SEEDS}"
+if [[ "$SKIP_EVAL" == "1" ]]; then
+  EVAL_ARG="--extra +EVAL.ENABLED=False"
+else
+  EVAL_ARG=""
+fi
 
 if [[ "$SMOKE" == "1" ]]; then
   SMOKE_EXTRA="--extra model.TOTAL_TIMESTEPS=100000"
@@ -70,7 +82,8 @@ run_sp() {
     --nenvs "${NENVS}" \
     --nsteps "${NSTEPS}" \
     --tags "sp,mpe,${N_AGENTS}a" \
-    $XPLAY_ARG $SMOKE_EXTRA
+    --extra "++wandb.name=${NAME_SP}" \
+    $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
 # =============================================================================
@@ -117,7 +130,8 @@ run_e3t() {
     --nenvs "${NENVS}" \
     --nsteps "${NSTEPS}" \
     --tags "e3t,mpe,${N_AGENTS}a" \
-    $XPLAY_ARG $SMOKE_EXTRA
+    --extra "++wandb.name=${NAME_E3T}" \
+    $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
 # =============================================================================
@@ -134,7 +148,8 @@ run_mep() {
     --nenvs "${NENVS}" \
     --nsteps "${NSTEPS}" \
     --tags "mep,mpe,${N_AGENTS}a" \
-    $XPLAY_ARG $SMOKE_EXTRA
+    --extra "++wandb.name=${NAME_MEP}" \
+    $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
 # =============================================================================
@@ -156,7 +171,8 @@ run_fcp() {
     --nenvs "${NENVS}" \
     --nsteps "${NSTEPS}" \
     --tags "fcp,mpe,${N_AGENTS}a" \
-    $XPLAY_ARG $SMOKE_EXTRA
+    --extra "++wandb.name=${NAME_FCP}" \
+    $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
 # =============================================================================

@@ -204,6 +204,7 @@ sweep_cramped "$SWEEP_GPUS"  0.0  0.3  0.5  0.5  0.05
 sweep_cramped "$SWEEP_GPUS"  0.0  0.5  0.2  0.2  0.1
 sweep_cramped "$SWEEP_GPUS"  0.0  0.5  0.3  0.3  0.1
 sweep_cramped "$SWEEP_GPUS"  0.0  0.5  0.5  0.5  0.1
+sweep_cramped "$SWEEP_GPUS"  0.0  0.0  0.3  0.3  0.05
 
 # --- Sweep 2: PH1_BETA_END × PH1_NORMAL_PROB (entropy/epsilon 고정) ---
 # sweep_cramped "$SWEEP_GPUS"  0.5  0.0  0.2  0.2  0.01
