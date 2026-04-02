@@ -86,9 +86,13 @@ def get_rollout(
 ) -> PolicyRollout:
     init_hstate, _get_actions = init_rollout(policies, env)
     ph1_enabled = "PH1" in algorithm
-    # ToyCoop은 name 속성으로 구분
-    if hasattr(env, 'name') and env.name == "ToyCoop":
+    # 환경 이름 감지
+    _raw_name = getattr(env, 'name', '')
+    if _raw_name == "ToyCoop":
         env_name = "ToyCoop"
+    elif "MPE" in _raw_name or "Simple" in _raw_name or "Spread" in _raw_name or "Reference" in _raw_name:
+        # MPE 환경: SimpleSpreadMPE, SimpleReferenceMPE 등
+        env_name = f"MPE_{_raw_name}"
     elif hasattr(env, "get_obs_default"):
         env_name = "overcooked_v2"
     else:
@@ -585,7 +589,8 @@ def get_rollout(
     # Calculate mean accuracy per agent
     total_correct = jnp.sum(prediction_correct_seq, axis=0)
     total_count = jnp.sum(prediction_mask_seq, axis=0)
-    prediction_accuracy = jnp.where(total_count > 0, total_correct / total_count, 0.0)
+    safe_count = jnp.maximum(total_count, 1.0)  # NaN 방지
+    prediction_accuracy = jnp.where(total_count > 0, total_correct / safe_count, 0.0)
 
     return PolicyRollout(
         state_seq=state_seq,

@@ -114,6 +114,13 @@ def load_fcp_populations(population_dir: Path):
     fcp_params_shape = jax.tree_util.tree_map(lambda x: x.shape, stacked_populations)
     print("[DEBUG] Final stacked FCP params shape:", fcp_params_shape)
 
+    # checkpoint 복원 시 device가 혼재될 수 있으므로 CPU로 통일
+    # (training 시 jit이 자동으로 적절한 device로 transfer)
+    stacked_populations = jax.tree_util.tree_map(
+        lambda x: jax.device_put(x, jax.devices("cpu")[0]) if hasattr(x, 'device') else x,
+        stacked_populations,
+    )
+
     return stacked_populations, first_fcp_config
 
 

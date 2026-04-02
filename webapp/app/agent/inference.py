@@ -132,12 +132,20 @@ class ModelManager:
                 cfg["PH1_ENABLED"] = False
                 cfg["PH1_STATE_MODE"] = False
             self.network = ph2_get_actor_critic(cfg)
+        elif self.source == "baseline_native":
+            # MEP 등 baseline 네트워크를 직접 사용 (리매핑 없이 원본 params 그대로)
+            self.network = self._build_baseline_network_native()
         else:
-            # baseline 네트워크: ph2 코드로도 로드 가능하지만 param 키 다름
-            # → baseline 모델 코드를 사용해야 함
-            # 하지만 baseline의 relative import 문제로 직접 로드가 복잡
-            # → 대안: ph2의 ActorCriticRNN을 사용하되, param 키를 리매핑
+            # SP, E3T, FCP 등: ph2 네트워크에 param 키 리매핑
             self.network = self._build_baseline_network_via_ph2()
+
+    def _build_baseline_network_native(self):
+        """baseline ActorCriticRNN을 직접 로드하여 원본 params 그대로 사용."""
+        baseline_model_mod = _load_baseline_module("model")
+        network = baseline_model_mod.get_actor_critic(self.config)
+        # baseline initialize_carry도 baseline 모듈에서 가져옴
+        self._baseline_initialize_carry = baseline_model_mod.initialize_carry
+        return network
 
     def _build_baseline_network_via_ph2(self):
         """baseline param 키를 ph2 키로 리매핑 후 ph2 네트워크 사용."""
@@ -173,14 +181,29 @@ class ModelManager:
         """에피소드 시작 시 GRU hidden state 리셋."""
         if self.config is None:
             return
-        self.hidden = ph2_initialize_carry(self.config, batch_size=1)
+        if self.source == "baseline_native":
+            self.hidden = self._baseline_initialize_carry(self.config, batch_size=1)
+        else:
+            self.hidden = ph2_initialize_carry(self.config, batch_size=1)
         self._rng = jax.random.PRNGKey(np.random.randint(0, 2**31))
 
     def _make_forward_fn(self):
         """네트워크별 JIT forward 함수 생성."""
         network = self.network
-        # PH2 ind policy는 blocked_states를 사용하지 않음 (LEARNER_USE_BLOCKED_INPUT=False)
-        # params에 blocked_encoder가 있더라도, ind로 로드된 경우 blocked_states 전달 안 함
+
+        if self.source == "baseline_native":
+            # baseline ActorCriticRNN: actor_only=True로 value head 스킵
+            @jax.jit
+            def _forward(params, hidden, obs, done):
+                x = (obs, done)
+                new_hidden, pi, _value, _pred = network.apply(
+                    {"params": params}, hidden, x, actor_only=True,
+                )
+                return new_hidden, pi.logits
+            self._apply_fn = _forward
+            return
+
+        # PH2 / baseline(리매핑) 경로
         is_ind = (self.source == "ph2")  # PH2는 항상 ind policy 로드
         has_blocked = ("blocked_encoder" in self.params) and (not is_ind)
 

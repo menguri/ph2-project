@@ -112,10 +112,12 @@ class ActorCriticRNN(ActorCriticBase):
             return rnn_state, embedding
 
         # E3T Prediction: use GRU output with stop_gradient as predictor input
+        # num_partners: 2-agent=1, 3-agent=2 → pred_logits 차원이 달라짐
         pred_logits = None
         if use_prediction:
+            num_partners = self.config.get("NUM_PARTNERS", 1)
             pred_logits = PartnerPredictor(
-                action_dim=self.action_dim, name="predictor"
+                action_dim=self.action_dim, num_partners=num_partners, name="predictor"
             )(jax.lax.stop_gradient(embedding))
             embedding = jnp.concatenate([embedding, pred_logits], axis=-1)
 

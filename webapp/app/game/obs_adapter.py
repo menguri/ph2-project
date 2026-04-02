@@ -147,7 +147,8 @@ def overcooked_state_to_jaxmarl_obs(
         inv_ch = start_ch + 5
         held = player.held_object
         if held is not None:
-            inv_val = _encode_dynamic_object(held, is_cooking=False, is_ready=False,
+            is_held_ready = (held.name == "soup" and getattr(held, "is_ready", False))
+            inv_val = _encode_dynamic_object(held, is_cooking=False, is_ready=is_held_ready,
                                               num_ingredients=num_ingredients)
             channels = _bitpacked_to_channels(inv_val, num_ingredients)
             for i, v in enumerate(channels):

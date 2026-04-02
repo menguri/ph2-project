@@ -193,7 +193,7 @@ CycleEncoder(sg(z_hat), sg(a_hat)) → C_prime (D=128)
 - **구조**:
   - `app/main.py` — FastAPI 서버 (JAX CPU-only, `JAX_PLATFORMS=cpu`)
   - `app/agent/loader.py` — Orbax checkpoint GPU→CPU 로드 (metadata 기반 sharding 복원)
-  - `app/agent/inference.py` — ModelManager: SP/E3T/FCP/PH2 모두 지원, PH2는 `params_ind` 자동 선택
+  - `app/agent/inference.py` — ModelManager: SP/E3T/FCP/PH2/MEP 모두 지원, PH2는 `params_ind` 자동 선택
   - `app/game/engine.py` — GameSession: overcooked-ai 환경 래핑, JaxMARL layout 호환
   - `app/game/obs_adapter.py` — overcooked-ai state → JaxMARL obs (H,W,C) 변환
   - `app/game/layouts/` — JaxMARL layout을 overcooked-ai `.layout` 파일로 변환 (grid 크기 일치)
@@ -201,7 +201,8 @@ CycleEncoder(sg(z_hat), sg(a_hat)) → C_prime (D=128)
   - `app/db/models.py` — SQLite: Participant, Episode(collisions/deliveries), SurveyResponse(7문항)
   - `frontend/` — Vanilla JS SPA: canvas 렌더링, i18n(한/영), layout 선택
 - **모델 디렉토리**: `webapp/models/{layout}/{algo}/{run}/ckpt_final/`
-  - 5 layout × 4 algo (sp, e3t, fcp, ph2) = 20 checkpoints
+  - 5 layout × 5 algo (sp, e3t, fcp, ph2, mep) = 225 checkpoints
+  - mep 모델은 `baseline/runs/` 의 `_m2` run에서 복사
 - **JaxMARL 환경 호환**:
   - 재료 3개 자동 요리 (interact로 조기 요리 시작 차단 — `_patch_mdp_no_early_cook`)
   - layout grid 크기 일치 (counter_circuit: 5×8 등)
@@ -217,12 +218,40 @@ CycleEncoder(sg(z_hat), sg(a_hat)) → C_prime (D=128)
 - `PH1_RAW_DISTANCE` config flag 추가 (기본값 `false` → MLP latent, `true` → 기존 raw L2)
 - 기존 forward pass에서 이미 `blocked_emb_slots`를 계산하고 있었으나 ToyCoop에서만 무시하고 있었음 → 해당 분기 조건을 `env_name == "ToyCoop"` → `ph1_raw_distance`로 변경
 
+### Webapp: MEP 알고리즘 호환 + obs_adapter 버그 수정 (2026-04-01)
+- **MEP 모델 추가**: `baseline/runs/` 의 `_m2` run에서 5개 레이아웃 × 10 runs의 ckpt_final을 `webapp/models/{layout}/mep/` 로 복사
+- **MEP 로드 경로 분리** (`app/agent/inference.py`, `app/agent/loader.py`)
+  - `detect_model_source()`: ALG_NAME에 "MEP" 포함 시 `"baseline_native"` 반환
+  - `_build_baseline_network_native()`: baseline `ActorCriticRNN`을 importlib로 직접 로드, `actor_only=True`로 forward (value head 없이 추론)
+  - SP/E3T/FCP는 기존 PH2 리매핑 경로 유지, PH2는 기존 경로 유지
+  - MEP 체크포인트에는 value head (Dense_2/3) params가 저장되지 않으므로, baseline 코드의 `actor_only=True` 옵션으로 value head를 스킵
+- **obs_adapter 버그 수정** (`app/game/obs_adapter.py`)
+  - 플레이어가 완성된 수프를 들고 있을 때 `is_ready=False` 하드코딩 → `getattr(held, "is_ready", False)` 로 수정
+  - 수정 전: held soup의 PLATE=0, COOKED=0 (잘못된 인코딩)
+  - 수정 후: held soup의 PLATE=1, COOKED=1 (JaxMARL 일치)
+- **config.yaml**: `algo_filter: ["ph2"]` → `["ph2", "sp", "e3t", "fcp", "mep"]` 전 알고리즘 활성화
+- **Obs/Action 호환성 검증 완료**: 5개 레이아웃 × 10개 시나리오 (양파 픽업~수프 배달) 전부 PASS
+  - `webapp/scripts/test_cooperation_scenarios.py` 신규 생성
+
+### Human-Proxy BC 파이프라인 (2026-04-01 검증)
+- **위치**: `human-proxy/`
+- **3단계 파이프라인**: extract → train → evaluate
+  1. `python code/extract.py --traj-dir ../webapp/data/trajectories --out-dir data/bc`
+     - webapp trajectory pkl → 레이아웃/포지션별 `obs.npy + actions.npy` 변환
+     - `--recompute-obs` 옵션으로 state dict에서 obs 재계산 가능
+  2. `python code/train.py --layout cramped_room --position 0 --num-seeds 5`
+     - CNN 기반 BCModel (Conv32→Conv32→FC64→FC6), pickle 저장
+  3. `bash sh_scripts/eval_with_bc.sh ALGO_DIR LAYOUT [NUM_EVAL_SEEDS]`
+     - runs/ 폴더 지정으로 BC × RL cross-play 평가 (ph2/baseline 자동 감지)
+- **현재 상태**: cramped_room만 BC 학습 완료 (5 seeds × 2 positions), eval 완료
+
 ### 현재 작업 중
 - (없음)
 
 ### 향후 진행 예정
 - `USE_CT=1 bash run_factory_ph2.sh`로 CT 모드 훈련 실행 및 검증
-- Webapp: Docker + nginx 배포, ngrok 외부 접속, 동시 접속 부하 테스트
+- Webapp: Docker + nginx 배포, 동시 접속 부하 테스트
+- Human-Proxy: 나머지 4개 레이아웃 BC 학습 + eval
 
 ---
 

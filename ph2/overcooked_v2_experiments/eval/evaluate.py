@@ -171,10 +171,12 @@ def eval_pairing(
     disable_old_overcooked_auto = True
 
     env_kwargs = copy.deepcopy(env_kwargs)
-    # ToyCoop 환경 감지: layout_name이 "ToyCoop" 이거나 env_kwargs에 layout이 없는 경우
+    # ToyCoop, MPE 환경 감지
     _env_name_override = None
     if layout_name == "ToyCoop" or (not layout_name and "layout" not in env_kwargs):
         _env_name_override = "ToyCoop"
+    elif layout_name is not None and str(layout_name).startswith("MPE_"):
+        _env_name_override = str(layout_name)
     engine_name, _resolved_probe_kwargs = resolve_eval_engine(
         layout_name,
         env_kwargs,
@@ -182,9 +184,10 @@ def eval_pairing(
         disable_auto=disable_old_overcooked_auto,
         env_name_override=_env_name_override,
     )
-    if engine_name not in ("overcooked_v2", "ToyCoop"):
+    _valid_engines = ("overcooked_v2", "ToyCoop")
+    if engine_name not in _valid_engines and not engine_name.startswith("MPE_"):
         raise RuntimeError(
-            f"Eval engine must be overcooked_v2 or ToyCoop, got '{engine_name}'"
+            f"Eval engine must be overcooked_v2, ToyCoop, or MPE_*, got '{engine_name}'"
         )
 
     if value_analysis:
@@ -374,28 +377,39 @@ def eval_pairing(
         keys = jax.random.split(key, num_seeds)
         annotations = [f"seed-{i}" for i in range(num_seeds)]
 
+        _eval_use_jit = True
+
         if no_viz:
-            # JIT + lax.scan으로 배치 실행
-            def _rollout_seed_body(carry, key):
-                rollout = get_rollout(
-                    policies,
-                    env,
-                    key,
-                    algorithm=algorithm,
+            if _eval_use_jit:
+                # JIT + lax.scan으로 배치 실행 (CNN 전용)
+                def _rollout_seed_body(carry, key):
+                    rollout = get_rollout(
+                        policies, env, key,
+                        algorithm=algorithm,
                         ph1_forced_tilde_state=ph1_forced_tilde_state,
-                    use_jit=True,
-                )
-                return carry, rollout
-            _, rollouts = jax.lax.scan(_rollout_seed_body, None, keys)
+                        use_jit=True,
+                    )
+                    return carry, rollout
+                _, rollouts = jax.lax.scan(_rollout_seed_body, None, keys)
+            else:
+                # MLP: Python loop + use_jit=False (flax tracer 충돌 방지)
+                rollout_list = []
+                for ki in range(num_seeds):
+                    r = get_rollout(
+                        policies, env, keys[ki],
+                        algorithm=algorithm,
+                        ph1_forced_tilde_state=ph1_forced_tilde_state,
+                        use_jit=False,
+                    )
+                    rollout_list.append(r)
+                rollouts = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *rollout_list)
         else:
-            # viz 모드: seed 1개만 JIT으로 롤아웃, 렌더링은 Python 루프
+            # viz 모드: seed 1개만 롤아웃, 렌더링은 Python 루프
             rollout_viz = get_rollout(
-                policies,
-                env,
-                keys[0],
+                policies, env, keys[0],
                 algorithm=algorithm,
                 ph1_forced_tilde_state=ph1_forced_tilde_state,
-                use_jit=True,
+                use_jit=_eval_use_jit,
             )
             rollouts = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, 0), rollout_viz)
             annotations = ["seed-0"]

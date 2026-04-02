@@ -1,0 +1,22 @@
+# @package _global_
+# MPE 환경 전용 FCP config.
+defaults:
+  - override /model: rnn
+
+ALG_NAME: "FCP"
+
+model:
+  OBS_ENCODER: "MLP"
+  LR: 0.0005
+  NUM_ENVS: 256
+  NUM_STEPS: 128
+  NUM_MINIBATCHES: 4
+  ACTIVATION: "tanh"
+  UPDATE_EPOCHS: 4
+  TOTAL_TIMESTEPS: 1e7
+  ENT_COEF: 0.01
+  VF_COEF: 1.0
+  MAX_GRAD_NORM: 0.5
+  CLIP_EPS: 0.3
+  GRU_HIDDEN_DIM: 128
+  FC_DIM_SIZE: 128

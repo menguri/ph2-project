@@ -99,10 +99,39 @@ def load_checkpoint(run_dir, run_num, checkpoint, policy_source="params"):
 
     orbax_checkpointer = ocp.PyTreeCheckpointer()
 
-    ckpt = orbax_checkpointer.restore(checkpoint_dir, item=None)
+    import jax
+    from jax.sharding import SingleDeviceSharding
+
+    try:
+        ckpt = orbax_checkpointer.restore(checkpoint_dir, item=None)
+    except (ValueError, TypeError, AttributeError):
+        # GPU sharding metadata 충돌 → 현재 device의 SingleDeviceSharding으로 복원
+        metadata = orbax_checkpointer.metadata(checkpoint_dir)
+        target_sharding = SingleDeviceSharding(jax.devices()[0])
+        def _make_restore_args(meta):
+            if hasattr(meta, 'shape'):
+                return ocp.ArrayRestoreArgs(sharding=target_sharding)
+            return ocp.RestoreArgs()
+        restore_args = jax.tree_util.tree_map(_make_restore_args, metadata)
+        ckpt = orbax_checkpointer.restore(checkpoint_dir, restore_args=restore_args)
+
+    # orbax 복원 시 config의 숫자 값이 JAX ArrayImpl로 변환될 수 있음
+    # → Python native로 변환하여 flax init 시 tracer 충돌 방지
+    config = _convert_config_to_native(ckpt["config"])
 
     params = _select_policy_params(ckpt, policy_source=policy_source)
-    return ckpt["config"], params
+    return config, params
+
+
+def _convert_config_to_native(config):
+    """config dict의 JAX ArrayImpl 값을 Python native로 변환."""
+    if isinstance(config, dict):
+        return {k: _convert_config_to_native(v) for k, v in config.items()}
+    if isinstance(config, (list, tuple)):
+        return type(config)(_convert_config_to_native(v) for v in config)
+    if hasattr(config, 'item'):
+        return config.item()
+    return config
 
 
 def load_all_checkpoints(run_dir, final_only=True, skip_initial=False, policy_source="params"):

@@ -148,7 +148,8 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True
     # Calculate mean accuracy per agent
     total_correct = jnp.sum(prediction_correct_seq, axis=0)
     total_count = jnp.sum(prediction_mask_seq, axis=0)
-    prediction_accuracy = jnp.where(total_count > 0, total_correct / total_count, 0.0)
+    safe_count = jnp.maximum(total_count, 1.0)  # 0 → 1로 대체하여 NaN 방지
+    prediction_accuracy = jnp.where(total_count > 0, total_correct / safe_count, 0.0)
 
     return PolicyRollout(
         state_seq=state_seq,

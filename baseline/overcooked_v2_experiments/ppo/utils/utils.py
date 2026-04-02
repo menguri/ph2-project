@@ -102,6 +102,10 @@ def get_run_base_dir(run_id: str, config) -> str:
     # ToyCoop + random_reset → layout_name에 _Ran suffix 추가
     if layout_name == "ToyCoop" and config["env"].get("ENV_KWARGS", {}).get("random_reset", False):
         layout_name = "ToyCoop_Ran"
+    # 3+ agent 환경 → layout_name에 _3a suffix 추가 (2-agent는 생략)
+    _num_agents = config["env"].get("ENV_KWARGS", {}).get("num_agents", 2)
+    if _num_agents >= 3:
+        layout_name = f"{layout_name}_{_num_agents}a"
 
     results_dir = "runs"
     if optional_prefix != "":

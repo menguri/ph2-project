@@ -257,7 +257,7 @@ def single_run_with_viz(config):
         do_eval = True
 
     if do_eval:
-        cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 100)
+        cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 10)
         print(f"[EVAL] cross-play 평가 (num_seeds={cross_seeds}, no_viz=True)")
         print(f"[EVAL] → reward_summary_cross.csv 저장 위치: {run_base_dir}")
         visualize_ppo_policy(

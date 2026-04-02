@@ -10,12 +10,25 @@ def visualize_cross_play_matrix(csv_file):
     # Read the CSV file into a DataFrame
     df = pd.read_csv(csv_file)
 
-    # Split the policy_labels into two separate columns for better visualization
-    df[["policy_1", "policy_2"]] = (
+    # Split the policy_labels into separate columns for visualization
+    # 2-agent: "cross-0_1" → ["0", "1"], 3-agent: "cross-0_1_2" → ["0", "1", "2"]
+    split_labels = (
         df["policy_labels"]
         .str.replace("cross-", "", regex=False)
         .str.split("_", expand=True)
     )
+    num_agents = split_labels.shape[1]
+    if num_agents == 2:
+        df[["policy_1", "policy_2"]] = split_labels
+    else:
+        # 3+ agent: 모든 agent 인덱스를 컬럼으로 저장
+        for i in range(num_agents):
+            df[f"policy_{i+1}"] = split_labels[i]
+
+    # 3+ agent에서는 2D heatmap 불가 → CSV만 저장하고 리턴
+    if num_agents > 2:
+        print(f"[INFO] {num_agents}-agent cross-play: 2D heatmap 생략 (CSV에 결과 저장됨)")
+        return
 
     # Pivot the DataFrame to get the average total_reward for each cross-play pair
     pivot_table = df.pivot_table(

@@ -111,14 +111,20 @@ def eval_pairing(
     algorithm="PPO",
     old_overcooked=False,
     disable_old_overcooked_auto=False,
+    env=None,
 ):
     assert not (
         all_recipes and num_seeds is not None
     ), "Only one of all_recipes and num_seeds can be set"
     assert "layout" not in env_kwargs, "Layout should be passed as layout_name"
 
-    # ToyCoop 감지: layout_name이 "ToyCoop"이면 env_name_override 설정
-    _env_name_override = "ToyCoop" if layout_name == "ToyCoop" else None
+    # ToyCoop, MPE 감지: layout_name에서 env_name_override 설정
+    if layout_name == "ToyCoop":
+        _env_name_override = "ToyCoop"
+    elif layout_name is not None and str(layout_name).startswith("MPE_"):
+        _env_name_override = str(layout_name)
+    else:
+        _env_name_override = None
 
     if all_recipes:
         engine_name, _tmp_kwargs = None, None
@@ -144,26 +150,44 @@ def eval_pairing(
         ]
 
     else:
-        env, engine_name, _resolved_kwargs = make_eval_env(
-            layout_name,
-            env_kwargs,
-            old_overcooked=old_overcooked,
-            disable_auto=disable_old_overcooked_auto,
-            env_name_override=_env_name_override,
-        )
+        if env is None:
+            env, engine_name, _resolved_kwargs = make_eval_env(
+                layout_name,
+                env_kwargs,
+                old_overcooked=old_overcooked,
+                disable_auto=disable_old_overcooked_auto,
+                env_name_override=_env_name_override,
+            )
+        else:
+            engine_name = _env_name_override or "overcooked_v2"
 
         keys = jax.random.split(key, num_seeds)
         annotations = [f"seed-{i}" for i in range(num_seeds)]
 
+        _eval_use_jit = True
+        # DEBUG: params 구조 확인
+        for pi, p in enumerate(policies):
+            if hasattr(p, 'params'):
+                pk = list(p.params.keys()) if isinstance(p.params, dict) else type(p.params)
+                print(f"[EVAL-DEBUG] policy[{pi}].params keys: {pk}")
+
         if no_viz:
-            # JIT + lax.scan으로 배치 실행
-            def _rollout_seed_body(carry, key):
-                rollout = get_rollout(policies, env, key, algorithm=algorithm, use_jit=True)
-                return carry, rollout
-            _, rollouts = jax.lax.scan(_rollout_seed_body, None, keys)
+            if _eval_use_jit:
+                # JIT + lax.scan으로 배치 실행 (CNN 전용, 기존 코드)
+                def _rollout_seed_body(carry, key):
+                    rollout = get_rollout(policies, env, key, algorithm=algorithm, use_jit=True)
+                    return carry, rollout
+                _, rollouts = jax.lax.scan(_rollout_seed_body, None, keys)
+            else:
+                # MLP encoder: Python loop + 개별 rollout (flax tracer 충돌 방지)
+                rollout_list = []
+                for ki in range(num_seeds):
+                    r = get_rollout(policies, env, keys[ki], algorithm=algorithm, use_jit=False)
+                    rollout_list.append(r)
+                rollouts = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *rollout_list)
         else:
-            # viz 모드: seed 1개만 JIT으로 롤아웃, 렌더링은 Python 루프
-            rollout_viz = get_rollout(policies, env, keys[0], algorithm=algorithm, use_jit=True)
+            # viz 모드: seed 1개만 롤아웃, 렌더링은 Python 루프
+            rollout_viz = get_rollout(policies, env, keys[0], algorithm=algorithm, use_jit=_eval_use_jit)
             rollouts = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, 0), rollout_viz)
             annotations = ["seed-0"]
 

@@ -63,6 +63,15 @@ get_fcp_path() {
         "toy_coop")
             echo "fcp_populations/toy_coop_sp"
             ;;
+        "mpe_spread")
+            echo "fcp_populations/mpe_spread_sp"
+            ;;
+        "mpe_reference")
+            echo "fcp_populations/mpe_reference_sp"
+            ;;
+        "mpe_spread_3a")
+            echo "fcp_populations/mpe_spread_3a_sp"
+            ;;
         *)
             echo ""
             ;;

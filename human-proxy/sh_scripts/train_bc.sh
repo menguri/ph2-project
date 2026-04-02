@@ -1,5 +1,5 @@
 #!/bin/bash
-# BC 모델 훈련 — 레이아웃별, 포지션(0/1)별, 5 seeds
+# BC 모델 훈련 — 레이아웃별, 포지션(0/1)별, seed 1개
 #
 # 사용법:
 #   bash sh_scripts/train_bc.sh cramped_room          # 단일 레이아웃
@@ -10,12 +10,12 @@ LAYOUT=${1:-"cramped_room"}
 
 for pos in 0 1; do
     echo "========================================"
-    echo "Training BC: layout=$LAYOUT, position=$pos"
+    echo "Training BC: layout=$LAYOUT, position=$pos, seed=1"
     echo "========================================"
     python code/train.py \
         --layout "$LAYOUT" \
         --position "$pos" \
-        --num-seeds 5
+        --num-seeds 1
     echo ""
 done
 

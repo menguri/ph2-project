@@ -187,9 +187,11 @@ def make_train(
         env = jaxmarl.make(env_name, **env_kwargs)
 
     ACTION_DIM = env.action_space(env.agents[0]).n
-    policy_pred_dim = ACTION_DIM
+    num_partners = env.num_agents - 1  # 2-agent: 1, 3-agent: 2
+    policy_pred_dim = ACTION_DIM * num_partners  # pred_logits 전체 차원
 
     model_config["ACTION_DIM"] = ACTION_DIM
+    model_config["NUM_PARTNERS"] = num_partners
     model_config["NUM_ACTORS"] = env.num_agents * model_config["NUM_ENVS"]
     model_config["NUM_UPDATES"] = (
         model_config["TOTAL_TIMESTEPS"]
@@ -275,33 +277,52 @@ def make_train(
     else:
         env = LogWrapper(env, replace_info=False)
 
+    _is_mpe = env_name.startswith("MPE_")
+
     def _extract_pos_axes(log_env_state):
         # ToyCoop: state.agent_pos (2,2) → [x, y] 형태
         if env_name == "ToyCoop":
             pos = log_env_state.env_state.agent_pos  # (NUM_ENVS, 2, 2)
             return pos[:, :, 1], pos[:, :, 0]  # y, x
+        # MPE: state.p_pos (NUM_ENVS, num_entities, 2) — 에이전트가 앞쪽
+        if _is_mpe:
+            pos = log_env_state.env_state.p_pos  # (NUM_ENVS, num_entities, 2)
+            return pos[:, :env.num_agents, 1], pos[:, :env.num_agents, 0]  # y, x
         return log_env_state.env_state.agents.pos.y, log_env_state.env_state.agents.pos.x
 
     def _extract_global_full_obs(log_env_state):
+        # MPE: state = concat(obs_agent0, obs_agent1) → 28차원 (spread 기준)
+        # 양쪽 에이전트 정보를 합쳐서 global state로 사용 (egocentric 좌표계 문제 해소)
+        if _is_mpe:
+            obs_dict = jax.vmap(env.get_obs)(log_env_state.env_state)
+            all_obs = jnp.concatenate(
+                [obs_dict[a].astype(jnp.float32) for a in env.agents], axis=-1
+            )  # (NUM_ENVS, obs_dim * num_agents) e.g. (NUM_ENVS, 28)
+            return all_obs
         full = jax.vmap(env.get_obs_default)(log_env_state.env_state)
         return full[:, 0].astype(jnp.float32)
 
     def _extract_global_full_obs_per_actor(log_env_state):
-        """OV2용: 각 actor 자신의 시점에서 full global obs 반환.
+        """각 actor 자신의 시점에서 full global obs 반환.
 
-        agent 0의 obs: self=agent0, other=agent1
-        agent 1의 obs: self=agent1, other=agent0
-        CT recon target이 ego 자신의 시점에서 full state를 재구성하도록 한다.
         반환 순서는 obs_batch와 동일: [agent0_env0..N, agent1_env0..N]
 
         Returns:
-            (NUM_ACTORS, H, W, C_full) — obs_batch와 동일한 actor 순서
+            (NUM_ACTORS, *obs_shape) — obs_batch와 동일한 actor 순서
         """
+        if _is_mpe:
+            # MPE: 모든 actor에 대해 동일한 global state = concat(obs_0, obs_1)
+            obs_dict = jax.vmap(env.get_obs)(log_env_state.env_state)
+            global_state = jnp.concatenate(
+                [obs_dict[a].astype(jnp.float32) for a in env.agents], axis=-1
+            )  # (NUM_ENVS, 28)
+            # 모든 actor에 동일한 global state 제공 (agent-invariant)
+            return jnp.tile(global_state, [env.num_agents, 1])  # (NUM_ACTORS, 28)
         full = jax.vmap(env.get_obs_default)(log_env_state.env_state)
         # full: (NUM_ENVS, num_agents, H, W, C_full)
-        agent0_full = full[:, 0].astype(jnp.float32)  # (NUM_ENVS, H, W, C_full)
-        agent1_full = full[:, 1].astype(jnp.float32)  # (NUM_ENVS, H, W, C_full)
-        return jnp.concatenate([agent0_full, agent1_full], axis=0)  # (NUM_ACTORS, H, W, C_full)
+        # N-agent 일반화: 각 agent의 full obs를 순서대로 concat
+        per_agent = [full[:, i].astype(jnp.float32) for i in range(env.num_agents)]
+        return jnp.concatenate(per_agent, axis=0)  # (NUM_ACTORS, H, W, C_full)
 
     # Wrap reset/step with backend-specific jits if ENV_DEVICE explicitly set.
     reset_fn = env.reset
@@ -377,6 +398,12 @@ def make_train(
     )
     ego_actor_mask = actor_indices == 0
     partner_actor_mask = actor_indices == (env.num_agents - 1)
+
+    # 3+ agent action prediction용: 각 agent의 partner indices (obs 순서: 자기 제외, index 정렬)
+    if num_partners > 1:
+        _partner_map = jnp.array([
+            sorted(set(range(env.num_agents)) - {i}) for i in range(env.num_agents)
+        ])  # (num_agents, num_partners)
 
     use_population_annealing = False
     if "POPULATION_ANNEAL_HORIZON" in config:
@@ -697,15 +724,14 @@ def make_train(
                 is_ego = (actor_indices == target_ego_idxs)
                 partner_actor_mask = ~is_ego
 
-                # partner 위치 계산 (env.num_agents == 2 가정)
+                # partner 위치 계산 (N-agent 일반화)
                 pos_y, pos_x = _extract_pos_axes(env_state)
-                partner_idxs = (ego_idxs + 1) % env.num_agents
-                # 환경 인덱스를 생성하여 정확히 매칭 (128개의 환경에서 각각 지정된 파트너의 값 추출)
                 env_range = jnp.arange(model_config["NUM_ENVS"])
-
-                partner_y = pos_y[partner_idxs, env_range] # 결과 shape: (128,)
-                partner_x = pos_x[partner_idxs, env_range] # 결과 shape: (128,)
-                partner_pos = jnp.stack([partner_y, partner_x], axis=-1) # 결과 shape: (128, 2)
+                # 첫 번째 partner (backward compat용)
+                partner_idxs = (ego_idxs + 1) % env.num_agents
+                partner_y = pos_y[partner_idxs, env_range]
+                partner_x = pos_x[partner_idxs, env_range]
+                partner_pos = jnp.stack([partner_y, partner_x], axis=-1)  # (NUM_ENVS, 2)
 
                 # 에피소드 종료 시 blocked target 재샘플링
                 if config.get("PH1_ENABLED", False):
@@ -853,7 +879,11 @@ def make_train(
                     # blocked_states_env: (Envs, ...)  <-- Same target for both agents
                     # Agent order is [Ag0_E0...Ag0_En, Ag1_E0...Ag1_En] (Agent-Major)
 
-                    blocked_states_actor = jnp.concatenate([blocked_states_env, blocked_states_env], axis=0)
+                    # N-agent 일반화: env-level blocked state를 모든 agent에 복제
+                    blocked_states_actor = jnp.tile(
+                        blocked_states_env,
+                        [env.num_agents] + [1] * (blocked_states_env.ndim - 1)
+                    )
                     
                 else:
                     blocked_states_actor = jnp.full(
@@ -898,10 +928,14 @@ def make_train(
                 )
 
                 # [STA-PH1] Handle Extra Return (Latent Embeddings)
-                # ToyCoop 전용: pool 미충전 시 -1.0 blocked states → 0.0 대체 (LayerNorm NaN 방지)
+                # ToyCoop/MPE: pool 미충전 시 -1.0 blocked states → 0.0 대체 (LayerNorm NaN 방지)
                 _blocked_input = blocked_states_actor if learner_use_blocked_input else None
-                if _blocked_input is not None and env_name == "ToyCoop":
+                if _blocked_input is not None and (env_name == "ToyCoop" or _is_mpe):
                     _blocked_input = jnp.where(_blocked_input == -1.0, 0.0, _blocked_input)
+                # MPE (1D obs): ac_in에 time dim(np.newaxis)을 추가하므로 blocked_states도 동일하게 맞춤.
+                # OV2 (grid obs): 이미 CNN이 batch dim을 처리하므로 newaxis 불필요.
+                if _blocked_input is not None and _is_mpe:
+                    _blocked_input = _blocked_input[np.newaxis, :]
 
                 net_out = network.apply(
                     train_state.params,
@@ -1238,8 +1272,10 @@ def make_train(
                     and ("blocked_emb" in ph1_extras)
                     and (ph1_extras["blocked_emb"] is not None)
                 ):
-                    global_full_next_actor = jnp.concatenate(
-                        [global_full_next_env0, global_full_next_env0], axis=0
+                    # N-agent 일반화: env-level global obs를 모든 agent에 복제
+                    global_full_next_actor = jnp.tile(
+                        global_full_next_env0,
+                        [env.num_agents] + [1] * (global_full_next_env0.ndim - 1)
                     )  # (Actors, H, W, C_full)
 
                     if ph1_raw_distance:
@@ -1374,22 +1410,29 @@ def make_train(
                 # - shaped_reward는 환경이 제공하는 중간 단계 보상 (예: 재료 집기, 냄비에 넣기 등)
                 # - 학습 초반에는 쉐이핑 보상이 크게 반영되어 학습 신호가 풍부하고,
                 # - 학습 후반에는 anneal_factor가 0에 가까워져 원본 보상만 사용 (과최적화 방지)
-                reward = jax.tree_util.tree_map(
-                    lambda x, y: x + y * anneal_factor, reward, info["shaped_reward"]
-                )
+                if "shaped_reward" in info:
+                    reward = jax.tree_util.tree_map(
+                        lambda x, y: x + y * anneal_factor, reward, info["shaped_reward"]
+                    )
                 reward_for_update = reward
                 if ph2_match_schedule and (ph2_role == "ind"):
                     # ind learner update should use pure reward path (no blocking penalty).
-                    reward_for_update = jax.tree_util.tree_map(
-                        lambda x, y: x + y * anneal_factor,
-                        reward_no_penalty,
-                        info["shaped_reward"],
-                    )
+                    if "shaped_reward" in info:
+                        reward_for_update = jax.tree_util.tree_map(
+                            lambda x, y: x + y * anneal_factor,
+                            reward_no_penalty,
+                            info["shaped_reward"],
+                        )
+                    else:
+                        reward_for_update = reward_no_penalty
 
                 # penalty 포함/미포함 reward 모두 로깅
-                shaped_reward = jnp.array(
-                    [info["shaped_reward"][a] for a in env.agents]
-                )
+                if "shaped_reward" in info:
+                    shaped_reward = jnp.array(
+                        [info["shaped_reward"][a] for a in env.agents]
+                    )
+                else:
+                    shaped_reward = jnp.zeros((env.num_agents, model_config["NUM_ENVS"]))
                 combined_reward = jnp.array([reward[a] for a in env.agents])
                 combined_reward_no_penalty = (
                     jnp.array([reward_no_penalty[a] for a in env.agents])
@@ -1499,10 +1542,18 @@ def make_train(
 
                 # E3T: 현재 스텝의 파트너 행동 (Target Label)
                 # action (원본 정책 샘플)을 기준으로 계산 (action_for_env는 epsilon 혼합 후 값)
-                current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
+                if env.num_agents == 2:
+                    # 2-agent: jnp.roll로 agent0↔agent1 swap
+                    current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
+                else:
+                    # 3+ agent: obs 순서대로 각 partner의 action을 gather
+                    _acts = action.squeeze().reshape(env.num_agents, model_config["NUM_ENVS"])
+                    _gathered = _acts[_partner_map]  # (num_agents, num_partners, NUM_ENVS)
+                    current_partner_action = _gathered.transpose(0, 2, 1).reshape(-1, num_partners)
 
                 # partner GRU z (v3 또는 Z_PREDICTION: partner의 GRU hidden state를 supervision으로 사용)
-                if transformer_v3 or z_prediction_enabled:
+                # 주의: jnp.roll은 2-agent 전용. 3+ agent에서는 비활성화.
+                if (transformer_v3 or z_prediction_enabled) and env.num_agents == 2:
                     _raw_gru = hstate[0] if transformer_action else hstate
                     current_partner_gru_z = jax.lax.stop_gradient(
                         jnp.roll(_raw_gru, shift=model_config["NUM_ENVS"], axis=0)
@@ -1516,12 +1567,14 @@ def make_train(
                 # OV1: agent 0 full obs를 tile → OV2/ToyCoop: 각 actor 자신의 시점 full obs
                 if transformer_action and not transformer_v3:
                     # v1/v2: collect global_obs for reconstruction target
-                    if is_partial_obs or env_name == "ToyCoop":
-                        # ToyCoop: full obs이지만 ego/other 채널 swap되므로 per-actor 사용
+                    if is_partial_obs or env_name == "ToyCoop" or _is_mpe:
+                        # ToyCoop/MPE: per-actor obs 사용
                         _global_obs = _extract_global_full_obs_per_actor(env_state)
                     else:
                         _agent0_full = _extract_global_full_obs(env_state)   # (NUM_ENVS, H, W, C_full)
-                        _global_obs = jnp.tile(_agent0_full, [2, 1, 1, 1])   # (NUM_ACTORS, H, W, C_full)
+                        # N-agent 일반화: agent0 full obs를 모든 agent에 tile
+                        _tile_reps = [env.num_agents] + [1] * (len(_agent0_full.shape) - 1)
+                        _global_obs = jnp.tile(_agent0_full, _tile_reps)   # (NUM_ACTORS, H, W, C_full)
                 else:
                     _global_obs = jnp.zeros_like(obs_batch)  # dummy — v3 또는 CT 비활성화
 
@@ -1640,19 +1693,27 @@ def make_train(
             # [PH1] last_val 계산에도 blocked_states를 전달
             blocked_states_actor_last = None
             if config.get("PH1_ENABLED", False):
-                # Same target for both agents in state mode
-                blocked_states_actor_last = jnp.concatenate([blocked_states_env, blocked_states_env], axis=0)
+                # N-agent 일반화: env-level blocked state를 모든 agent에 복제
+                blocked_states_actor_last = jnp.tile(
+                    blocked_states_env,
+                    [env.num_agents] + [1] * (blocked_states_env.ndim - 1)
+                )
+
+            _blocked_last = (
+                blocked_states_actor_last
+                if learner_use_blocked_input
+                else None
+            )
+            # MPE (1D obs): ac_in에 time dim 추가와 동일하게 blocked_states에도 맞춤
+            if _blocked_last is not None and _is_mpe:
+                _blocked_last = _blocked_last[np.newaxis, :]
 
             net_out = network.apply(
                 train_state.params,
                 next_initial_hstate,
                 ac_in,
                 partner_prediction=partner_prediction,
-                blocked_states=(
-                    blocked_states_actor_last
-                    if learner_use_blocked_input
-                    else None
-                ),
+                blocked_states=_blocked_last,
             )
             
             if len(net_out) == 4:
@@ -1743,7 +1804,7 @@ def make_train(
                         # For action prediction: pred_logits returned in extras (computed after GRU)
                         # ToyCoop 전용: -1.0 blocked states → 0.0 대체 (LayerNorm NaN 방지)
                         _blocked_for_loss = traj_batch.blocked_states if learner_use_blocked_input else None
-                        if _blocked_for_loss is not None and env_name == "ToyCoop":
+                        if _blocked_for_loss is not None and (env_name == "ToyCoop" or _is_mpe):
                             _blocked_for_loss = jnp.where(_blocked_for_loss == -1.0, 0.0, _blocked_for_loss)
 
                         net_out = network.apply(
@@ -1769,17 +1830,40 @@ def make_train(
                         ):
                             pred_logits = rerun_extras.get("pred_logits", None)
                             if pred_logits is not None:
-                                pred_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
-                                    logits=pred_logits,
-                                    labels=target_labels_flat,
-                                )
-                                pred_loss = _masked_mean(pred_loss_vec, train_mask)
+                                if num_partners == 1:
+                                    # 2-agent: pred_logits (MB, A), target (MB,)
+                                    pred_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
+                                        logits=pred_logits,
+                                        labels=target_labels_flat,
+                                    )
+                                    pred_loss = _masked_mean(pred_loss_vec, train_mask)
+                                    pred_labels = jnp.argmax(pred_logits, axis=-1)
+                                    pred_accuracy = _masked_mean(
+                                        pred_labels == target_labels_flat,
+                                        train_mask,
+                                    )
+                                else:
+                                    # 3+ agent: pred_logits (..., A*num_partners), target (..., num_partners)
+                                    # 마지막 차원만 (num_partners, ACTION_DIM)으로 reshape
+                                    _pred_split = pred_logits.reshape(
+                                        *pred_logits.shape[:-1], num_partners, ACTION_DIM
+                                    )
+                                    _targets = target_labels_flat  # (MB, num_partners)
+                                    _total_pred_loss = jnp.float32(0.0)
+                                    _total_correct = jnp.float32(0.0)
+                                    for p in range(num_partners):
+                                        # _pred_split: (..., num_partners, A), _targets: (..., num_partners)
+                                        _p_loss = optax.softmax_cross_entropy_with_integer_labels(
+                                            logits=_pred_split[..., p, :], labels=_targets[..., p]
+                                        )
+                                        _total_pred_loss = _total_pred_loss + _masked_mean(_p_loss, train_mask)
+                                        _p_pred = jnp.argmax(_pred_split[..., p, :], axis=-1)
+                                        _total_correct = _total_correct + _masked_mean(
+                                            _p_pred == _targets[..., p], train_mask
+                                        )
+                                    pred_loss = _total_pred_loss / num_partners
+                                    pred_accuracy = _total_correct / num_partners
                                 pred_loss = pred_loss * config.get("PRED_LOSS_COEF", 1.0)
-                                pred_labels = jnp.argmax(pred_logits, axis=-1)
-                                pred_accuracy = _masked_mean(
-                                    pred_labels == target_labels_flat,
-                                    train_mask,
-                                )
 
                         log_prob = pi.log_prob(traj_batch.action)
 

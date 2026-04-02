@@ -43,14 +43,32 @@ def resolve_eval_engine(
     disable_auto: bool = False,
     env_name_override: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    # ToyCoop 등 layout 없는 환경은 직접 지정
+    # ToyCoop, MPE 등 layout 없는 환경은 직접 지정
     if env_name_override == "ToyCoop":
         tc_kwargs = {k: v for k, v in env_kwargs.items() if k != "layout"}
         return "ToyCoop", tc_kwargs
+    if env_name_override is not None and env_name_override.startswith("MPE_"):
+        mpe_kwargs = {k: v for k, v in env_kwargs.items() if k != "layout"}
+        # checkpoint에서 복원한 값이 JAX array일 수 있으므로 Python native로 변환
+        mpe_kwargs = {k: int(v) if hasattr(v, 'item') and jnp.issubdtype(type(v), jnp.integer) else
+                      float(v) if hasattr(v, 'item') else v
+                      for k, v in mpe_kwargs.items()}
+        return env_name_override, mpe_kwargs
 
     kwargs = dict(env_kwargs)
     kwargs["layout"] = layout
     return "overcooked_v2", kwargs
+
+
+def _to_python_native(kwargs):
+    """JAX array 값을 Python native로 변환 (checkpoint 복원 호환)."""
+    result = {}
+    for k, v in kwargs.items():
+        if hasattr(v, 'item'):
+            result[k] = v.item()
+        else:
+            result[k] = v
+    return result
 
 
 def make_eval_env(
@@ -60,11 +78,15 @@ def make_eval_env(
     disable_auto: bool = False,
     env_name_override: Optional[str] = None,
 ):
-    # ToyCoop 등 layout 없는 환경은 env_name_override로 직접 지정
+    # ToyCoop, MPE 등 layout 없는 환경은 env_name_override로 직접 지정
     if env_name_override == "ToyCoop":
         tc_kwargs = {k: v for k, v in env_kwargs.items() if k != "layout"}
         env = jaxmarl.make("ToyCoop", **tc_kwargs)
         return env, "ToyCoop", tc_kwargs
+    if env_name_override is not None and env_name_override.startswith("MPE_"):
+        mpe_kwargs = _to_python_native({k: v for k, v in env_kwargs.items() if k != "layout"})
+        env = jaxmarl.make(env_name_override, **mpe_kwargs)
+        return env, env_name_override, mpe_kwargs
 
     env_name, resolved_kwargs = resolve_eval_engine(
         layout=layout,
@@ -80,6 +102,12 @@ def extract_global_full_obs(env, state, env_name: str):
     if env_name == "overcooked":
         obs = env.get_obs(state)
         return obs[env.agents[0]].astype(jnp.float32)
+    # MPE: state = concat(obs_agent0, obs_agent1) → global state
+    if env_name.startswith("MPE_"):
+        obs = env.get_obs(state)
+        return jnp.concatenate(
+            [obs[a].astype(jnp.float32) for a in env.agents], axis=-1
+        )
     # ToyCoop, overcooked_v2 모두 get_obs_default 지원
     return env.get_obs_default(state)[0].astype(jnp.float32)
 
@@ -92,6 +120,12 @@ def extract_pos_yx(state, env_name: str):
     if env_name == "ToyCoop":
         pos_x = state.agent_pos[:, 0]
         pos_y = state.agent_pos[:, 1]
+        return pos_y, pos_x
+    # MPE: p_pos 사용 (x, y 순서)
+    if env_name.startswith("MPE_"):
+        # MPE state.p_pos: (num_entities, 2) — 에이전트 + 랜드마크
+        pos_x = state.p_pos[:, 0]
+        pos_y = state.p_pos[:, 1]
         return pos_y, pos_x
     return state.agents.pos.y, state.agents.pos.x
 
@@ -114,6 +148,10 @@ def render_state_frame(state, env_name: str, agent_view_size: Optional[int] = No
     if env_name == "ToyCoop":
         img = toy_coop_render_state(state)
         return np.asarray(img)
+
+    # MPE: 시각화 미지원 (학습/평가에는 불필요)
+    if env_name.startswith("MPE_"):
+        return np.zeros((64, 64, 3), dtype=np.uint8)
 
     viz = OvercookedV2Visualizer()
     return np.asarray(viz._render_state(state, agent_view_size))

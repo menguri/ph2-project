@@ -75,15 +75,43 @@ def load_checkpoint(run_dir, run_num, checkpoint):
     # item=None + GPU에서 sharding 에러 방지:
     # restore_args 없이 item=None으로 복원하면 GPU sharding metadata 충돌 가능
     # 해결: 먼저 item=None 시도, 실패 시 abstract target으로 재시도
+    import jax
+    from jax.sharding import SingleDeviceSharding
+
+    def _restore_to_single_device(checkpointer, directory):
+        """multi-GPU sharding 문제 우회: 현재 default device의 SingleDeviceSharding으로 복원."""
+        metadata = checkpointer.metadata(directory)
+        target_device = jax.devices()[0]  # 현재 사용 가능한 첫 번째 device
+        target_sharding = SingleDeviceSharding(target_device)
+
+        def _make_restore_args(meta):
+            if hasattr(meta, 'shape'):
+                return ocp.ArrayRestoreArgs(sharding=target_sharding)
+            return ocp.RestoreArgs()
+
+        restore_args = jax.tree_util.tree_map(_make_restore_args, metadata)
+        return checkpointer.restore(directory, restore_args=restore_args)
+
     try:
         ckpt = orbax_checkpointer.restore(checkpoint_dir, item=None)
-    except (ValueError, TypeError):
-        import jax
-        # GPU sharding 문제 → CPU에서 로드 후 device_put
-        with jax.default_device(jax.devices("cpu")[0]):
-            ckpt = orbax_checkpointer.restore(checkpoint_dir, item=None)
+    except (ValueError, TypeError, AttributeError):
+        ckpt = _restore_to_single_device(orbax_checkpointer, checkpoint_dir)
 
-    return ckpt["config"], ckpt["params"]
+    # orbax 복원 시 config의 숫자 값이 JAX ArrayImpl로 변환될 수 있음
+    # → Python native로 변환하여 flax init 시 tracer 충돌 방지
+    config = _convert_config_to_native(ckpt["config"])
+    return config, ckpt["params"]
+
+
+def _convert_config_to_native(config):
+    """config dict의 JAX ArrayImpl 값을 Python native로 변환."""
+    if isinstance(config, dict):
+        return {k: _convert_config_to_native(v) for k, v in config.items()}
+    if isinstance(config, (list, tuple)):
+        return type(config)(_convert_config_to_native(v) for v in config)
+    if hasattr(config, 'item'):
+        return config.item()
+    return config
 
 
 def load_all_checkpoints(run_dir, final_only=True, skip_initial=False):

@@ -78,9 +78,9 @@ def visualize_ppo_policy(
     env_layout = env_kwargs.get("layout")
     env_kwargs_no_layout = copy.deepcopy(env_kwargs)
     env_kwargs_no_layout.pop("layout", None)
-    # ToyCoop 등 layout 없는 환경 감지
+    # ToyCoop, MPE 등 layout 없는 환경 감지
     _env_name = config["env"].get("ENV_NAME", "overcooked_v2")
-    _env_name_override = _env_name if _env_name == "ToyCoop" else None
+    _env_name_override = _env_name if (_env_name == "ToyCoop" or _env_name.startswith("MPE_")) else None
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,
@@ -91,13 +91,16 @@ def visualize_ppo_policy(
 
     num_actors = env.num_agents
 
-    # 환경의 실제 ACTION_DIM을 모든 config에 주입 (체크포인트에 없을 수 있음)
+    # 환경의 실제 ACTION_DIM, NUM_PARTNERS를 모든 config에 주입 (체크포인트에 없을 수 있음)
     _action_dim = env.action_space(env.agents[0]).n
+    _num_partners = env.num_agents - 1
     for _cfg in configs.values():
         if isinstance(_cfg, dict) and "model" in _cfg:
             _cfg["model"]["ACTION_DIM"] = _action_dim
+            _cfg["model"]["NUM_PARTNERS"] = _num_partners
     if config and isinstance(config, dict) and "model" in config:
         config["model"]["ACTION_DIM"] = _action_dim
+        config["model"]["NUM_PARTNERS"] = _num_partners
 
     # CT v2: TRANSFORMER_STATE_SHAPE가 누락된 기존 체크포인트 대응
     # env를 reset해서 full global obs shape을 추론
@@ -324,28 +327,18 @@ def visualize_ppo_policy(
                 is_simple_viz = not no_viz and not latent_analysis and not value_analysis
 
                 if no_viz and not latent_analysis and not value_analysis:
-                    # no_viz: eval_pairing 전체를 JIT (rollout만, 렌더링 없음)
-                    def _viz_impl(pairing_params):
+                    # no_viz: JIT rollout으로 빠른 평가 (viz 불필요)
+                    # eval_key를 인자로 받아서 여러 seed 평가 가능
+                    def _rollout_impl_no_viz(pairing_params, eval_key):
                         policies = [
                             PPOPolicy(pairing_params[i].params, current_configs[i])
                             for i in range(num_actors)
                         ]
                         policy_pairing = PolicyPairing(*policies)
-                        _ekw = copy.deepcopy(env_kwargs)
-                        _layout = _ekw.pop("layout", _env_name if _env_name == "ToyCoop" else None)
-                        return eval_pairing(
-                            policy_pairing,
-                            _layout,
-                            key,
-                            env_kwargs=_ekw,
-                            num_seeds=num_seeds,
-                            all_recipes=num_seeds is None,
-                            no_viz=True,
-                            algorithm=alg_arg,
-                            old_overcooked=False,
-                            disable_old_overcooked_auto=True,
+                        return get_rollout(
+                            policy_pairing, env, eval_key, algorithm=alg_arg, use_jit=True
                         )
-                    jit_cache[jit_key] = jax.jit(_viz_impl)
+                    jit_cache[jit_key] = jax.jit(_rollout_impl_no_viz)
                 elif is_simple_viz:
                     # viz: rollout만 JIT, 렌더링은 Python 루프에서 별도 처리
                     def _rollout_impl(pairing_params):
@@ -371,7 +364,7 @@ def visualize_ppo_policy(
                         ]
                         policy_pairing = PolicyPairing(*policies)
                         _ekw = copy.deepcopy(env_kwargs)
-                        _layout = _ekw.pop("layout", _env_name if _env_name == "ToyCoop" else None)
+                        _layout = _ekw.pop("layout", _env_name if (_env_name == "ToyCoop" or _env_name.startswith("MPE_")) else None)
                         return eval_pairing(
                             policy_pairing,
                             _layout,
@@ -391,7 +384,18 @@ def visualize_ppo_policy(
             # Execute
             if no_viz:
                 print(f"[EVAL] Running {first_level}/{second_level}")
-                viz_result = jit_cache[jit_key](pairing)
+                _jit_fn = jit_cache[jit_key]
+                _n_eval = num_seeds or 1
+                viz_result = {}
+                for si in range(_n_eval):
+                    eval_key = jax.random.PRNGKey(si)
+                    r = _jit_fn(pairing, eval_key)
+                    viz_result[f"seed-{si}"] = PolicyVizualization(
+                        frame_seq=None,
+                        total_reward=float(r.total_reward),
+                        prediction_accuracy=r.prediction_accuracy,
+                        value_by_partner_pos=None,
+                    )
             elif not latent_analysis and not value_analysis:
                 print(f"[VIZ] Pairing: {first_level} / {second_level}")
                 rollout = jit_cache[jit_key](pairing)

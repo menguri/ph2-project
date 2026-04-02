@@ -4,16 +4,19 @@ from flax.linen.initializers import orthogonal, constant
 
 
 class PartnerPredictor(nn.Module):
+    """num_partners=1: 2-agent (출력 action_dim), num_partners=2: 3-agent (출력 action_dim*2)"""
     action_dim: int = 6
+    num_partners: int = 1
 
     @nn.compact
     def __call__(self, embedding):
+        output_dim = self.action_dim * self.num_partners
         x = embedding
         x = nn.Dense(64, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
         x = nn.relu(x)
         x = nn.Dense(64, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
         x = nn.relu(x)
-        x = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x)
+        x = nn.Dense(output_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x)
         norm = jnp.linalg.norm(x, axis=-1, keepdims=True)
         x = x / (norm + 1e-6)
         return x

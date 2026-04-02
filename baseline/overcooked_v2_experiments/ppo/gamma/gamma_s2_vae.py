@@ -365,9 +365,11 @@ def _run_s2_vae_only(config, vae, vae_params, rng):
                 done_env = done["__all__"]
 
                 anneal = rew_shaping_anneal(update_step * NUM_STEPS * NUM_ENVS)
-                reward = jax.tree_util.tree_map(lambda r, s: r + s * anneal, reward, info["shaped_reward"])
+                if "shaped_reward" in info:
+                    reward = jax.tree_util.tree_map(lambda r, s: r + s * anneal, reward, info["shaped_reward"])
                 ego_reward = reward[env.agents[0]]
-                info = {k: v for k, v in info.items() if k not in ("shaped_reward", "shaped_reward_events")}
+                info.pop("shaped_reward", None)
+                info.pop("shaped_reward_events", None)
                 info = jax.tree_util.tree_map(lambda x: x.mean(axis=-1) if x.ndim > 1 else x, info)
 
                 transition = S2Transition(

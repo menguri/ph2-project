@@ -19,7 +19,7 @@ NENVS=64
 NUM_SEEDS=5
 NSTEPS=256
 
-FIXED_SEED=41
+FIXED_SEED=42
 while [[ $# -gt 0 ]]; do
   case "$1" in
     *)
@@ -134,58 +134,91 @@ run_ph2() {
 # -----------------------------------------------------------------------------
 # Sweep 파라미터
 # -----------------------------------------------------------------------------
-SWEEP_GPUS="1,2,3,4,5"
-# -----------------------------------------------------------------------------
-# OV2 (partial observation, agent_view_size=2):
-# USE_CT=1로 실행 권장 — get_obs_default() full obs가 CT recon target으로 사용됨
-# -----------------------------------------------------------------------------
-
-# echo "[PH2] grounded_coord_simple"
-# run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] grounded_coord_ring"
-# run_ph2 "$SWEEP_GPUS" "grounded_coord_ring" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] test_time_simple"
-# run_ph2 "$SWEEP_GPUS" "test_time_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] test_time_wide"
-# run_ph2 "$SWEEP_GPUS" "test_time_wide" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] demo_cook_simple"
-# run_ph2 "$SWEEP_GPUS" "demo_cook_simple" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
-
-# echo "[PH2] demo_cook_wide"
-# run_ph2 "$SWEEP_GPUS" "demo_cook_wide" "$TARGET_OMEGA" "$TARGET_SIGMA" "$TARGET_MAX_COUNT"
+SWEEP_GPUS="3,7,0,1,2"
 
 # =============================================================================
-# CT v3: Partner GRU z 복원 — grounded_coord_simple / test_time_wide
-# W=10, D_c=64, omega=10, sigma=2, k=1
+# cramped_room Sweep — partner diversity 향상 탐색
+# 5축: PH1_BETA_END, PH1_NORMAL_PROB, PH1_EPSILON, PH2_EPSILON, ENT_COEF
+#
+# 사용법: 필요한 sweep 블록만 주석 해제하여 실행
 # =============================================================================
-USE_CT=1
-EXP="rnn-ct"
-TRANSFORMER_V3=1
 
-echo "[CT-v3] grounded_coord_simple"
-run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "10.0" "2.0" "1"
+sweep_cramped() {
+  local gpus=$1
+  local beta_end=$2
+  local normal_prob=$3
+  local ph1_eps=$4
+  local ph2_eps=$5
+  local ent_coef=$6
 
-echo "[CT-v3] test_time_wide"
-run_ph2 "$SWEEP_GPUS" "test_time_wide" "10.0" "2.0" "1"
+  local tags="ph2,sweep,cramped_room,be${beta_end},np${normal_prob},e1_${ph1_eps},e2_${ph2_eps},ent${ent_coef}"
 
-# =============================================================================
-# OV2 grounded_coord_simple: omega×sigma×penalty_count 스윕
-# CT 미사용. omega=[10,3], sigma=[2,3], k=[1,2,3,4] → 16 실험
-# =============================================================================
-USE_CT=0
-TRANSFORMER_V3=0
-EXP="rnn-ph2"
+  echo "================================================================================"
+  echo "[SWEEP] cramped_room | beta_end=${beta_end} normal_prob=${normal_prob}"
+  echo "        ph1_eps=${ph1_eps} ph2_eps=${ph2_eps} ent_coef=${ent_coef} | GPU ${gpus}"
+  echo "================================================================================"
 
-for omega in 10.0 3.0; do
-  for sigma in 2.0 3.0; do
-    for k in 4 3 2 1; do
-      echo "[PH2-sweep] grounded_coord_simple o=${omega} s=${sigma} k=${k}"
-      run_ph2 "$SWEEP_GPUS" "grounded_coord_simple" "$omega" "$sigma" "$k"
-    done
-  done
-done
+  ./run_user_wandb.sh \
+    --gpus "$gpus" \
+    --seeds "$NUM_SEEDS" \
+    --seed "$FIXED_SEED" \
+    --env "cramped_room" \
+    --exp "$EXP" \
+    --env-device "$ENV_DEVICE" \
+    --nenvs "$NENVS" \
+    --nsteps "$NSTEPS" \
+    --tags "$tags" \
+    --layout "cramped_room" \
+    --ph1-beta "$PH1_BETA" \
+    --ph1-beta-schedule-enabled "$PH1_BETA_SCHEDULE_ENABLED" \
+    --ph1-beta-start "$PH1_BETA_START" \
+    --ph1-beta-end "$beta_end" \
+    --ph1-beta-schedule-horizon-env-steps "$PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS" \
+    --ph1-omega "$PH1_OMEGA" \
+    --ph1-sigma "$PH1_SIGMA" \
+    --ph1-pool-size "$PH1_POOL_SIZE" \
+    --ph1-normal-prob "$normal_prob" \
+    --ph1-multi-penalty-enabled "$PH1_MULTI_PENALTY_ENABLED" \
+    --ph1-max-penalty-count 1 \
+    --ph1-multi-penalty-single-weight "$PH1_MULTI_PENALTY_SINGLE_WEIGHT" \
+    --ph1-multi-penalty-other-weight "$PH1_MULTI_PENALTY_OTHER_WEIGHT" \
+    --ph1-epsilon "$ph1_eps" \
+    --ph2-epsilon "$ph2_eps" \
+    --ph1-warmup-steps "$PH1_WARMUP_STEPS" \
+    --ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB" \
+    --action-prediction "$ACTION_PREDICTION" \
+    --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
+    --extra "model.ENT_COEF=$ent_coef"
+}
+
+# sweep_cramped  GPUS  BETA_END  NORMAL_PROB  PH1_EPS  PH2_EPS  ENT_COEF
+# ─────────────────────────────────────────────────────────────────────────
+
+# --- Sweep 1: ENT_COEF × PH1_NORMAL_PROB (epsilon 고정 0.2) ---
+sweep_cramped "$SWEEP_GPUS"  0.0  0.0  0.3  0.3  0.05
+sweep_cramped "$SWEEP_GPUS"  0.0  0.0  0.4  0.4  0.05
+sweep_cramped "$SWEEP_GPUS"  0.0  0.0  0.5  0.5  0.05
+sweep_cramped "$SWEEP_GPUS"  0.0  0.3  0.2  0.2  0.05
+sweep_cramped "$SWEEP_GPUS"  0.0  0.3  0.3  0.3  0.05
+sweep_cramped "$SWEEP_GPUS"  0.0  0.3  0.5  0.5  0.05
+sweep_cramped "$SWEEP_GPUS"  0.0  0.5  0.2  0.2  0.1
+sweep_cramped "$SWEEP_GPUS"  0.0  0.5  0.3  0.3  0.1
+sweep_cramped "$SWEEP_GPUS"  0.0  0.5  0.5  0.5  0.1
+
+# --- Sweep 2: PH1_BETA_END × PH1_NORMAL_PROB (entropy/epsilon 고정) ---
+# sweep_cramped "$SWEEP_GPUS"  0.5  0.0  0.2  0.2  0.01
+# sweep_cramped "$SWEEP_GPUS"  0.5  0.3  0.2  0.2  0.01
+# sweep_cramped "$SWEEP_GPUS"  0.5  0.5  0.2  0.2  0.01
+# sweep_cramped "$SWEEP_GPUS"  0.5  0.0  0.2  0.2  0.01
+# sweep_cramped "$SWEEP_GPUS"  0.5  0.3  0.2  0.2  0.01
+# sweep_cramped "$SWEEP_GPUS"  0.5  0.5  0.2  0.2  0.01
+
+# --- Sweep 3: PH1_EPSILON × PH2_EPSILON (나머지 고정) ---
+# sweep_cramped "$SWEEP_GPUS"  1.0  0.0  0.1  0.1  0.01
+# sweep_cramped "$SWEEP_GPUS"  1.0  0.0  0.1  0.3  0.01
+# sweep_cramped "$SWEEP_GPUS"  1.0  0.0  0.3  0.1  0.01
+# sweep_cramped "$SWEEP_GPUS"  1.0  0.0  0.3  0.3  0.01
+
+# --- Sweep 4: 유망 조합 정밀 탐색 (Sweep 1~3 결과 보고 채울 것) ---
+# sweep_cramped "$SWEEP_GPUS"  ...  ...  ...  ...  ...
 

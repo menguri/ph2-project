@@ -91,8 +91,10 @@ def make_train(
         env = jaxmarl.make(env_name, **env_kwargs)
 
     ACTION_DIM = env.action_space(env.agents[0]).n
+    num_partners = env.num_agents - 1  # 2-agent: 1, 3-agent: 2
 
     model_config["ACTION_DIM"] = ACTION_DIM
+    model_config["NUM_PARTNERS"] = num_partners
     model_config["NUM_ACTORS"] = env.num_agents * model_config["NUM_ENVS"]
     model_config["NUM_UPDATES"] = (
         model_config["TOTAL_TIMESTEPS"]
@@ -207,6 +209,13 @@ def make_train(
     ego_actor_mask = actor_indices == 0
     partner_actor_mask = actor_indices == (env.num_agents - 1)
 
+    # 3+ agent action prediction용: 각 agent의 partner indices (obs 순서: 자기 제외, index 정렬)
+    # agent_0 → [1,2], agent_1 → [0,2], agent_2 → [0,1]
+    if num_partners > 1:
+        _partner_map = jnp.array([
+            sorted(set(range(env.num_agents)) - {i}) for i in range(env.num_agents)
+        ])  # (num_agents, num_partners)
+
     use_population_annealing = False
     if "POPULATION_ANNEAL_HORIZON" in config:
         print("Using population annealing")
@@ -240,7 +249,11 @@ def make_train(
         reset_rng = jax.random.split(_rng, model_config["NUM_ENVS"])
         obsv, env_state = jax.vmap(reset_fn)(reset_rng)
         state_shape = obsv[env.agents[0]].shape[1:]
-        obs_space_shape = env.observation_space().shape
+        try:
+            obs_space_shape = env.observation_space().shape
+        except TypeError:
+            # MPE 등 agent 인자가 필요한 환경
+            obs_space_shape = env.observation_space(env.agents[0]).shape
         if tuple(state_shape) != tuple(obs_space_shape):
             print(
                 f"[ENV][WARN] observation_space.shape={obs_space_shape} "
@@ -580,14 +593,18 @@ def make_train(
                 # - shaped_reward는 환경이 제공하는 중간 단계 보상 (예: 재료 집기, 냄비에 넣기 등)
                 # - 학습 초반에는 쉐이핑 보상이 크게 반영되어 학습 신호가 풍부하고,
                 # - 학습 후반에는 anneal_factor가 0에 가까워져 원본 보상만 사용 (과최적화 방지)
-                reward = jax.tree_util.tree_map(
-                    lambda x, y: x + y * anneal_factor, reward, info["shaped_reward"]
-                )
+                if "shaped_reward" in info:
+                    reward = jax.tree_util.tree_map(
+                        lambda x, y: x + y * anneal_factor, reward, info["shaped_reward"]
+                    )
 
                 # 메트릭 로깅용으로 각 보상 타입을 info에 저장
-                shaped_reward = jnp.array(
-                    [info["shaped_reward"][a] for a in env.agents]
-                )
+                if "shaped_reward" in info:
+                    shaped_reward = jnp.array(
+                        [info["shaped_reward"][a] for a in env.agents]
+                    )
+                else:
+                    shaped_reward = jnp.zeros(env.num_agents)
                 combined_reward = jnp.array([reward[a] for a in env.agents])
 
                 info["shaped_reward"] = shaped_reward      # 환경의 중간 단계 보상 (쉐이핑)
@@ -606,7 +623,8 @@ def make_train(
                 _shaped_reward_events = info.pop("shaped_reward_events", None)
 
                 info = jax.tree_util.tree_map(
-                    lambda x: x.reshape((model_config["NUM_ACTORS"])), info
+                    lambda x: x.reshape((model_config["NUM_ACTORS"])) if x.size == model_config["NUM_ACTORS"] else x,
+                    info,
                 )
 
                 done_batch = batchify(
@@ -641,8 +659,18 @@ def make_train(
 
                 # E3T: 파트너의 원본 정책 행동 (epsilon 믹싱 이전)을 prediction target으로 사용
                 # action_for_env는 epsilon 랜덤 행동이 섞인 값이므로 노이즈 label이 됨
-                # action (policy sample)을 swap해서 파트너의 실제 policy action을 구함
-                current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
+                if env.num_agents == 2:
+                    # 2-agent: jnp.roll로 agent0↔agent1 swap
+                    current_partner_action = jnp.roll(action.squeeze(), shift=model_config["NUM_ENVS"], axis=0)
+                else:
+                    # 3+ agent: obs 순서대로 각 partner의 action을 gather
+                    # actions_per_agent: (num_agents, NUM_ENVS)
+                    _acts = action.squeeze().reshape(env.num_agents, model_config["NUM_ENVS"])
+                    # _partner_map: (num_agents, num_partners) — 각 agent의 partner indices
+                    # _acts[_partner_map]: (num_agents, num_partners, NUM_ENVS)
+                    _gathered = _acts[_partner_map]
+                    # → (num_agents, NUM_ENVS, num_partners) → (NUM_ACTORS, num_partners)
+                    current_partner_action = _gathered.transpose(0, 2, 1).reshape(-1, num_partners)
 
                 transition = Transition(
                     jnp.tile(done["__all__"], env.num_agents),
@@ -800,20 +828,39 @@ def make_train(
                         )
 
                         if alg_name == "E3T" and use_prediction:
-                            # pred_logits: (Minibatch, ActionDim)
-                            target_labels_flat = traj_batch.partner_action.astype(jnp.int32)
-
-                            pred_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
-                                logits=pred_logits, labels=target_labels_flat
-                            )
-
-                            # Only Ego agents contribute to prediction loss
                             is_ego_flat = traj_batch.is_ego
-                            pred_loss = (pred_loss_vec * is_ego_flat).sum() / (is_ego_flat.sum() + 1e-8)
-                            pred_loss = pred_loss * config.get("PRED_LOSS_COEF", 1.0)
 
-                            pred_labels = jnp.argmax(pred_logits, axis=-1)
-                            pred_accuracy = jnp.mean(pred_labels == target_labels_flat)
+                            if num_partners == 1:
+                                # 2-agent: pred_logits (MB, A), partner_action (MB,)
+                                target_labels_flat = traj_batch.partner_action.astype(jnp.int32)
+                                pred_loss_vec = optax.softmax_cross_entropy_with_integer_labels(
+                                    logits=pred_logits, labels=target_labels_flat
+                                )
+                                pred_loss = (pred_loss_vec * is_ego_flat).sum() / (is_ego_flat.sum() + 1e-8)
+                                pred_labels = jnp.argmax(pred_logits, axis=-1)
+                                pred_accuracy = jnp.mean(pred_labels == target_labels_flat)
+                            else:
+                                # 3+ agent: pred_logits (MB, A*num_partners), partner_action (MB, num_partners)
+                                # 각 partner별 CE loss 합산
+                                _pred_split = pred_logits.reshape(
+                                    pred_logits.shape[0], num_partners, ACTION_DIM
+                                )  # (MB, num_partners, A)
+                                _targets = traj_batch.partner_action.astype(jnp.int32)  # (MB, num_partners)
+                                _total_pred_loss = jnp.float32(0.0)
+                                _total_correct = jnp.float32(0.0)
+                                for p in range(num_partners):
+                                    _p_loss = optax.softmax_cross_entropy_with_integer_labels(
+                                        logits=_pred_split[:, p, :], labels=_targets[:, p]
+                                    )
+                                    _total_pred_loss = _total_pred_loss + (
+                                        (_p_loss * is_ego_flat).sum() / (is_ego_flat.sum() + 1e-8)
+                                    )
+                                    _p_pred = jnp.argmax(_pred_split[:, p, :], axis=-1)
+                                    _total_correct = _total_correct + jnp.mean(_p_pred == _targets[:, p])
+                                pred_loss = _total_pred_loss / num_partners
+                                pred_accuracy = _total_correct / num_partners
+
+                            pred_loss = pred_loss * config.get("PRED_LOSS_COEF", 1.0)
 
                         print("value shape", value.shape)
                         print("targets shape", targets.shape)

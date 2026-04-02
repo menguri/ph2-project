@@ -136,10 +136,20 @@ def make_train_mep_s1(config):
         )(all_reset_rngs)
         pop_done = jnp.zeros((N, NUM_ENVS), dtype=jnp.bool_)
 
+        num_env_agents = env.num_agents  # 환경 에이전트 수 (2 or 3)
+        num_partners = num_env_agents - 1  # 파트너 수
+
         # hstates: (N, NUM_ENVS, GRU_HIDDEN_DIM)
         _init_h = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
         pop_actor_hstates = jnp.stack([_init_h] * N)
-        pop_partner_hstates = jnp.stack([_init_h] * N)
+        # partner hstates: (N, num_partners, NUM_ENVS, GRU_HIDDEN_DIM) for 3+ agents
+        # 2-agent: backward compat → (N, NUM_ENVS, GRU_HIDDEN_DIM)
+        if num_partners == 1:
+            pop_partner_hstates = jnp.stack([_init_h] * N)
+        else:
+            pop_partner_hstates = jnp.stack([
+                jnp.stack([_init_h] * num_partners) for _ in range(N)
+            ])
 
         # Checkpoint buffer: leaf shape (N, num_checkpoints, ...member_param_shape...)
         checkpoint_steps = jnp.linspace(
@@ -170,9 +180,20 @@ def make_train_mep_s1(config):
             ) = runner_state
 
             # -- Partner assignment (rotate by random offset != 0) --
+            # 각 partner slot에 서로 다른 population member 배정
             rng, _rng = jax.random.split(rng)
-            offset = jax.random.randint(_rng, (), 1, max(N, 2))
-            partner_idxs = (jnp.arange(N) + offset) % N
+            if num_partners == 1:
+                offset = jax.random.randint(_rng, (), 1, max(N, 2))
+                partner_idxs = (jnp.arange(N) + offset) % N  # (N,)
+            else:
+                # num_partners개의 partner를 각각 다른 offset으로 배정
+                offsets = jax.random.choice(
+                    _rng, jnp.arange(1, max(N, num_partners + 1)),
+                    shape=(num_partners,), replace=False
+                )
+                partner_idxs = jnp.stack([
+                    (jnp.arange(N) + offsets[p]) % N for p in range(num_partners)
+                ])  # (num_partners, N)
 
             # All actor params (N stacked) — used as closure in inner fns
             all_actor_params = pop_states.params
@@ -196,7 +217,6 @@ def make_train_mep_s1(config):
                     ) = step_state
 
                     ego_obs_t = last_obs[env.agents[0]]     # (E, H, W, C)
-                    partner_obs_t = last_obs[env.agents[1]] # (E, H, W, C)
                     done_t = last_done                       # (E,)
 
                     # Ego: actor + critic in one forward pass
@@ -210,23 +230,42 @@ def make_train_mep_s1(config):
                     ego_log_prob = ego_pi.log_prob(ego_action[jnp.newaxis]).squeeze(0)
                     crit_val = crit_val.squeeze(0)                      # (E,)
 
-                    # Partner actor (frozen)
-                    partner_params = jax.tree_util.tree_map(
-                        lambda x: x[partner_idx], all_actor_params
-                    )
-                    rng, _rng2 = jax.random.split(rng)
-                    partner_hstate, partner_pi, _, _ = network.apply(
-                        partner_params,
-                        partner_hstate,
-                        (partner_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
-                    )
-                    partner_action = partner_pi.sample(seed=_rng2).squeeze(0)  # (E,)
+                    # Partner actors (frozen) — N-agent 일반화
+                    env_act = {env.agents[0]: ego_action}
 
-                    # Step envs
-                    env_act = {
-                        env.agents[0]: ego_action,
-                        env.agents[1]: partner_action,
-                    }
+                    if num_partners == 1:
+                        # 2-agent: 기존 경로 유지
+                        partner_obs_t = last_obs[env.agents[1]]
+                        partner_params = jax.tree_util.tree_map(
+                            lambda x: x[partner_idx], all_actor_params
+                        )
+                        rng, _rng2 = jax.random.split(rng)
+                        partner_hstate, partner_pi, _, _ = network.apply(
+                            partner_params,
+                            partner_hstate,
+                            (partner_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
+                        )
+                        partner_action = partner_pi.sample(seed=_rng2).squeeze(0)
+                        env_act[env.agents[1]] = partner_action
+                    else:
+                        # 3+ agent: 각 partner slot마다 독립적으로 population에서 행동 생성
+                        new_partner_hstates = []
+                        for p in range(num_partners):
+                            p_obs = last_obs[env.agents[p + 1]]  # partner p의 관측
+                            p_idx = partner_idx[p]  # population에서 배정된 인덱스
+                            p_params = jax.tree_util.tree_map(
+                                lambda x: x[p_idx], all_actor_params
+                            )
+                            rng, _rng_p = jax.random.split(rng)
+                            p_h = partner_hstate[p]  # (E, GRU_HIDDEN_DIM)
+                            new_p_h, p_pi, _, _ = network.apply(
+                                p_params, p_h,
+                                (p_obs[jnp.newaxis], done_t[jnp.newaxis]),
+                            )
+                            p_action = p_pi.sample(seed=_rng_p).squeeze(0)
+                            env_act[env.agents[p + 1]] = p_action
+                            new_partner_hstates.append(new_p_h)
+                        partner_hstate = jnp.stack(new_partner_hstates)  # (num_partners, E, GRU_HIDDEN_DIM)
                     rng, _rng3 = jax.random.split(rng)
                     obsv, env_state, reward, done, info = jax.vmap(env.step)(
                         jax.random.split(_rng3, NUM_ENVS), env_state, env_act
@@ -237,12 +276,14 @@ def make_train_mep_s1(config):
                     anneal_factor = rew_shaping_anneal(
                         update_step * NUM_STEPS * NUM_ENVS
                     )
-                    reward = jax.tree_util.tree_map(
-                        lambda r, s: r + s * anneal_factor,
-                        reward, info["shaped_reward"],
-                    )
+                    if "shaped_reward" in info:
+                        reward = jax.tree_util.tree_map(
+                            lambda r, s: r + s * anneal_factor,
+                            reward, info["shaped_reward"],
+                        )
                     ego_reward = reward[env.agents[0]]  # (E,)
-                    info = {k: v for k, v in info.items() if k != "shaped_reward"}
+                    info.pop("shaped_reward", None)
+                    info.pop("shaped_reward_events", None)
                     info = jax.tree_util.tree_map(
                         lambda x: x.mean(axis=-1) if x.ndim > 1 else x, info
                     )
@@ -275,10 +316,14 @@ def make_train_mep_s1(config):
                 return traj, (fe, fo, fd, fah, fph)
 
             rng, _rng = jax.random.split(rng)
+            # partner_idxs를 vmap 축에 맞게 정리:
+            #   2-agent: (N,) → 그대로
+            #   3+ agent: (num_partners, N) → (N, num_partners)
+            vmap_partner_idxs = partner_idxs if num_partners == 1 else partner_idxs.T
             all_traj, finals = jax.vmap(
                 _collect_member, in_axes=(0, 0, 0, 0, 0, 0, 0, 0)
             )(
-                pop_states, partner_idxs,
+                pop_states, vmap_partner_idxs,
                 pop_env_states, pop_last_obs, pop_last_done,
                 pop_actor_hstates, pop_partner_hstates,
                 jax.random.split(_rng, N),

@@ -161,7 +161,10 @@ class ActorCriticRNN(ActorCriticBase):
         blocked_ln = nn.LayerNorm(name="blocked_encoder_ln")
 
         if blocked_states.ndim == 5:
+            # (T, B, H, W, C) — Overcooked grid (forward pass에서 time dim 포함)
             return blocked_ln(jax.vmap(blocked_model)(blocked_states))
+        # ndim <= 4: direct call (penalty distance 계산 시 method=encode_blocked)
+        # OV2: (B, H, W, C), MPE: (B, obs_dim)
         return blocked_ln(blocked_model(blocked_states))
 
     @nn.compact
@@ -323,13 +326,14 @@ class ActorCriticRNN(ActorCriticBase):
         if blocked_states is not None:
             blocked_states_in = blocked_states.astype(jnp.float32)
 
-            # 이미지 형태 판별: (B,H,W,C) 또는 (T,B,H,W,C)
+            # 인코딩 대상 판별:
+            #   좌표 기반 blocked target (B, 2) → ndim=2 → 인코딩 불필요
+            #   1D 관측 환경(MPE) (T,B,D) 또는 (B,K,D) → ndim=3 → 인코딩 필요
+            #   이미지 환경(Overcooked) (T,B,H,W,C) 등 → ndim≥4 → 인코딩 필요
             # NOTE:
             #   PH1의 blocked target(tilde{s})은 full state일 수 있어
             #   execution obs(agent_view_size 적용)와 spatial shape가 달라도 정상이다.
-            #   따라서 obs와의 H/W shape 비교를 하지 않는다.
-            #   (좌표 기반 blocked target은 ndim<4)
-            is_image_like = blocked_states_in.ndim >= 4
+            is_image_like = blocked_states_in.ndim >= 3
 
             if is_image_like:
                 blocked_single = None
@@ -409,8 +413,12 @@ class ActorCriticRNN(ActorCriticBase):
             z_sg = jax.lax.stop_gradient(embedding)
 
             # Action prediction (PartnerPredictor / E3T)
+            # num_partners: 2-agent=1, 3-agent=2 → pred_logits 차원이 달라짐
             if self._action_prediction_enabled():
-                pred_logits = PartnerPredictor(action_dim=self.action_dim, name="predictor")(z_sg)
+                num_partners = self.config.get("NUM_PARTNERS", 1)
+                pred_logits = PartnerPredictor(
+                    action_dim=self.action_dim, num_partners=num_partners, name="predictor"
+                )(z_sg)
 
             # Partner z prediction (ZPredictor) — sg 입력, PPO gradient 차단
             if z_prediction_enabled:

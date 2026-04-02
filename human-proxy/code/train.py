@@ -2,8 +2,11 @@
 """
 BC (Behavioral Cloning) 모델 정의 + 데이터 로딩 + 훈련.
 
+Position별로 학습, seed 1개.
+
 사용법:
-    python code/train.py --layout cramped_room --position 0 --num-seeds 5
+    python code/train.py --layout cramped_room --position 0
+    python code/train.py --layout cramped_room --position 1
 
 모델 저장:
     models/{layout}/pos_{position}/seed_{i}/
@@ -70,8 +73,28 @@ def load_data(data_dir: Path):
     return {"input": jnp.array(obs), "target": jnp.array(actions)}
 
 
-def split_data(data, key, val_split=0.15):
-    """train/val 분리."""
+def load_and_merge_data(data_dirs):
+    """여러 데이터 디렉토리의 obs/actions를 합쳐서 로드."""
+    all_obs, all_actions = [], []
+    for d in data_dirs:
+        d = Path(d)
+        obs_file = d / "obs.npy"
+        if not obs_file.exists():
+            continue
+        obs = np.load(obs_file).astype(np.float32) / 255.0
+        actions = np.load(d / "actions.npy").astype(np.int32)
+        all_obs.append(obs)
+        all_actions.append(actions)
+        print(f"    {d}: {obs.shape[0]:,} samples")
+    if not all_obs:
+        return None
+    obs_merged = jnp.array(np.concatenate(all_obs, axis=0))
+    act_merged = jnp.array(np.concatenate(all_actions, axis=0))
+    return {"input": obs_merged, "target": act_merged}
+
+
+def split_data(data, key, val_split=0.10):
+    """train/val 분리 (9:1 랜덤 split)."""
     N = data["input"].shape[0]
     num_val = int(N * val_split)
     perm = jax.random.permutation(key, N)
@@ -203,7 +226,7 @@ def main():
     parser = argparse.ArgumentParser(description="BC 모델 훈련")
     parser.add_argument("--layout", required=True, help="레이아웃 이름")
     parser.add_argument("--position", type=int, required=True, help="포지션 (0 또는 1)")
-    parser.add_argument("--num-seeds", type=int, default=5, help="시드 수")
+    parser.add_argument("--num-seeds", type=int, default=1, help="시드 수")
     parser.add_argument("--epochs", type=int, default=200, help="에폭 수")
     parser.add_argument("--lr", type=float, default=1e-3, help="학습률")
     parser.add_argument("--adam-eps", type=float, default=1e-8, help="Adam epsilon")
@@ -211,7 +234,8 @@ def main():
     parser.add_argument("--cnn-features", type=int, default=32, help="CNN 채널 수")
     parser.add_argument("--fc-dim", type=int, default=64, help="FC 레이어 차원")
     parser.add_argument("--seed", type=int, default=30, help="기본 시드")
-    parser.add_argument("--data-dir", default="data/bc", help="데이터 디렉토리")
+    parser.add_argument("--data-dir", nargs="+", default=["data/bc"],
+                        help="데이터 디렉토리 (여러 개 지정 가능, 합산)")
     parser.add_argument("--model-dir", default="models", help="모델 저장 디렉토리")
     args = parser.parse_args()
 
@@ -229,14 +253,32 @@ def main():
     }
 
     # 데이터 로드
-    data_dir = Path(args.data_dir) / args.layout / f"pos_{args.position}"
-    if not (data_dir / "obs.npy").exists():
-        print(f"데이터 없음: {data_dir}")
+    LAYOUT_ALIASES = {
+        "cramped_room": ["cramped_room"],
+        "asymm_advantages": ["asymm_advantages", "asymmetric_advantages"],
+        "coord_ring": ["coord_ring", "coordination_ring"],
+        "counter_circuit": ["counter_circuit"],
+        "forced_coord": ["forced_coord", "forced_coordination"],
+    }
+    aliases = LAYOUT_ALIASES.get(args.layout, [args.layout])
+
+    data_dirs = []
+    for base in args.data_dir:
+        for alias in aliases:
+            d = Path(base) / alias / f"pos_{args.position}"
+            if (d / "obs.npy").exists():
+                data_dirs.append(d)
+
+    if not data_dirs:
+        print(f"데이터 없음: {args.data_dir} / {args.layout} / pos_{args.position}")
         return
 
-    print(f"데이터 로딩: {data_dir}")
-    data = load_data(data_dir)
-    print(f"  obs: {data['input'].shape}, actions: {data['target'].shape}")
+    print(f"데이터 로딩 ({len(data_dirs)}개 소스 합산):")
+    data = load_and_merge_data(data_dirs)
+    if data is None:
+        print("데이터 로드 실패")
+        return
+    print(f"  합산: obs={data['input'].shape}, actions={data['target'].shape}")
 
     # 학습
     key = jax.random.PRNGKey(args.seed)
@@ -250,7 +292,6 @@ def main():
     # 결과 출력 + 체크포인트 저장
     for i in range(args.num_seeds):
         train_m, val_m = jax.tree_util.tree_map(lambda x: x[i], all_metrics)
-        # 마지막 에폭 메트릭
         train_acc = train_m["accuracy"][-1].item()
         train_loss = train_m["loss"][-1].item()
         val_acc = val_m["accuracy"][-1].item()

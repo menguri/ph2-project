@@ -2,6 +2,8 @@
 """
 BC × RL 알고리즘 cross-play 평가 + 히트맵 생성.
 
+BC는 layout당 1개 (position 구분 없음), 평가 시 pos_0/pos_1 양쪽에 배치.
+
 사용법:
     python code/evaluate.py --algo-dir ../ph2/runs/..._cramped_room_ph2 --layout cramped_room
     python code/evaluate.py --algo-dir ../baseline/runs/..._cramped_room_sp --layout cramped_room
@@ -28,7 +30,7 @@ from policy import (
 
 
 def load_bc_policies(model_dir: Path, layout: str):
-    """레이아웃의 모든 BC policy 로드. {pos: [BCPolicy, ...]} 반환."""
+    """레이아웃의 BC policy 로드. {pos: [BCPolicy, ...]} 반환."""
     bc_policies = {}
     layout_dir = model_dir / layout
 
@@ -52,8 +54,10 @@ def load_bc_policies(model_dir: Path, layout: str):
 
 
 def run_crossplay(bc_policies, rl_policies, layout, num_eval_seeds=10, env_kwargs=None):
-    """BC × RL cross-play 매트릭스 평가."""
-    # overcooked_v2_experiments import (setup_pythonpath 호출 후)
+    """BC × RL cross-play 매트릭스 평가.
+
+    bc_policies: dict[int, list[BCPolicy]] — position별 BC policy 리스트
+    """
     from overcooked_v2_experiments.eval.policy import PolicyPairing
     from overcooked_v2_experiments.eval.rollout import get_rollout
     from overcooked_v2_experiments.eval.utils import make_eval_env
@@ -200,7 +204,7 @@ def main():
     print("BC 모델 로딩...")
     bc_policies = load_bc_policies(bc_model_dir, layout)
     if not bc_policies:
-        print("BC 모델 없음. extract → train 먼저 실행하세요.")
+        print("BC 모델 없음. train.py 먼저 실행하세요.")
         return
 
     # 3. RL 모델 로드

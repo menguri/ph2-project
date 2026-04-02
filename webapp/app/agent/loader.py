@@ -47,10 +47,19 @@ def load_checkpoint_cpu(ckpt_dir: str) -> Dict[str, Any]:
 
 
 def detect_model_source(config: dict) -> str:
-    """checkpoint config에서 baseline vs ph2 판별."""
+    """checkpoint config에서 baseline vs ph2 판별.
+
+    Returns:
+        "ph2": PH2 계열 (PH2, PH2-E3T 등)
+        "baseline_native": baseline 중 value head가 빠진 모델 (MEP 등) → baseline 코드 직접 사용
+        "baseline": baseline 중 param 리매핑으로 ph2 코드에서 로드 가능한 모델 (SP, E3T, FCP)
+    """
     alg = str(config.get("ALG_NAME", ""))
     if "PH2" in alg.upper() or config.get("TRANSFORMER_ACTION", False):
         return "ph2"
+    # MEP 체크포인트: value head (Dense_2/3)가 저장되지 않아 ph2 리매핑 불가
+    if "MEP" in alg.upper():
+        return "baseline_native"
     return "baseline"
 
 
