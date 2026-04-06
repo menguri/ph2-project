@@ -35,6 +35,7 @@ from .utils import (
 class PolicyVizualization:
     frame_seq: chex.Array
     total_reward: chex.Scalar
+    total_reward_combined: chex.Scalar = None
     prediction_accuracy: chex.Array = None
 
 
@@ -213,6 +214,7 @@ def eval_pairing(
         annotation: PolicyVizualization(
             frame_seq=frame_seqs[i],
             total_reward=rollouts.total_reward[i],
+            total_reward_combined=rollouts.total_reward_combined[i] if rollouts.total_reward_combined is not None else None,
             prediction_accuracy=rollouts.prediction_accuracy[i] if rollouts.prediction_accuracy is not None else None
         )
         for i, annotation in enumerate(annotations)

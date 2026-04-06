@@ -65,7 +65,7 @@ get_fcp_path() {
         "mpe_reference")
             echo "fcp_populations/mpe_reference_sp"
             ;;
-        "mpe_spread_3a")
+        "mpe_spread_3a"|"mpe_spread_Na")
             echo "fcp_populations/mpe_spread_3a_sp"
             ;;
         *)

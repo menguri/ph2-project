@@ -10,6 +10,7 @@ class PolicyRollout:
     state_seq: chex.Array
     actions_seq: chex.Array
     total_reward: chex.Scalar
+    total_reward_combined: chex.Scalar = None
     prediction_accuracy: chex.Array = None  # (num_agents,)
 
 
@@ -57,7 +58,7 @@ def init_rollout(policies: List[AbstractPolicy], env, use_jit=True):
     return init_hstate, _get_actions
 
 
-def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True, env_device=None) -> PolicyRollout:
+def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True, env_device=None, eval_reward="sparse") -> PolicyRollout:
     init_hstate, _get_actions = init_rollout(policies, env, use_jit=use_jit)
 
     # Optional backend pinning for environment interaction.
@@ -79,7 +80,7 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True
     e3t_like = algorithm in ("E3T", "STL") or "E3T" in algorithm or "STL" in algorithm
 
     def _perform_step(carry, key):
-        obs, state, done, total_reward, hstate = carry
+        obs, state, done, total_reward, total_reward_combined, hstate = carry
 
         key_sample, key_step = jax.random.split(key, 2)
 
@@ -109,9 +110,13 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True
             key_step, state, actions
         )
 
-        new_total_reward = total_reward + reward["agent_0"]
+        # eval 기록용: sparse/combined 둘 다 누적 (step_cost 미포함)
+        _sparse_r = info["sparse_reward"]["agent_0"] if isinstance(info, dict) and "sparse_reward" in info else reward["agent_0"]
+        _combined_r = info["combined_reward"]["agent_0"] if isinstance(info, dict) and "combined_reward" in info else reward["agent_0"]
+        new_total_reward = total_reward + _sparse_r
+        new_total_reward_combined = total_reward_combined + _combined_r
 
-        carry = (next_obs, next_state, next_done, new_total_reward, next_hstate)
+        carry = (next_obs, next_state, next_done, new_total_reward, new_total_reward_combined, next_hstate)
         return carry, (next_state, actions, prediction_correct, prediction_mask)
 
     init_done = {f"agent_{i}": False for i in range(env.num_agents)}
@@ -122,7 +127,8 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True
         obs,
         state,
         init_done,
-        0.0,
+        jnp.float32(0.0),  # total_reward (sparse)
+        jnp.float32(0.0),  # total_reward_combined
         init_hstate,
     )
 
@@ -143,7 +149,8 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True
         prediction_correct_seq = jnp.stack(pred_correct_seqs)
         prediction_mask_seq = jnp.stack(pred_mask_seqs)
 
-    total_reward = carry[3]
+    total_reward = carry[3]  # sparse
+    total_reward_combined = carry[4]  # combined
 
     # Calculate mean accuracy per agent
     total_correct = jnp.sum(prediction_correct_seq, axis=0)
@@ -155,5 +162,6 @@ def get_rollout(policies: PolicyPairing, env, key, algorithm="PPO", use_jit=True
         state_seq=state_seq,
         actions_seq=actions_seq,
         total_reward=total_reward,
+        total_reward_combined=total_reward_combined,
         prediction_accuracy=prediction_accuracy,
     )

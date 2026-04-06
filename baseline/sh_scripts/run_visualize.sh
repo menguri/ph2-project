@@ -15,6 +15,8 @@ ALL=false
 NO_VIZ=false
 NO_RESET=false
 PAIRING_POLICY=""
+CROSS_MODE=""
+EVAL_REWARD=""
 DIRECTORY=""
 MAX_STEPS=""
 
@@ -31,6 +33,8 @@ while [[ $# -gt 0 ]]; do
         --no_viz)         NO_VIZ=true;           shift ;;
         --no_reset)       NO_RESET=true;         shift ;;
         --pairing_policy) PAIRING_POLICY="$2";   shift 2 ;;
+        --cross_mode)     CROSS_MODE="$2";       shift 2 ;;
+        --eval_reward)    EVAL_REWARD="$2";      shift 2 ;;
         --max_steps|--max-steps) MAX_STEPS="$2"; shift 2 ;;
         *)
             echo "Unknown option: $1"
@@ -58,8 +62,11 @@ if [ -z "$DIRECTORY" ]; then
     exit 1
 fi
 
-# Set GPU environment variable
+# Set GPU / CUDA environment
 export CUDA_VISIBLE_DEVICES=$GPU_IDX
+: "${CUDA_HOME:=/usr/local/cuda-12.9}"
+export CUDA_HOME
+export CUDA_ROOT="${CUDA_HOME}"   # nvidia-cuda-nvcc-cu12 __file__=None 버그 우회
 
 # Disable WANDB for visualization
 export WANDB_MODE=disabled
@@ -91,6 +98,8 @@ ARGS=( --d "$DIRECTORY" --seed "$SEED" --num_seeds "$NUM_SEEDS" )
 [ "$NO_VIZ" = true ] && ARGS+=( --no_viz )
 [ "$NO_RESET" = true ] && ARGS+=( --no_reset )
 [ -n "$PAIRING_POLICY" ] && ARGS+=( --pairing_policy "$PAIRING_POLICY" )
+[ -n "$CROSS_MODE" ] && ARGS+=( --cross_mode "$CROSS_MODE" )
+[ -n "$EVAL_REWARD" ] && ARGS+=( --eval_reward "$EVAL_REWARD" )
 [ -n "$MAX_STEPS" ] && ARGS+=( --max_steps "$MAX_STEPS" )
 
 # Change to experiments directory
@@ -121,10 +130,9 @@ export PYTHONPATH="${PROJECT_DIR_VIZ}:${REPO_ROOT_VIZ}/JaxMARL"
 echo "[INFO] PYTHONPATH: ${PYTHONPATH}"
 echo "[INFO] Using python: ${PYTHON_BIN_VIZ}"
 
-# Hard fail early when required deps are missing in selected python.
-"${PYTHON_BIN_VIZ}" -c "import jax" >/dev/null 2>&1 || {
-    echo "[ERROR] Selected python does not have 'jax' installed: ${PYTHON_BIN_VIZ}"
-    exit 1
+# Sanity check: jax import (same env cleanup as actual execution)
+env -u LD_LIBRARY_PATH -u XLA_FLAGS "${PYTHON_BIN_VIZ}" -c "import jax" >/dev/null 2>&1 || {
+    echo "[WARN] jax import check failed for ${PYTHON_BIN_VIZ} — proceeding anyway"
 }
 
 cd "${PROJECT_DIR_VIZ}" || exit 1

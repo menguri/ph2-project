@@ -46,8 +46,10 @@ def visualize_ppo_policy(
     extra_env_kwargs={},
     num_seeds=None,
     cross=False,
+    cross_mode="full",
     no_viz=False,
     pairing_policy=None,
+    eval_reward="sparse",
     old_overcooked_override=None,
     disable_old_overcooked_auto_override=None,
 ):
@@ -110,12 +112,38 @@ def visualize_ppo_policy(
             ] + [
                 [i, pairing_policy] for i in range(num_runs) if i != pairing_policy
             ]
+        elif cross_mode == "level_one":
+            # Level-One: pair (A,B)마다 3:1, 2:2, 1:3 조합 생성 (position 순서 포함)
+            level_one_combos = []
+            for i in range(num_runs):
+                for j in range(i + 1, num_runs):
+                    # 3:1 / 1:3: 1개 position만 교체
+                    for pos in range(num_actors):
+                        combo_a = [i] * num_actors
+                        combo_a[pos] = j
+                        level_one_combos.append(combo_a)
+                        combo_b = [j] * num_actors
+                        combo_b[pos] = i
+                        level_one_combos.append(combo_b)
+                    # 2:2: 2개 position을 교체 (C(N,2) 조합)
+                    if num_actors >= 4:
+                        for p in range(num_actors):
+                            for q in range(p + 1, num_actors):
+                                combo_c = [i] * num_actors
+                                combo_c[p] = j
+                                combo_c[q] = j
+                                level_one_combos.append(combo_c)
+                                combo_d = [j] * num_actors
+                                combo_d[p] = i
+                                combo_d[q] = i
+                                level_one_combos.append(combo_d)
+            cross_combos = level_one_combos
+            print(f"[EVAL] Level-One cross-play: {len(cross_combos)} cross + {len(self_play_combos)} self")
         else:
             all_cross_combos = list(itertools.permutations(range(num_runs), num_actors))
             if len(all_cross_combos) <= MAX_CROSS_COMBOS:
                 cross_combos = [list(c) for c in all_cross_combos]
             else:
-                # 조합 폭발 방지: 랜덤 샘플링 (GridSpread N≥4, MPE 5a/10a 등)
                 rng = np.random.default_rng(42)
                 indices = rng.choice(len(all_cross_combos), size=MAX_CROSS_COMBOS, replace=False)
                 cross_combos = [list(all_cross_combos[i]) for i in indices]
@@ -239,7 +267,8 @@ def visualize_ppo_policy(
                         ]
                         policy_pairing = PolicyPairing(*policies)
                         return get_rollout(
-                            policy_pairing, env, eval_key, algorithm=alg_arg, use_jit=True
+                            policy_pairing, env, eval_key, algorithm=alg_arg, use_jit=True,
+                            eval_reward=eval_reward,
                         )
                     jit_cache[jit_key] = jax.jit(_rollout_impl_no_viz)
                 else:
@@ -251,7 +280,8 @@ def visualize_ppo_policy(
                         ]
                         policy_pairing = PolicyPairing(*policies)
                         return get_rollout(
-                            policy_pairing, env, key, algorithm=alg_arg, use_jit=True
+                            policy_pairing, env, key, algorithm=alg_arg, use_jit=True,
+                            eval_reward=eval_reward,
                         )
                     jit_cache[jit_key] = jax.jit(_rollout_impl)
 
@@ -267,6 +297,7 @@ def visualize_ppo_policy(
                     viz_result[f"seed-{si}"] = PolicyVizualization(
                         frame_seq=None,
                         total_reward=float(r.total_reward),
+                        total_reward_combined=float(r.total_reward_combined) if r.total_reward_combined is not None else None,
                         prediction_accuracy=r.prediction_accuracy,
                     )
             else:
@@ -283,6 +314,7 @@ def visualize_ppo_policy(
                 viz_result = {"seed-0": PolicyVizualization(
                     frame_seq=np.stack(frames),
                     total_reward=float(rollout.total_reward),
+                    total_reward_combined=float(rollout.total_reward_combined) if rollout.total_reward_combined is not None else None,
                     prediction_accuracy=rollout.prediction_accuracy,
                 )}
             results_structure[first_level][second_level] = viz_result
@@ -295,10 +327,13 @@ def visualize_ppo_policy(
         labels[1] = "policy_labels"
 
     # 6) reward summary + gif 저장
-    rows = []
+    rows_sparse = []
+    rows_combined = []
+    has_combined = False
     for first_level, first_level_runs in all_params.items():
         for second_level, second_level_runs in first_level_runs.items():
-            checkpoint_sum = 0.0
+            sparse_sum = 0.0
+            combined_sum = 0.0
             acc_sum = jnp.zeros(num_actors)
             acc_count = 0
 
@@ -306,6 +341,7 @@ def visualize_ppo_policy(
             for annotation, viz in second_level_runs.items():
                 frame_seq = viz.frame_seq
                 total_reward = viz.total_reward
+                total_reward_combined = getattr(viz, "total_reward_combined", None)
                 pred_acc = viz.prediction_accuracy
 
                 if not no_viz and frame_seq is not None:
@@ -314,50 +350,78 @@ def visualize_ppo_policy(
                     viz_filename = viz_dir / f"{annotation}.gif"
                     imageio.mimsave(viz_filename, frame_seq, "GIF", duration=0.5)
 
-                checkpoint_sum += total_reward
-                row = [first_level, second_level, annotation, total_reward]
-                
+                sparse_sum += total_reward
+                row_sparse = [first_level, second_level, annotation, total_reward]
+
+                if total_reward_combined is not None:
+                    has_combined = True
+                    combined_sum += float(total_reward_combined)
+                    row_combined = [first_level, second_level, annotation, float(total_reward_combined)]
+                else:
+                    combined_sum += total_reward
+                    row_combined = [first_level, second_level, annotation, total_reward]
+
                 if pred_acc is not None:
                     acc_sum += pred_acc
                     acc_count += 1
-                    
                     for i in range(pred_acc.shape[0]):
-                        row.append(float(pred_acc[i]))
+                        row_sparse.append(float(pred_acc[i]))
+                        row_combined.append(float(pred_acc[i]))
                 else:
                     for i in range(num_actors):
-                        row.append(0.0)
-                
-                rows.append(row)
+                        row_sparse.append(0.0)
+                        row_combined.append(0.0)
+
+                rows_sparse.append(row_sparse)
+                rows_combined.append(row_combined)
                 print(f"\t{annotation}:\t{total_reward}")
-            
-            reward_mean = checkpoint_sum / len(second_level_runs)
-            print(f"\tMean reward:\t{reward_mean}")
-            
-            mean_row = [first_level, second_level, "mean", reward_mean]
+
+            n_runs = len(second_level_runs)
+            sparse_mean = sparse_sum / n_runs
+            combined_mean = combined_sum / n_runs
+            print(f"\tMean reward (sparse):\t{sparse_mean}")
+
+            mean_row_sparse = [first_level, second_level, "mean", sparse_mean]
+            mean_row_combined = [first_level, second_level, "mean", combined_mean]
             if acc_count > 0:
                 acc_mean = acc_sum / acc_count
-                print(f"\tMean accuracy:\t{acc_mean}")
                 for i in range(acc_mean.shape[0]):
-                    mean_row.append(float(acc_mean[i]))
+                    mean_row_sparse.append(float(acc_mean[i]))
+                    mean_row_combined.append(float(acc_mean[i]))
             else:
                 for i in range(num_actors):
-                    mean_row.append(0.0)
-            
-            rows.append(mean_row)
+                    mean_row_sparse.append(0.0)
+                    mean_row_combined.append(0.0)
+
+            rows_sparse.append(mean_row_sparse)
+            rows_combined.append(mean_row_combined)
 
     # 7) CSV로 요약 저장 (viz 모드에서는 스킵)
     if no_viz:
-        summery_name = "reward_summary_cross.csv" if cross else "reward_summary_sp.csv"
+        fieldnames = [labels[0], labels[1], "annotation", "total_reward"]
+        for i in range(num_actors):
+            fieldnames.append(f"pred_acc_agent_{i}")
+
+        # sparse CSV (항상 저장)
+        summery_name = f"reward_summary_cross.csv" if cross else f"reward_summary_sp.csv"
         summery_file = run_base_dir / summery_name
         with open(summery_file, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
-            fieldnames = [labels[0], labels[1], "annotation", "total_reward"]
-            for i in range(num_actors):
-                fieldnames.append(f"pred_acc_agent_{i}")
-
             writer.writerow(fieldnames)
-            for row in rows:
+            for row in rows_sparse:
                 writer.writerow(row)
+        print(f"Summary (sparse) written to {summery_file}")
+
+        # combined CSV (GridSpread 등 combined_reward가 있을 때만)
+        if has_combined:
+            summery_name_c = f"reward_summary_cross_combined.csv" if cross else f"reward_summary_sp_combined.csv"
+            summery_file_c = run_base_dir / summery_name_c
+            with open(summery_file_c, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(fieldnames)
+                for row in rows_combined:
+                    writer.writerow(row)
+            print(f"Summary (combined) written to {summery_file_c}")
 
         print(f"Summary written to {summery_file}")
 
@@ -380,6 +444,20 @@ if __name__ == "__main__":
     parser.add_argument("--old_overcooked", action="store_true")
     parser.add_argument("--disable_old_overcooked_auto", action="store_true")
     parser.add_argument("--max_steps", type=int, default=None)
+    parser.add_argument(
+        "--cross_mode",
+        type=str,
+        default="full",
+        choices=["full", "level_one"],
+        help="Cross-play combination mode. full=all permutations, level_one=leave-one-out (3:1 + 1:3).",
+    )
+    parser.add_argument(
+        "--eval_reward",
+        type=str,
+        default="sparse",
+        choices=["sparse", "combined"],
+        help="Eval reward mode. sparse=sparse only (GridSpread), combined=sparse+shaped.",
+    )
 
     args = parser.parse_args()
 
@@ -412,6 +490,8 @@ if __name__ == "__main__":
             num_seeds=num_seeds,
             final_only=fo,
             cross=mode == "cross",
+            cross_mode=args.cross_mode,
+            eval_reward=args.eval_reward,
             no_viz=args.no_viz,
             extra_env_kwargs=extra_env_kwargs,
             pairing_policy=args.pairing_policy,

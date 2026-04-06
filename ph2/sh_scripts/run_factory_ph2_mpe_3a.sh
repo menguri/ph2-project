@@ -11,7 +11,7 @@ cd "$(dirname "$0")" || exit 1
 : "${SMOKE:=0}"
 
 EXP="rnn-ph2-mpe-3a"
-ENV="mpe_spread_3a"
+ENV="mpe_spread_Na"
 ENV_DEVICE="gpu"
 
 # MPE 기본 하이퍼파라미터 (2-agent와 동일)

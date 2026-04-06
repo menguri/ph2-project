@@ -12,7 +12,7 @@ cd "$SCRIPT_DIR" || exit 1
 : "${NUM_SEEDS:=10}"
 : "${SMOKE:=0}"
 
-ENV="mpe_spread_3a"
+ENV="mpe_spread_Na"
 ENV_DEVICE="cpu"
 NENVS=256
 NSTEPS=128

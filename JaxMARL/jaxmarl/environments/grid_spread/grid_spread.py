@@ -2,8 +2,8 @@
 
 N agents spawn at center of (2*radius+1) x (2*radius+1) grid.
 N goals at equal angles, Chebyshev-approximate distance radius from center.
-All agents must each occupy a distinct goal simultaneously for +1/step.
-No collision: multiple agents may share a cell.
+All agents must each occupy a distinct goal simultaneously.
+Collision prevention: agents moving to the same cell are reverted.
 """
 
 from enum import IntEnum
@@ -43,7 +43,7 @@ class GridSpread(MultiAgentEnv):
     def __init__(
         self,
         n_agents: int = 4,
-        radius: int = 2,
+        radius: int = 3,
         max_steps: int = 100,
         random_reset: bool = False,
         step_cost: float = 1.0,
@@ -104,9 +104,30 @@ class GridSpread(MultiAgentEnv):
     ) -> Tuple[Dict[str, chex.Array], State, Dict[str, float], Dict[str, bool], Dict]:
         acts = jnp.array([actions[f"agent_{i}"] for i in range(self.n_agents)])
 
-        # 이동 (충돌 없음)
-        next_pos = state.agent_pos + self.action_to_dir[acts]
+        # --- 1단계: 마스킹 — 다른 에이전트가 현재 있는 칸으로 이동 시 stay 처리
+        candidate_pos = state.agent_pos + self.action_to_dir[acts]
+        candidate_pos = jnp.clip(candidate_pos, 0, self.width - 1)
+
+        def _is_blocked(i):
+            """agent i의 목적지에 다른 ���이전트가 현재 있는지"""
+            others_at_dest = jax.vmap(
+                lambda j: jnp.all(candidate_pos[i] == state.agent_pos[j])
+            )(jnp.arange(self.n_agents))
+            return jnp.any(others_at_dest.at[i].set(False))
+
+        blocked = jax.vmap(lambda i: _is_blocked(i))(jnp.arange(self.n_agents))
+        safe_acts = jnp.where(blocked, 8, acts)  # 8 = stay
+
+        # --- 2단계: 동시 충돌 — 두 에이전트가 같은 빈 칸에 동시 도달 시 되돌림
+        next_pos = state.agent_pos + self.action_to_dir[safe_acts]
         next_pos = jnp.clip(next_pos, 0, self.width - 1)
+
+        collision_mat = jax.vmap(
+            lambda a: jax.vmap(lambda b: jnp.all(a == b))(next_pos)
+        )(next_pos)
+        collision_mat = collision_mat & ~jnp.eye(self.n_agents, dtype=bool)
+        collides = jnp.any(collision_mat, axis=1)
+        next_pos = jnp.where(collides[:, None], state.agent_pos, next_pos)
 
         # on_goal[i,j]: agent i가 goal j 위에 있는지
         on_goal = jax.vmap(
@@ -118,7 +139,13 @@ class GridSpread(MultiAgentEnv):
         # 각 goal에 정확히 1명이어야 success
         per_goal_count = jnp.sum(on_goal, axis=0)  # (n_agents,)
         all_covered = jnp.all(per_goal_count == 1)
-        reward = jnp.where(all_covered, 5.0, -self.step_cost)
+
+        # shaped reward: 점령된 goal 수에 따른 단계별 보상
+        #   1~3개 goal 점령: 1점씩 (충돌 방지로 겹침 불가 → single_covered만 유효)
+        #   4개 전부 점령 (all_covered): 10점
+        n_single_covered = jnp.sum(per_goal_count == 1).astype(jnp.float32)
+        shaped = jnp.where(all_covered, 10.0, n_single_covered)
+        reward = shaped - self.step_cost
 
         next_state = state.replace(agent_pos=next_pos, time=state.time + 1)
         done = self.is_terminal(next_state)
@@ -129,8 +156,10 @@ class GridSpread(MultiAgentEnv):
         dones = {f"agent_{i}": done for i in range(self.n_agents)}
         dones["__all__"] = done
 
-        coverage_ratio = jnp.sum(per_goal_count == 1).astype(jnp.float32) / self.n_agents
-        shaped_reward = {f"agent_{i}": 0.0 for i in range(self.n_agents)}
+        coverage_ratio = n_single_covered / self.n_agents
+        # eval용: step_cost 미포함 (순수 성과 지표)
+        sparse_reward = jnp.where(all_covered, 10.0, 0.0)
+        combined_reward = shaped  # = n_single_covered or 10.0 (step_cost 미포함)
         shaped_reward_events = {
             f"agent_{i}": jnp.array([
                 all_covered.astype(jnp.float32),
@@ -140,42 +169,42 @@ class GridSpread(MultiAgentEnv):
         }
 
         return obs, next_state, rewards, dones, {
-            "shaped_reward": shaped_reward,
+            "sparse_reward": {f"agent_{i}": sparse_reward for i in range(self.n_agents)},
+            "combined_reward": {f"agent_{i}": combined_reward for i in range(self.n_agents)},
             "shaped_reward_events": shaped_reward_events,
         }
 
     @partial(jax.jit, static_argnums=[0])
     def get_obs(self, state: State) -> Dict[str, chex.Array]:
-        """Ego-centric observation: (H, W, n_agents+1).
+        """좌표 벡터 observation: (5N,) 1D 벡터.
 
-        Ch 0:   ego agent 위치
-        Ch 1~n-1: 다른 에이전트 위치 (rotation으로 ego가 항상 ch 0)
-        Ch n:   모든 goal 위치 (단일 채널)
+        [ego_onehot(N) | agent0_x, agent0_y, ..., agentN-1_x, agentN-1_y | goal0_x, goal0_y, ..., goalN-1_x, goalN-1_y]
+        좌표는 0~1 정규화. agent slot 고정 (rotation 없음).
         """
-        H, W, n = self.height, self.width, self.n_agents
+        n = self.n_agents
 
-        # 에이전트별 binary 채널
-        agent_channels = jnp.stack([
-            jnp.zeros((H, W)).at[state.agent_pos[i, 1], state.agent_pos[i, 0]].set(1.0)
-            for i in range(n)
-        ], axis=0)  # (n, H, W)
+        # 에이전트 좌표 정규화: (2N,)
+        norm_ax = state.agent_pos[:, 0].astype(jnp.float32) / max(self.width - 1, 1)
+        norm_ay = state.agent_pos[:, 1].astype(jnp.float32) / max(self.height - 1, 1)
+        agent_coords = jnp.stack([norm_ax, norm_ay], axis=-1).ravel()  # (2N,)
 
-        # Goal channel (단일): vectorized scatter
-        goal_channel = jnp.zeros((H, W)).at[
-            state.goal_pos[:, 1], state.goal_pos[:, 0]
-        ].set(1.0)  # (H, W)
+        # goal 좌표 정규화: (2N,)
+        norm_gx = state.goal_pos[:, 0].astype(jnp.float32) / max(self.width - 1, 1)
+        norm_gy = state.goal_pos[:, 1].astype(jnp.float32) / max(self.height - 1, 1)
+        goal_coords = jnp.stack([norm_gx, norm_gy], axis=-1).ravel()  # (2N,)
 
-        def make_ego_obs(ego_i):
-            rotated = jnp.roll(agent_channels, shift=-ego_i, axis=0)  # (n, H, W)
-            all_ch = jnp.concatenate([rotated, goal_channel[None]], axis=0)  # (n+1, H, W)
-            return jnp.transpose(all_ch, (1, 2, 0))  # (H, W, n+1)
+        shared = jnp.concatenate([agent_coords, goal_coords])  # (4N,)
 
-        return {f"agent_{i}": make_ego_obs(i) for i in range(n)}
+        obs = {}
+        for i in range(n):
+            ego_onehot = jnp.zeros(n).at[i].set(1.0)           # (N,)
+            obs[f"agent_{i}"] = jnp.concatenate([ego_onehot, shared])  # (5N,)
+        return obs
 
     @partial(jax.jit, static_argnums=[0])
     def get_obs_default(self, state: State) -> chex.Array:
         """Full global obs for PH1 pool / CT recon target.
-        Returns: (n_agents, H, W, n_agents+1)
+        Returns: (n_agents, 5N)
         """
         obs_dict = self.get_obs(state)
         return jnp.stack(
@@ -203,4 +232,4 @@ class GridSpread(MultiAgentEnv):
         return spaces.Discrete(9)
 
     def observation_space(self, agent_id: str = "") -> spaces.Box:
-        return spaces.Box(0, 1, (self.height, self.width, self.n_agents + 1))
+        return spaces.Box(0, 1, (5 * self.n_agents,))

@@ -374,7 +374,7 @@ def make_train(
                 last_population_annealing_mask,
                 initial_fcp_pop_agent_idxs,
                 last_action,
-                ego_idxs,
+                is_ego,
                 rng,
             ) = runner_state
 
@@ -393,34 +393,30 @@ def make_train(
                     population_annealing_mask,
                     fcp_pop_agent_idxs,
                     last_action,
-                    ego_idxs,
+                    is_ego,
                     rng,
                 ) = env_step_state
 
-                # [E3T] Dynamic Ego Assignment Logic
-                # Check episode completion using last_done
-                # last_done is (NUM_ACTORS,), reshaped to check env-wise done
-                # OvercookedV2 agents terminate simultaneously
+                # [E3T/FCP] Dynamic Ego Assignment Logic
+                # episode_done: (NUM_ENVS,) — episode 종료한 env만 is_ego 재샘플
                 last_done_reshaped = last_done.reshape(env.num_agents, model_config["NUM_ENVS"])
-                episode_done = last_done_reshaped[0] # (NUM_ENVS,)
+                episode_done = last_done_reshaped[0]  # (NUM_ENVS,)
 
-                rng, _rng = jax.random.split(rng)
-                new_random_idxs = jax.random.randint(_rng, (model_config["NUM_ENVS"],), 0, env.num_agents)
-
-                # Update ego_idxs only for environments that just finished
-                ego_idxs = jnp.where(episode_done, new_random_idxs, ego_idxs)
-
-                # Calculate actor indices and is_ego
-                actor_indices = jnp.repeat(
-                    jnp.arange(env.num_agents, dtype=jnp.int32), model_config["NUM_ENVS"]
-                )
-                
-                # Expand ego_idxs (NUM_ENVS,) to match actor_indices (NUM_ACTORS,)
-                # actor_indices is [0...0, 1...1] (Agent-Major)
-                # target_ego_idxs should be [e0...en, e0...en]
-                target_ego_idxs = jnp.tile(ego_idxs, env.num_agents)
-                
-                is_ego = (actor_indices == target_ego_idxs)
+                rng, _rng_roles, _rng_n = jax.random.split(rng, 3)
+                # 에이전트별 랜덤 noise → rank → n_ego 미만이면 ego
+                _noise = jax.random.uniform(_rng_roles, (model_config["NUM_ENVS"], env.num_agents))
+                _agent_ranks = jnp.argsort(jnp.argsort(_noise, axis=-1), axis=-1)  # (NUM_ENVS, N)
+                if is_spread and env.num_agents > 2:
+                    # GridSpread N>2: n_ego ~ Uniform[1, N] (partner=N 상황만 차단)
+                    _n_ego_new = jax.random.randint(_rng_n, (model_config["NUM_ENVS"],), 1, env.num_agents + 1)
+                else:
+                    # 기존 동작: 단일 ego (n_ego=1)
+                    _n_ego_new = jnp.ones((model_config["NUM_ENVS"],), dtype=jnp.int32)
+                _new_is_ego_2d = _agent_ranks < _n_ego_new[:, None]  # (NUM_ENVS, N)
+                _new_is_ego = _new_is_ego_2d.T.ravel()  # (NUM_ACTORS,) agent-major
+                # episode 종료된 env만 is_ego 업데이트
+                _done_expanded = jnp.tile(episode_done, env.num_agents)  # (NUM_ACTORS,)
+                is_ego = jnp.where(_done_expanded, _new_is_ego, is_ego)
                 partner_actor_mask = ~is_ego
 
                 # jax.debug.print("check4 {x}", x=hstate.flatten()[0])
@@ -482,50 +478,65 @@ def make_train(
                             obs_population, last_done, population_hstate, _rng
                         )
                     else:
+                        # --- FCP vmap 최적화: per-env 단위 forward (N agent 묶음) ---
+                        # 기존: vmap over NUM_ACTORS=N*E → per-actor forward (1,1,obs_dim)
+                        # 변경: vmap over NUM_ENVS=E → per-env forward (1,N,obs_dim)
+                        # 같은 env의 N agent는 동일 pop_idx → N배 중복 제거
+                        _N = env.num_agents
+                        _E = model_config["NUM_ENVS"]
 
-                        def _compute_population_actions(
-                            policy_idx, obs_pop, obs_ld, fcp_h_state
+                        # agent-major (N*E,) → (N, E, ...) → (E, N, ...) reshape
+                        obs_env = obs_population.reshape(
+                            _N, _E, *obs_population.shape[1:]
+                        ).swapaxes(0, 1)  # (E, N, *obs)
+                        done_env = last_done.reshape(_N, _E).T  # (E, N)
+                        hstate_env = jax.tree.map(
+                            lambda x: x.reshape(_N, _E, *x.shape[1:]).swapaxes(0, 1),
+                            population_hstate,
+                        )  # tree of (E, N, H)
+
+                        def _compute_pop_actions_per_env(
+                            policy_idx, obs_n, done_n, hstate_n
                         ):
+                            """env 단위 population forward: N agent를 한 번에 처리."""
                             current_p = jax.tree.map(
                                 lambda x: x[policy_idx], population
                             )
-                            current_ac_in = (
-                                obs_pop[np.newaxis, np.newaxis, :],
-                                jnp.array([obs_ld])[np.newaxis, :],
-                            )
+                            # network.apply: (seq_len, batch, obs_dim) → (1, N, obs_dim)
+                            ac_in = (obs_n[np.newaxis, :], done_n[np.newaxis, :])
                             pop_outputs = population_network.apply(
                                 current_p,
-                                jax.tree.map(lambda x: x[np.newaxis, :], fcp_h_state),
-                                current_ac_in,
+                                hstate_n,  # (N, H)
+                                ac_in,
                             )
                             # CNN: (h, pi, v), RNN/E3T: (h, pi, v, pred_logits)
                             if len(pop_outputs) == 4:
-                                new_fcp_h_state, fcp_pi, _, _ = pop_outputs
+                                new_h, fcp_pi, _, _ = pop_outputs
                             else:
-                                new_fcp_h_state, fcp_pi, _ = pop_outputs
+                                new_h, fcp_pi, _ = pop_outputs
                             fcp_action = fcp_pi.sample(seed=_rng)
-                            return fcp_action.squeeze(), jax.tree.map(
-                                lambda x: x.squeeze(axis=0), new_fcp_h_state
-                            )
+                            return fcp_action.squeeze(0), new_h  # (N,), (N, H)
 
-                        pop_actions, population_hstate = jax.vmap(
-                            _compute_population_actions
+                        pop_actions_env, pop_hstate_env = jax.vmap(
+                            _compute_pop_actions_per_env
                         )(
-                            fcp_pop_agent_idxs,
-                            obs_population,
-                            last_done,
-                            population_hstate,
+                            fcp_pop_agent_idxs,  # (NUM_ENVS,) — tile 불필요!
+                            obs_env,             # (E, N, *obs)
+                            done_env,            # (E, N)
+                            hstate_env,          # tree of (E, N, H)
+                        )
+                        # (E, N) → (N, E) → (N*E,) = (NUM_ACTORS,) agent-major 복원
+                        pop_actions = pop_actions_env.swapaxes(0, 1).ravel()
+                        population_hstate = jax.tree.map(
+                            lambda x: x.swapaxes(0, 1).reshape(
+                                _N * _E, *x.shape[2:]
+                            ),
+                            pop_hstate_env,
                         )
 
-                    # action_pick_mask = train_mask_flat
-                    if is_spread:
-                        # GridSpread: 각 non-ego agent 독립 50% 확률로 pool vs ego
-                        rng, rng_pool = jax.random.split(rng)
-                        _use_ego = jax.random.bernoulli(rng_pool, p=0.5, shape=(model_config["NUM_ACTORS"],))
-                        action_pick_mask = is_ego | _use_ego  # ego 항상 True, 나머지 50%
-                    else:
-                        # [Fix] FCP에서도 매 에피소드 랜덤하게 Ego/Partner 역할을 바꾸기 위해 is_ego를 사용
-                        action_pick_mask = is_ego
+                    # ego: 학습 정책 사용 / partner: population 정책 사용
+                    # is_ego는 매 episode 종료 시 재샘플됨 (GridSpread N>2: n_ego 가변)
+                    action_pick_mask = is_ego
                     if use_population_annealing:
                         action_pick_mask = _make_train_mask(population_annealing_mask)
 
@@ -655,10 +666,11 @@ def make_train(
                     new_population_annealing_mask = population_annealing_mask
 
                 if population is not None and not is_policy_population:
+                    # per-env 단일 pop idx → 같은 env 내 파트너 전원 동일 policy
                     new_fcp_pop_agent_idxs = jnp.where(
-                        jnp.tile(done["__all__"], env.num_agents),
+                        done["__all__"],  # (NUM_ENVS,)
                         jax.random.randint(
-                            _rng, (model_config["NUM_ACTORS"],), 0, fcp_population_size
+                            _rng, (model_config["NUM_ENVS"],), 0, fcp_population_size
                         ),
                         fcp_pop_agent_idxs,
                     )
@@ -707,7 +719,7 @@ def make_train(
                     new_population_annealing_mask,
                     new_fcp_pop_agent_idxs,
                     action_for_env,
-                    ego_idxs,
+                    is_ego,
                     rng,
                 )
                 return env_step_state, transition
@@ -723,7 +735,7 @@ def make_train(
                 last_population_annealing_mask,
                 initial_fcp_pop_agent_idxs,
                 last_action,
-                ego_idxs,
+                is_ego,
                 rng,
             )
             env_step_state, traj_batch = jax.lax.scan(
@@ -740,7 +752,7 @@ def make_train(
                 last_population_annealing_mask,
                 next_fcp_pop_agent_idxs,
                 next_last_action,
-                next_ego_idxs,
+                next_is_ego,
                 rng,
             ) = env_step_state
 
@@ -848,12 +860,12 @@ def make_train(
                                 pred_labels = jnp.argmax(pred_logits, axis=-1)
                                 pred_accuracy = jnp.mean(pred_labels == target_labels_flat)
                             else:
-                                # 3+ agent: pred_logits (MB, A*num_partners), partner_action (MB, num_partners)
-                                # 각 partner별 CE loss 합산
-                                _pred_split = pred_logits.reshape(
-                                    pred_logits.shape[0], num_partners, ACTION_DIM
-                                )  # (MB, num_partners, A)
-                                _targets = traj_batch.partner_action.astype(jnp.int32)  # (MB, num_partners)
+                                # 3+ agent: pred_logits (T, MB, num_partners*A) → flatten → (T*MB, num_partners, A)
+                                # RNN scan output은 (T, B, dim) 형태이므로 먼저 flatten 후 reshape
+                                _flat = pred_logits.reshape(-1, num_partners * ACTION_DIM)  # (T*MB, num_partners*A)
+                                _pred_split = _flat.reshape(_flat.shape[0], num_partners, ACTION_DIM)  # (T*MB, num_partners, A)
+                                _targets = traj_batch.partner_action.reshape(-1, num_partners).astype(jnp.int32)  # (T*MB, num_partners)
+                                _is_ego = is_ego_flat.ravel()  # (T*MB,)
                                 _total_pred_loss = jnp.float32(0.0)
                                 _total_correct = jnp.float32(0.0)
                                 for p in range(num_partners):
@@ -861,7 +873,7 @@ def make_train(
                                         logits=_pred_split[:, p, :], labels=_targets[:, p]
                                     )
                                     _total_pred_loss = _total_pred_loss + (
-                                        (_p_loss * is_ego_flat).sum() / (is_ego_flat.sum() + 1e-8)
+                                        (_p_loss * _is_ego).sum() / (_is_ego.sum() + 1e-8)
                                     )
                                     _p_pred = jnp.argmax(_pred_split[:, p, :], axis=-1)
                                     _total_correct = _total_correct + jnp.mean(_p_pred == _targets[:, p])
@@ -1156,7 +1168,7 @@ def make_train(
                 last_population_annealing_mask,
                 next_fcp_pop_agent_idxs,
                 next_last_action,
-                next_ego_idxs,
+                next_is_ego,
                 rng,
             )
             return runner_state, metric
@@ -1182,16 +1194,24 @@ def make_train(
 
         init_fcp_pop_idxs = None
         if population is not None and not is_policy_population:
+            # per-env 단일 pop idx (같은 env 내 파트너 전원 동일 policy)
             init_fcp_pop_idxs = jax.random.randint(
-                _rng, (model_config["NUM_ACTORS"],), 0, fcp_population_size
+                _rng, (model_config["NUM_ENVS"],), 0, fcp_population_size
             )
 
-        rng, _rng = jax.random.split(rng)
+        rng, _rng_ego, _rng_n_ego, _rng = jax.random.split(rng, 4)
 
         initial_last_action = jnp.zeros((model_config["NUM_ACTORS"],), dtype=jnp.int32)
 
-        # [E3T] Initial Ego Indices (Random init)
-        initial_ego_idxs = jax.random.randint(_rng, (model_config["NUM_ENVS"],), 0, env.num_agents)
+        # [E3T/FCP] Initial is_ego: noise rank 기반 랜덤 배정
+        _noise_init = jax.random.uniform(_rng_ego, (model_config["NUM_ENVS"], env.num_agents))
+        _ranks_init = jnp.argsort(jnp.argsort(_noise_init, axis=-1), axis=-1)
+        if is_spread and env.num_agents > 2:
+            _n_ego_init = jax.random.randint(_rng_n_ego, (model_config["NUM_ENVS"],), 1, env.num_agents + 1)
+        else:
+            _n_ego_init = jnp.ones((model_config["NUM_ENVS"],), dtype=jnp.int32)
+        _is_ego_init_2d = _ranks_init < _n_ego_init[:, None]
+        initial_is_ego = _is_ego_init_2d.T.ravel()  # (NUM_ACTORS,) agent-major
 
         runner_state = (
             train_state,
@@ -1205,7 +1225,7 @@ def make_train(
             init_population_annealing_mask,
             init_fcp_pop_idxs,
             initial_last_action,
-            initial_ego_idxs,
+            initial_is_ego,
             _rng,
         )
         num_update_steps = model_config["NUM_UPDATES"]

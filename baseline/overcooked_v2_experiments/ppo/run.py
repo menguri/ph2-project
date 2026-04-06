@@ -270,23 +270,36 @@ def _run_unified_mep(config):
 
 
 def _run_unified_gamma(config):
-    """GAMMA S1 → S2 통합 실행. S2는 method에 따라 rl 또는 vae."""
-    from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
+    """GAMMA S1 → S2 통합 실행. S2는 method에 따라 rl 또는 vae.
 
+    GAMMA_RESUME_POP_DIR가 지정되면 S1을 건너뛰고 기존 population을 재사용한다.
+    예: ++GAMMA_RESUME_POP_DIR=runs/20260403-034716_fhmsbh93_counter_circuit_.../gamma_population
+    """
     run_base_dir = Path(config["RUN_BASE_DIR"])
     method = config.get("GAMMA_S2_METHOD", "rl")
+    resume_pop_dir = config.get("GAMMA_POPULATION_DIR", None)
 
-    # ---- S1: Population training (MEP S1과 동일) ----
-    print("=" * 60)
-    print("[GAMMA] Stage 1: Population training")
-    print("=" * 60)
-    train_fn = make_train_mep_s1(config)
-    rng = jax.random.PRNGKey(config["SEED"])
-    with jax.disable_jit(False):
-        out_s1 = jax.jit(train_fn)(rng)
-
-    pop_dir = run_base_dir / "gamma_population"
-    _save_population(out_s1["pop_actor_ckpts"], pop_dir, "GAMMA S1")
+    if resume_pop_dir:
+        # ---- S1 스킵: 기존 population 재사용 ----
+        pop_dir = Path(resume_pop_dir)
+        if not pop_dir.exists():
+            raise ValueError(f"[GAMMA] GAMMA_RESUME_POP_DIR not found: {pop_dir}")
+        print("=" * 60)
+        print(f"[GAMMA] Stage 1: SKIPPED — reusing population from {pop_dir}")
+        print("=" * 60)
+        out_s1 = None
+    else:
+        # ---- S1: Population training (MEP S1과 동일) ----
+        from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
+        print("=" * 60)
+        print("[GAMMA] Stage 1: Population training")
+        print("=" * 60)
+        train_fn = make_train_mep_s1(config)
+        rng = jax.random.PRNGKey(config["SEED"])
+        with jax.disable_jit(False):
+            out_s1 = jax.jit(train_fn)(rng)
+        pop_dir = run_base_dir / "gamma_population"
+        _save_population(out_s1["pop_actor_ckpts"], pop_dir, "GAMMA S1")
 
     # ---- S2 ----
     if method == "vae":

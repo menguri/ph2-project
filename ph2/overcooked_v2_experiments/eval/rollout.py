@@ -13,6 +13,7 @@ class PolicyRollout:
     value_seq: chex.Array
     pos_seq: chex.Array
     total_reward: chex.Scalar
+    total_reward_combined: chex.Scalar = None
     penalized_total_reward: chex.Scalar = None
     ph1_distance_mean: chex.Scalar = None
     ph1_penalty_mean: chex.Scalar = None
@@ -83,6 +84,7 @@ def get_rollout(
     max_rollout_steps=None,
     env_device=None,  # None | "cpu" | "gpu"
     use_jit=True,
+    eval_reward="sparse",
 ) -> PolicyRollout:
     init_hstate, _get_actions = init_rollout(policies, env)
     ph1_enabled = "PH1" in algorithm
@@ -273,6 +275,7 @@ def get_rollout(
             state,
             done,
             total_reward,
+            total_reward_combined,
             penalized_total_reward,
             hstate,
             dist_sum,
@@ -337,8 +340,12 @@ def get_rollout(
             blocked_states_step,
         )
 
-        new_total_reward = total_reward + reward["agent_0"]
-        penalized_total_reward = penalized_total_reward + (reward["agent_0"] - step_penalty_env)
+        # eval 기록용: sparse/combined 둘 다 누적 (step_cost 미포함)
+        _sparse_r = info["sparse_reward"]["agent_0"] if isinstance(info, dict) and "sparse_reward" in info else reward["agent_0"]
+        _combined_r = info["combined_reward"]["agent_0"] if isinstance(info, dict) and "combined_reward" in info else reward["agent_0"]
+        new_total_reward = total_reward + _sparse_r
+        new_total_reward_combined = total_reward_combined + _combined_r
+        penalized_total_reward = penalized_total_reward + (_sparse_r - step_penalty_env)
         dist_sum = dist_sum + step_dist_env
         pen_sum = pen_sum + step_penalty_env
         stat_count = stat_count + jnp.float32(1.0)
@@ -348,6 +355,7 @@ def get_rollout(
             next_state,
             next_done,
             new_total_reward,
+            new_total_reward_combined,
             penalized_total_reward,
             next_hstate,
             dist_sum,
@@ -372,6 +380,7 @@ def get_rollout(
             state,
             done,
             total_reward,
+            total_reward_combined,
             penalized_total_reward,
             hstate,
             dist_sum,
@@ -434,8 +443,11 @@ def get_rollout(
             blocked_states_step,
         )
 
-        new_total_reward = total_reward + reward["agent_0"]
-        penalized_total_reward = penalized_total_reward + (reward["agent_0"] - step_penalty_env)
+        _sparse_r = info["sparse_reward"]["agent_0"] if isinstance(info, dict) and "sparse_reward" in info else reward["agent_0"]
+        _combined_r = info["combined_reward"]["agent_0"] if isinstance(info, dict) and "combined_reward" in info else reward["agent_0"]
+        new_total_reward = total_reward + _sparse_r
+        new_total_reward_combined = total_reward_combined + _combined_r
+        penalized_total_reward = penalized_total_reward + (_sparse_r - step_penalty_env)
         dist_sum = dist_sum + step_dist_env
         pen_sum = pen_sum + step_penalty_env
         stat_count = stat_count + jnp.float32(1.0)
@@ -464,6 +476,7 @@ def get_rollout(
             next_state,
             next_done,
             new_total_reward,
+            new_total_reward_combined,
             penalized_total_reward,
             next_hstate,
             dist_sum,
@@ -497,12 +510,13 @@ def get_rollout(
         obs,
         state,
         init_done,
-        jnp.float32(0.0),
-        jnp.float32(0.0),
+        jnp.float32(0.0),  # total_reward (sparse)
+        jnp.float32(0.0),  # total_reward_combined
+        jnp.float32(0.0),  # penalized_total_reward
         init_hstate,
-        jnp.float32(0.0),
-        jnp.float32(0.0),
-        jnp.float32(0.0),
+        jnp.float32(0.0),  # dist_sum
+        jnp.float32(0.0),  # pen_sum
+        jnp.float32(0.0),  # stat_count
     )
     value_by_et_seq = None
     step_reward_seq = None
@@ -583,10 +597,11 @@ def get_rollout(
         ph1_penalty_seq = jnp.stack(ph1_penalty_seq_list)
         cumulative_reward_seq = jnp.cumsum(step_reward_seq)
 
-    total_reward = carry[3]  # Index 3 is total_reward
-    penalized_total_reward = carry[4]
-    ph1_distance_mean = jnp.where(carry[8] > 0, carry[6] / carry[8], 0.0)
-    ph1_penalty_mean = jnp.where(carry[8] > 0, carry[7] / carry[8], 0.0)
+    total_reward = carry[3]  # sparse
+    total_reward_combined = carry[4]  # combined
+    penalized_total_reward = carry[5]
+    ph1_distance_mean = jnp.where(carry[9] > 0, carry[7] / carry[9], 0.0)
+    ph1_penalty_mean = jnp.where(carry[9] > 0, carry[8] / carry[9], 0.0)
 
     # Calculate mean accuracy per agent
     total_correct = jnp.sum(prediction_correct_seq, axis=0)
@@ -600,6 +615,7 @@ def get_rollout(
         value_seq=value_seq,
         pos_seq=pos_seq,
         total_reward=total_reward,
+        total_reward_combined=total_reward_combined,
         penalized_total_reward=penalized_total_reward,
         ph1_distance_mean=ph1_distance_mean,
         ph1_penalty_mean=ph1_penalty_mean,

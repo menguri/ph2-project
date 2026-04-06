@@ -15,7 +15,7 @@
 cd "$(dirname "$0")" || exit 1
 
 # Agent 수 (첫 번째 인자, 기본 3)
-N_AGENTS=${1:-5}
+N_AGENTS=${1:-10}
 
 : "${GPUS:=5,7}"
 : "${SMOKE:=0}"
@@ -29,13 +29,15 @@ fi
 
 EXP="rnn-ph2-mpe-3a"
 NAME="rnn-ph2-mpe-${N_AGENTS}a"
-ENV="mpe_spread_${N_AGENTS}a"
+ENV="mpe_spread_Na"
 ENV_DEVICE="gpu"
+NAGENTS_EXTRA_A="--extra ++env.ENV_KWARGS.num_agents=${N_AGENTS}"
+NAGENTS_EXTRA_L="--extra ++env.ENV_KWARGS.num_landmarks=${N_AGENTS}"
 
 # MPE 기본 하이퍼파라미터 (2-agent와 동일)
 : "${NUM_SEEDS:=10}"
 : "${FIXED_SEED:=42}"
-: "${NENVS:=256}"
+: "${NENVS:=64}"
 : "${NSTEPS:=128}"
 
 # PH1 파라미터 (2-agent와 동일)
@@ -119,6 +121,7 @@ run_ph2_mpe_Na() {
     --action-prediction "$ACTION_PREDICTION" \
     --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
     --extra "++wandb.name=${NAME}" \
+    $NAGENTS_EXTRA_A $NAGENTS_EXTRA_L \
     $XPLAY_ARG $EVAL_ARG $TOTAL_TS
 
   echo "[PH2-MPE-${N_AGENTS}A] k=${penalty_count} pred=${ACTION_PREDICTION} 완료"

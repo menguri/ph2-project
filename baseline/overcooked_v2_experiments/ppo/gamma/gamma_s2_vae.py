@@ -89,7 +89,7 @@ def _collect_population_rollouts(pop_params, config, env, network, n_episodes, r
                 obs_list.append(obs[env.agents[i]])
 
             env_act = {env.agents[i]: actions_list[i] for i in range(num_env_agents)}
-            obs_next, state_next, _, done_dict, _ = env.step_env(k_env, state, env_act)
+            obs_next, state_next, _, done_dict, _ = env.step(k_env, state, env_act)
             done_next = jnp.array([done_dict["__all__"]])
 
             rec_invalid = done.squeeze()

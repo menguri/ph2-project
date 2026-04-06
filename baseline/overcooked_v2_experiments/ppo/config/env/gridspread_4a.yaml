@@ -1,6 +1,0 @@
-"ENV_NAME": "GridSpread"
-"ENV_KWARGS":
-  "n_agents": 4
-  "radius": 5
-  "max_steps": 100
-  "step_cost": 1.0

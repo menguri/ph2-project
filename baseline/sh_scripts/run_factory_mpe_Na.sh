@@ -14,10 +14,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
 # Agent 수 (첫 번째 인자, 기본 3)
-N_AGENTS=${1:-5}
+N_AGENTS=${1:-10}
 
 # GPU / 공통 설정
-: "${GPUS:=0,1}"
+: "${GPUS:=0,6}"
 : "${NUM_SEEDS:=10}"
 : "${SMOKE:=0}"
 : "${CROSS_PLAY_SEEDS:=1}"
@@ -28,10 +28,12 @@ if [[ "$N_AGENTS" -ge 5 && -z "${CROSS_PLAY_SEEDS_SET:-}" ]]; then
   CROSS_PLAY_SEEDS=1
 fi
 
-ENV="mpe_spread_${N_AGENTS}a"
+ENV="mpe_spread_Na"
 ENV_DEVICE="cpu"
-NENVS=256
-NSTEPS=128
+NAGENTS_EXTRA_A="--extra ++env.ENV_KWARGS.num_agents=${N_AGENTS}"
+NAGENTS_EXTRA_L="--extra ++env.ENV_KWARGS.num_landmarks=${N_AGENTS}"
+NENVS=64
+NSTEPS=256
 FCP_POP="fcp_populations/${ENV}_sp"
 
 # 3a 이상 공통 experiment config (하이퍼파라미터 동일, yaml은 3a 공유)
@@ -83,6 +85,7 @@ run_sp() {
     --nsteps "${NSTEPS}" \
     --tags "sp,mpe,${N_AGENTS}a" \
     --extra "++wandb.name=${NAME_SP}" \
+    $NAGENTS_EXTRA_A $NAGENTS_EXTRA_L \
     $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
@@ -133,6 +136,7 @@ run_e3t() {
     --nsteps "${NSTEPS}" \
     --tags "e3t,mpe,${N_AGENTS}a" \
     --extra "++wandb.name=${NAME_E3T}" \
+    $NAGENTS_EXTRA_A $NAGENTS_EXTRA_L \
     $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
@@ -151,6 +155,7 @@ run_mep() {
     --nsteps "${NSTEPS}" \
     --tags "mep,mpe,${N_AGENTS}a" \
     --extra "++wandb.name=${NAME_MEP}" \
+    $NAGENTS_EXTRA_A $NAGENTS_EXTRA_L \
     $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
@@ -174,6 +179,7 @@ run_fcp() {
     --nsteps "${NSTEPS}" \
     --tags "fcp,mpe,${N_AGENTS}a" \
     --extra "++wandb.name=${NAME_FCP}" \
+    $NAGENTS_EXTRA_A $NAGENTS_EXTRA_L \
     $XPLAY_ARG $EVAL_ARG $SMOKE_EXTRA
 }
 
@@ -185,7 +191,7 @@ run_fcp() {
 # run_sp
 
 # --- (2) SP → FCP population 복사 ---
-build_fcp_population
+# build_fcp_population
 
 # --- (3) E3T ---
 # run_e3t

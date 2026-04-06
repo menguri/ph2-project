@@ -1,0 +1,9 @@
+# MPE SimpleSpread N-agent 통합 config (num_agents == num_landmarks)
+# N은 CLI override로 변경:
+#   ++env.ENV_KWARGS.num_agents=5 ++env.ENV_KWARGS.num_landmarks=5
+"ENV_NAME": "MPE_simple_spread_v3"
+"ENV_KWARGS":
+  "num_agents": 3
+  "num_landmarks": 3
+  "max_steps": 25
+  "local_ratio": 0.5

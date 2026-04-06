@@ -28,12 +28,14 @@ from overcooked_v2_experiments.ppo.utils.valuenorm import (
 
 
 class MEPTransition(NamedTuple):
-    done: jnp.ndarray         # (NUM_STEPS, NUM_ENVS)
-    ego_obs: jnp.ndarray      # (NUM_STEPS, NUM_ENVS, H, W, C)
-    ego_action: jnp.ndarray   # (NUM_STEPS, NUM_ENVS)
-    ego_log_prob: jnp.ndarray # (NUM_STEPS, NUM_ENVS)
-    critic_value: jnp.ndarray # (NUM_STEPS, NUM_ENVS)
-    reward: jnp.ndarray       # (NUM_STEPS, NUM_ENVS)
+    # 2-agent path:  all shapes use ENV dim = NUM_ENVS (E)
+    # 3+ agent path: all shapes use ENV dim = num_env_agents * NUM_ENVS (N*E)
+    done: jnp.ndarray         # (NUM_STEPS, E) or (NUM_STEPS, N*E)
+    ego_obs: jnp.ndarray      # (NUM_STEPS, E, H, W, C) or (NUM_STEPS, N*E, H, W, C)
+    ego_action: jnp.ndarray   # (NUM_STEPS, E) or (NUM_STEPS, N*E)
+    ego_log_prob: jnp.ndarray # (NUM_STEPS, E) or (NUM_STEPS, N*E)
+    critic_value: jnp.ndarray # (NUM_STEPS, E) or (NUM_STEPS, N*E)
+    reward: jnp.ndarray       # (NUM_STEPS, E) or (NUM_STEPS, N*E)
     info: dict
 
 
@@ -208,22 +210,38 @@ def make_train_mep_s2(config):
                 )
                 partner_hstate = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
             else:
-                # 3+ agent: ego 고정 agents[0], 각 partner slot에 독립 population 샘플링
-                ego_role = jnp.int32(0)
-                pop_idx = partner_idx  # 첫 번째 partner의 인덱스 (running_returns 업데이트용)
-                # 각 partner slot에 독립적으로 population 멤버 배정
-                rng, _rng_partners = jax.random.split(rng)
-                partner_pop_idxs = jax.random.randint(
-                    _rng_partners, (num_partners,), 0, N
+                # 3+ agent (GridSpread / FCP-style):
+                # - n_ego ~ Uniform[1, N] ego agents per update step
+                # - is_ego_agents: (num_env_agents,) bool noise-rank mask
+                # - actor_hstate / partner_hstate: flat (N*E, H) shape
+                rng, _rng_n_ego, _rng_perm, _rng_pop = jax.random.split(rng, 4)
+                pop_idx = partner_idx  # running_returns 업데이트용
+
+                # Sample n_ego ∈ [1, num_env_agents] and build is_ego_agents mask
+                # Use noise-rank: agents with rank < n_ego are ego (JAX-traceable)
+                n_ego = jax.random.randint(_rng_n_ego, (), 1, num_env_agents + 1)
+                noise = jax.random.uniform(_rng_perm, (num_env_agents,))
+                # rank[i] = number of agents with strictly lower noise than agent i
+                # is_ego[i] = (rank[i] < n_ego)  → top-n_ego agents by lowest noise
+                noise_ranks = jnp.sum(
+                    noise[jnp.newaxis, :] < noise[:, jnp.newaxis], axis=1
+                )  # (num_env_agents,) — rank 0 = smallest noise
+                is_ego_agents = noise_ranks < n_ego  # (num_env_agents,) bool
+                # Flat (N*E,) mask: repeat each agent flag NUM_ENVS times (agent-major)
+                is_ego_mask = jnp.repeat(is_ego_agents, NUM_ENVS)
+
+                # Shared partner pop params (single idx, incoherence 방지)
+                shared_pop_idx = jax.random.randint(_rng_pop, (), 0, N)
+                shared_partner_params = jax.tree_util.tree_map(
+                    lambda x: x[shared_pop_idx], pop_actor_params
                 )
-                all_partner_params = [
-                    jax.tree_util.tree_map(lambda x: x[partner_pop_idxs[p]], pop_actor_params)
-                    for p in range(num_partners)
-                ]
-                partner_hstate = jnp.stack([
-                    ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
-                    for _ in range(num_partners)
-                ])
+                # Flat hstates: (N*E, H) — reset each update step
+                actor_hstate = ActorCriticRNN.initialize_carry(
+                    num_env_agents * NUM_ENVS, GRU_HIDDEN_DIM
+                )
+                partner_hstate = ActorCriticRNN.initialize_carry(
+                    num_env_agents * NUM_ENVS, GRU_HIDDEN_DIM
+                )
 
             # ---- ROLLOUT ------------------------------------------------
             def _env_step(step_state, _):
@@ -241,24 +259,18 @@ def make_train_mep_s2(config):
                     agent1_obs_t = last_obs[env.agents[1]]
                     ego_obs_t     = jnp.where(ego_role == 0, agent0_obs_t, agent1_obs_t)
                     partner_obs_t = jnp.where(ego_role == 0, agent1_obs_t, agent0_obs_t)
-                else:
-                    # 3+ agent: ego 고정 agents[0]
-                    ego_obs_t = last_obs[env.agents[0]]
 
-                # Ego: actor + critic in one forward pass
-                rng, _rng = jax.random.split(rng)
-                actor_hstate, ego_pi, crit_val, _ = network.apply(
-                    actor_state.params,
-                    actor_hstate,
-                    (ego_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
-                )
-                ego_action = ego_pi.sample(seed=_rng).squeeze(0)
-                ego_log_prob = ego_pi.log_prob(ego_action[jnp.newaxis]).squeeze(0)
-                crit_val = crit_val.squeeze(0)
+                    # Ego: actor + critic in one forward pass
+                    rng, _rng = jax.random.split(rng)
+                    actor_hstate, ego_pi, crit_val, _ = network.apply(
+                        actor_state.params,
+                        actor_hstate,
+                        (ego_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
+                    )
+                    ego_action = ego_pi.sample(seed=_rng).squeeze(0)
+                    ego_log_prob = ego_pi.log_prob(ego_action[jnp.newaxis]).squeeze(0)
+                    crit_val = crit_val.squeeze(0)
 
-                env_act = {env.agents[0]: ego_action}
-
-                if num_env_agents == 2:
                     # 2-agent: 단일 partner
                     rng, _rng2 = jax.random.split(rng)
                     partner_hstate, partner_pi, _, _ = network.apply(
@@ -267,24 +279,55 @@ def make_train_mep_s2(config):
                         (partner_obs_t[jnp.newaxis], done_t[jnp.newaxis]),
                     )
                     partner_action = partner_pi.sample(seed=_rng2).squeeze(0)
+                    env_act = {}
                     env_act[env.agents[0]] = jnp.where(ego_role == 0, ego_action, partner_action)
                     env_act[env.agents[1]] = jnp.where(ego_role == 0, partner_action, ego_action)
                 else:
-                    # 3+ agent: 각 partner slot에 독립 population 행동
-                    new_partner_hstates = []
-                    for p in range(num_partners):
-                        p_obs = last_obs[env.agents[p + 1]]
-                        p_params = all_partner_params[p]
-                        rng, _rng_p = jax.random.split(rng)
-                        p_h = partner_hstate[p]
-                        new_p_h, p_pi, _, _ = network.apply(
-                            p_params, p_h,
-                            (p_obs[jnp.newaxis], done_t[jnp.newaxis]),
-                        )
-                        p_action = p_pi.sample(seed=_rng_p).squeeze(0)
-                        env_act[env.agents[p + 1]] = p_action
-                        new_partner_hstates.append(new_p_h)
-                    partner_hstate = jnp.stack(new_partner_hstates)
+                    # 3+ agent (FCP-style): all N agents processed in flat (N*E, H) batches
+                    # all_obs_flat: concat all agents' obs → (N*E, obs_dim...)  agent-major
+                    all_obs_flat = jnp.concatenate(
+                        [last_obs[a] for a in env.agents], axis=0
+                    )  # (N*E, ...)
+                    # done_flat: tile done_t N times → (N*E,)
+                    done_flat = jnp.tile(done_t, num_env_agents)  # (N*E,)
+
+                    # Forward ALL N agents through train network (actor_hstate: (N*E, H))
+                    rng, _rng_train, _rng_partner = jax.random.split(rng, 3)
+                    new_actor_hstate, all_pi, all_values, _ = network.apply(
+                        actor_state.params,
+                        actor_hstate,
+                        (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
+                    )
+                    train_actions = all_pi.sample(seed=_rng_train).squeeze(0)  # (N*E,)
+                    train_log_probs = all_pi.log_prob(
+                        train_actions[jnp.newaxis]
+                    ).squeeze(0)  # (N*E,)
+                    all_crit_vals = all_values.squeeze(0)  # (N*E,)
+
+                    # Forward ALL N agents through partner network (partner_hstate: (N*E, H))
+                    new_partner_hstate, partner_pi, _, _ = network.apply(
+                        shared_partner_params,
+                        partner_hstate,
+                        (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
+                    )
+                    partner_actions = partner_pi.sample(seed=_rng_partner).squeeze(0)  # (N*E,)
+
+                    # Select action: ego agents → train_actions, partners → partner_actions
+                    actual_actions = jnp.where(is_ego_mask, train_actions, partner_actions)  # (N*E,)
+
+                    # ego_obs_t, ego log_prob, crit_val: full (N*E,) flat arrays
+                    ego_obs_t = all_obs_flat          # (N*E, ...)
+                    ego_action = actual_actions        # (N*E,) stored for all agents
+                    ego_log_prob = train_log_probs     # (N*E,) — partner slots unused in loss
+                    crit_val = all_crit_vals           # (N*E,)
+
+                    actor_hstate = new_actor_hstate
+                    partner_hstate = new_partner_hstate
+
+                    # Build env_act: agent-major slice [i*E:(i+1)*E]
+                    env_act = {}
+                    for i in range(num_env_agents):
+                        env_act[env.agents[i]] = actual_actions[i * NUM_ENVS:(i + 1) * NUM_ENVS]
 
                 rng, _rng3 = jax.random.split(rng)
                 obsv, env_state, reward, done, info = jax.vmap(env.step)(
@@ -306,8 +349,13 @@ def make_train_mep_s2(config):
                         reward[env.agents[0]],
                         reward[env.agents[1]],
                     )
+                    tran_done = done_env          # (E,)
                 else:
-                    ego_reward = reward[env.agents[0]]
+                    # 3+ agent: tile shared reward across all N agents → (N*E,) agent-major
+                    # All agents share the cooperative reward (agents[0] representative)
+                    ego_reward = jnp.tile(reward[env.agents[0]], num_env_agents)  # (N*E,)
+                    # done: tile done_env → (N*E,) agent-major
+                    tran_done = jnp.tile(done_env, num_env_agents)               # (N*E,)
                 info.pop("shaped_reward", None)
                 info.pop("shaped_reward_events", None)
                 info = jax.tree_util.tree_map(
@@ -315,7 +363,7 @@ def make_train_mep_s2(config):
                 )
 
                 transition = MEPTransition(
-                    done=done_env,
+                    done=tran_done,
                     ego_obs=ego_obs_t,
                     ego_action=ego_action,
                     ego_log_prob=ego_log_prob,
@@ -355,15 +403,27 @@ def make_train_mep_s2(config):
             )
 
             # ---- GAE + PPO UPDATE ----------------------------------------
-            a0_last = last_obs[env.agents[0]]
-            a1_last = last_obs[env.agents[1]]
-            ego_obs_last = jnp.where(ego_role == 0, a0_last, a1_last)
+            if num_env_agents == 2:
+                a0_last = last_obs[env.agents[0]]
+                a1_last = last_obs[env.agents[1]]
+                ego_obs_last = jnp.where(ego_role == 0, a0_last, a1_last)
+                init_h_bs = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+                done_last_flat = last_done  # (E,)
+            else:
+                # 3+ agent: concat all agents' last obs → (N*E, obs_dim...) agent-major
+                ego_obs_last = jnp.concatenate(
+                    [last_obs[a] for a in env.agents], axis=0
+                )  # (N*E, ...)
+                # tile last_done → (N*E,) agent-major
+                done_last_flat = jnp.tile(last_done, num_env_agents)  # (N*E,)
+                init_h_bs = ActorCriticRNN.initialize_carry(
+                    num_env_agents * NUM_ENVS, GRU_HIDDEN_DIM
+                )
 
-            init_h_bs = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
             _, _, last_val, _ = network.apply(
                 actor_state.params,
                 init_h_bs,
-                (ego_obs_last[jnp.newaxis], last_done[jnp.newaxis]),
+                (ego_obs_last[jnp.newaxis], done_last_flat[jnp.newaxis]),
             )
             last_val = last_val.squeeze(0)
 
@@ -406,11 +466,23 @@ def make_train_mep_s2(config):
                 vn_state = valuenorm_update(vn_state, targets)
                 targets = valuenorm_normalize(vn_state, targets)
 
-            mb_size = NUM_ENVS // NUM_MINIBATCHES
-            init_h_mb = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+            if num_env_agents == 2:
+                # 2-agent: batch dim = E
+                mb_size = NUM_ENVS // NUM_MINIBATCHES
+                batch_dim = NUM_ENVS
+                init_h_mb = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+            else:
+                # 3+ agent: batch dim = N*E (agent-major flat)
+                mb_size = (num_env_agents * NUM_ENVS) // NUM_MINIBATCHES
+                batch_dim = num_env_agents * NUM_ENVS
+                init_h_mb = ActorCriticRNN.initialize_carry(
+                    num_env_agents * NUM_ENVS, GRU_HIDDEN_DIM
+                )
+                # is_ego_mask tiled over T for minibatch PPO weighting: (T, N*E)
+                is_ego_mask_T = jnp.tile(is_ego_mask[jnp.newaxis], (NUM_STEPS, 1))
 
             def _split_mb(x):
-                """(T, E, ...) or (1, E, ...) → (NMB, T or 1, MB_SIZE, ...)"""
+                """(T, batch_dim, ...) or (1, batch_dim, ...) → (NMB, T or 1, MB_SIZE, ...)"""
                 return jnp.swapaxes(
                     jnp.reshape(
                         x, [x.shape[0], NUM_MINIBATCHES, mb_size] + list(x.shape[2:])
@@ -419,10 +491,17 @@ def make_train_mep_s2(config):
                 )
 
             def _update_minibatch(state, mb):
-                (mb_ah,
-                 mb_ego_obs, mb_done,
-                 mb_action, mb_log_prob, mb_val_old,
-                 mb_adv, mb_targets) = mb
+                if num_env_agents == 2:
+                    (mb_ah,
+                     mb_ego_obs, mb_done,
+                     mb_action, mb_log_prob, mb_val_old,
+                     mb_adv, mb_targets) = mb
+                else:
+                    # 3+ agent: extra is_ego_mask_mb for actor loss weighting
+                    (mb_ah,
+                     mb_ego_obs, mb_done,
+                     mb_action, mb_log_prob, mb_val_old,
+                     mb_adv, mb_targets, mb_ego_mask) = mb
                 mb_ah = mb_ah.squeeze(0)  # (MB_SIZE, hidden)
 
                 def _loss(params):
@@ -438,7 +517,19 @@ def make_train_mep_s2(config):
                         1 - model_config["CLIP_EPS"],
                         1 + model_config["CLIP_EPS"],
                     ) * adv_n
-                    actor_loss = -jnp.minimum(loss1, loss2).mean()
+                    ppo_elem = -jnp.minimum(loss1, loss2)  # (T, MB_SIZE)
+                    if num_env_agents == 2:
+                        # 2-agent: simple mean over all samples
+                        actor_loss = ppo_elem.mean()
+                    else:
+                        # 3+ agent: only ego samples contribute to actor loss
+                        # mb_ego_mask: (T, MB_SIZE) bool, sum over ego, normalize by count
+                        ego_count = mb_ego_mask.sum()
+                        actor_loss = jnp.where(
+                            ego_count > 0,
+                            (ppo_elem * mb_ego_mask).sum() / (ego_count + 1e-8),
+                            jnp.zeros(()),
+                        )
                     v_cl = mb_val_old + (value - mb_val_old).clip(
                         -model_config["CLIP_EPS"], model_config["CLIP_EPS"]
                     )
@@ -478,18 +569,32 @@ def make_train_mep_s2(config):
             def _update_epoch(epoch_state, _):
                 state, rng_e = epoch_state
                 rng_e, _rng_e = jax.random.split(rng_e)
-                perm = jax.random.permutation(_rng_e, NUM_ENVS)
+                perm = jax.random.permutation(_rng_e, batch_dim)
 
-                batch = (
-                    jnp.take(init_h_mb, perm, axis=0)[jnp.newaxis],  # (1, E, hid)
-                    jnp.take(traj.ego_obs, perm, axis=1),             # (T, E, H, W, C)
-                    jnp.take(traj.done, perm, axis=1),                # (T, E)
-                    jnp.take(traj.ego_action, perm, axis=1),         # (T, E)
-                    jnp.take(traj.ego_log_prob, perm, axis=1),       # (T, E)
-                    jnp.take(traj.critic_value, perm, axis=1),       # (T, E)
-                    jnp.take(advantages, perm, axis=1),               # (T, E)
-                    jnp.take(targets, perm, axis=1),                  # (T, E)
-                )
+                if num_env_agents == 2:
+                    batch = (
+                        jnp.take(init_h_mb, perm, axis=0)[jnp.newaxis],  # (1, E, hid)
+                        jnp.take(traj.ego_obs, perm, axis=1),             # (T, E, H, W, C)
+                        jnp.take(traj.done, perm, axis=1),                # (T, E)
+                        jnp.take(traj.ego_action, perm, axis=1),         # (T, E)
+                        jnp.take(traj.ego_log_prob, perm, axis=1),       # (T, E)
+                        jnp.take(traj.critic_value, perm, axis=1),       # (T, E)
+                        jnp.take(advantages, perm, axis=1),               # (T, E)
+                        jnp.take(targets, perm, axis=1),                  # (T, E)
+                    )
+                else:
+                    # 3+ agent: permute over N*E dimension, include ego mask
+                    batch = (
+                        jnp.take(init_h_mb, perm, axis=0)[jnp.newaxis],  # (1, N*E, hid)
+                        jnp.take(traj.ego_obs, perm, axis=1),             # (T, N*E, ...)
+                        jnp.take(traj.done, perm, axis=1),                # (T, N*E)
+                        jnp.take(traj.ego_action, perm, axis=1),         # (T, N*E)
+                        jnp.take(traj.ego_log_prob, perm, axis=1),       # (T, N*E)
+                        jnp.take(traj.critic_value, perm, axis=1),       # (T, N*E)
+                        jnp.take(advantages, perm, axis=1),               # (T, N*E)
+                        jnp.take(targets, perm, axis=1),                  # (T, N*E)
+                        jnp.take(is_ego_mask_T, perm, axis=1),            # (T, N*E) bool
+                    )
                 minibatches = jax.tree_util.tree_map(_split_mb, batch)
 
                 state, losses = jax.lax.scan(
@@ -554,18 +659,28 @@ def make_train_mep_s2(config):
             lambda b, p: b.at[0].set(p), ck_buf, actor_state.params
         )
 
-        # partner hstate 초기화: 2-agent (E, GRU) / 3+ agent (num_partners, E, GRU)
+        # hstate 초기화
+        # 2-agent: actor_hstate (E, H), partner_hstate (E, H)
+        # 3+ agent: actor_hstate (N*E, H) flat, partner_hstate (N*E, H) flat
         if num_partners == 1:
+            # 2-agent path: unchanged
             init_partner_h = init_h
+            init_actor_h = init_h
         else:
-            init_partner_h = jnp.stack([init_h] * num_partners)
+            # 3+ agent: flat (N*E, H) for both — reset inside _update_step each iteration
+            init_actor_h = ActorCriticRNN.initialize_carry(
+                num_env_agents * NUM_ENVS, GRU_HIDDEN_DIM
+            )
+            init_partner_h = ActorCriticRNN.initialize_carry(
+                num_env_agents * NUM_ENVS, GRU_HIDDEN_DIM
+            )
 
         vn_state = ValueNormState.create()
 
         init_runner = (
             actor_state,
             env_state, last_obs, last_done,
-            init_h, init_partner_h,
+            init_actor_h, init_partner_h,
             running_returns, ck_buf, vn_state, jnp.int32(0), rng,
         )
         final_runner, metrics = jax.lax.scan(

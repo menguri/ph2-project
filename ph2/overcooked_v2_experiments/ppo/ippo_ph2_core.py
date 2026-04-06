@@ -672,6 +672,7 @@ def make_train(
                 ph1_probs,
                 ph1_pool_ready,
                 phase2_ind_match_env_state,
+                ph2_spread_ind_ego_mask_state,  # (NUM_ACTORS,) bool — GridSpread spec-ind ego 배정
                 rng,
             ) = runner_state
 
@@ -700,6 +701,7 @@ def make_train(
                     episode_hit_counts,
                     returned_episode_hit_counts,
                     phase2_ind_match_env_state,
+                    ph2_spread_ind_ego_mask_state,  # (NUM_ACTORS,) bool
                     rng,
                 ) = env_step_state
 
@@ -896,12 +898,18 @@ def make_train(
                     )
 
                 # PH2 ind role:
-                #   phase2_ind_match_env_state=True  -> ind-ind
-                #   phase2_ind_match_env_state=False -> spec-ind
+                #   phase2_ind_match_env_state=True (OV2) / ==2 (GridSpread) -> ind-ind
+                #   phase2_ind_match_env_state=False (OV2) / ==1 (GridSpread) -> spec-ind
                 # For ind-ind, disable blocked target input by forcing normal target (-1).
                 if ph2_match_schedule and (ph2_role == "ind"):
+                    if is_spread:
+                        # GridSpread: int32 match_type, ind-ind = 2
+                        ind_ind_env = (phase2_ind_match_env_state == 2)
+                    else:
+                        # OV2: bool, True = ind-ind
+                        ind_ind_env = phase2_ind_match_env_state
                     ind_ind_actor_mask = jnp.tile(
-                        phase2_ind_match_env_state, env.num_agents
+                        ind_ind_env, env.num_agents
                     )
                     ind_ind_actor_mask = ind_ind_actor_mask.reshape(
                         (model_config["NUM_ACTORS"],)
@@ -989,6 +997,7 @@ def make_train(
                 train_update_mask = action_pick_mask
                 phase2_ind_match_env = phase2_ind_match_env_state
                 phase2_ind_match_prob = jnp.float32(0.0)
+                ph2_spread_ind_ego_mask = ph2_spread_ind_ego_mask_state  # 기본값 (population 유무 관계없이)
                 if population is not None:
                     _vprint("Using population")
 
@@ -1049,53 +1058,107 @@ def make_train(
                     action_pick_mask = train_mask_flat
                     train_update_mask = action_pick_mask
                     if ph2_match_schedule and (ph2_role in ("spec", "ind")):
-                        # Sample only when an env starts a new episode; otherwise keep previous match type.
                         rng, rng_match = jax.random.split(rng)
-                        phase2_ind_match_prob = _phase2_ind_match_prob(update_step)
-                        sampled_ind_match_env = jax.random.bernoulli(
-                            rng_match,
-                            p=phase2_ind_match_prob,
-                            shape=(model_config["NUM_ENVS"],),
-                        )
-                        phase2_ind_match_env = jnp.where(
-                            episode_done,
-                            sampled_ind_match_env,
-                            phase2_ind_match_env_state,
-                        )
-                        ind_match_actor = jnp.tile(phase2_ind_match_env, env.num_agents)
                         if is_spread:
-                            # GridSpread: spec-ind에서 non-ego agent 독립 50% spec/ind
-                            rng, rng_pool = jax.random.split(rng)
-                            _use_ego = jax.random.bernoulli(rng_pool, p=0.5, shape=(model_config["NUM_ACTORS"],))
-                            spread_ind_mask = is_ego | _use_ego  # ego 항상 ind, 나머지 50%
+                            # ===== GridSpread 전용: 3-way categorical (0=spec-spec, 1=spec-ind, 2=ind-ind) =====
+                            # 에피소드 시작 시만 재샘플; 그 외는 이전 match type 유지
+                            logits = jnp.log(jnp.array([1/3, 1/3, 1/3]))
+                            sampled_match_type = jax.random.categorical(
+                                rng_match, logits, shape=(model_config["NUM_ENVS"],)
+                            )
+                            phase2_ind_match_env = jnp.where(
+                                episode_done,
+                                sampled_match_type.astype(jnp.int32),
+                                phase2_ind_match_env_state.astype(jnp.int32),
+                            )
 
-                        if ph2_role == "spec":
-                            # spec policy always acts in spec-match; in ind-match it acts as one side only.
-                            _ind_mask = spread_ind_mask if is_spread else train_mask_flat
-                            action_pick_mask = jnp.where(
-                                ind_match_actor,
-                                _ind_mask,
-                                jnp.ones_like(train_mask_flat),
+                            # 3-way 액터별 bool 마스크
+                            is_ss_actor = jnp.tile(phase2_ind_match_env == 0, env.num_agents)  # spec-spec
+                            is_si_actor = jnp.tile(phase2_ind_match_env == 1, env.num_agents)  # spec-ind
+                            is_ii_actor = jnp.tile(phase2_ind_match_env == 2, env.num_agents)  # ind-ind
+
+                            # spec-ind ego 배정: episode 시작 시만 noise-rank 재샘플
+                            # n_ego ~ Uniform[1, N-1]: 최소 1 ind ego, 최소 1 spec partner 보장
+                            rng, rng_n, rng_noise = jax.random.split(rng, 3)
+                            n_ego_per_env = jax.random.randint(
+                                rng_n, shape=(model_config["NUM_ENVS"],),
+                                minval=1, maxval=env.num_agents  # maxval exclusive → [1, N-1]
                             )
-                            # spec updates only on spec-match samples.
-                            train_update_mask = jnp.where(
-                                ind_match_actor,
-                                jnp.zeros_like(train_mask_flat),
-                                jnp.ones_like(train_mask_flat),
+                            noise = jax.random.uniform(
+                                rng_noise, shape=(env.num_agents, model_config["NUM_ENVS"])
                             )
+                            ranks = jnp.argsort(jnp.argsort(noise, axis=0), axis=0)  # (N, E)
+                            new_ind_ego = (ranks < n_ego_per_env[None, :]).reshape(-1)  # (NUM_ACTORS,) agent-major
+                            episode_done_actor = jnp.tile(episode_done, env.num_agents)
+                            ph2_spread_ind_ego_mask = jnp.where(
+                                episode_done_actor, new_ind_ego, ph2_spread_ind_ego_mask_state
+                            )
+
+                            if ph2_role == "spec":
+                                # spec-spec(0): 전원 spec 행동·학습
+                                # spec-ind(1): non-ego(~ind_ego) spec 행동, 학습 X
+                                # ind-ind(2): 전원 ind pop 행동 (action_pick_mask=0 → pop_actions 사용), 학습 X
+                                action_pick_mask = jnp.where(
+                                    is_ss_actor,
+                                    jnp.ones_like(train_mask_flat),
+                                    jnp.where(is_si_actor, ~ph2_spread_ind_ego_mask, jnp.zeros_like(train_mask_flat))
+                                )
+                                train_update_mask = jnp.where(
+                                    is_ss_actor,
+                                    jnp.ones_like(train_mask_flat),
+                                    jnp.zeros_like(train_mask_flat),
+                                )
+                            else:  # ind
+                                # spec-spec(0): 전원 spec pop, ind 학습 X
+                                # spec-ind(1): ind ego만 행동·학습, 나머지 spec pop
+                                # ind-ind(2): 전원 ind 행동·학습
+                                action_pick_mask = jnp.where(
+                                    is_ss_actor,
+                                    jnp.zeros_like(train_mask_flat),
+                                    jnp.where(is_si_actor, ph2_spread_ind_ego_mask, jnp.ones_like(train_mask_flat))
+                                )
+                                train_update_mask = action_pick_mask
                         else:
-                            # ind role:
-                            #   ind_match_env=True  -> ind-ind (both actors are ind)
-                            #   ind_match_env=False -> spec-ind (ind only on train_mask slots)
-                            _ind_mask = spread_ind_mask if is_spread else train_mask_flat
-                            action_pick_mask = jnp.where(
-                                ind_match_actor,
-                                jnp.ones_like(train_mask_flat),
-                                _ind_mask,
+                            # ===== OV2: 기존 binary bernoulli 로직 완전히 그대로 =====
+                            phase2_ind_match_prob = _phase2_ind_match_prob(update_step)
+                            sampled_ind_match_env = jax.random.bernoulli(
+                                rng_match,
+                                p=phase2_ind_match_prob,
+                                shape=(model_config["NUM_ENVS"],),
                             )
-                            # Update only samples where ind policy actually acted
-                            # (all actors in ind-ind, train-mask slots in spec-ind).
-                            train_update_mask = action_pick_mask
+                            phase2_ind_match_env = jnp.where(
+                                episode_done,
+                                sampled_ind_match_env,
+                                phase2_ind_match_env_state,
+                            )
+                            ind_match_actor = jnp.tile(phase2_ind_match_env, env.num_agents)
+                            ph2_spread_ind_ego_mask = ph2_spread_ind_ego_mask_state  # OV2에서 미사용, 그대로 전달
+
+                            if ph2_role == "spec":
+                                # spec policy always acts in spec-match; in ind-match it acts as one side only.
+                                action_pick_mask = jnp.where(
+                                    ind_match_actor,
+                                    train_mask_flat,
+                                    jnp.ones_like(train_mask_flat),
+                                )
+                                # spec updates only on spec-match samples.
+                                train_update_mask = jnp.where(
+                                    ind_match_actor,
+                                    jnp.zeros_like(train_mask_flat),
+                                    jnp.ones_like(train_mask_flat),
+                                )
+                            else:
+                                # ind role:
+                                #   ind_match_env=True  -> ind-ind (both actors are ind)
+                                #   ind_match_env=False -> spec-ind (ind only on train_mask slots)
+                                action_pick_mask = jnp.where(
+                                    ind_match_actor,
+                                    jnp.ones_like(train_mask_flat),
+                                    train_mask_flat,
+                                )
+                                # Update only samples where ind policy actually acted
+                                # (all actors in ind-ind, train-mask slots in spec-ind).
+                                train_update_mask = action_pick_mask
                     elif use_population_annealing:
                         action_pick_mask = _make_train_mask(population_annealing_mask)
                         train_update_mask = action_pick_mask
@@ -1157,10 +1220,14 @@ def make_train(
                         action_pick_mask_bool = action_pick_mask.astype(jnp.bool_)
                         if ph2_role == "spec":
                             # spec role:
-                            #   phase2_ind_match_env=True  -> spec-ind
-                            #   phase2_ind_match_env=False -> spec-spec
-                            spec_ind_env = phase2_ind_match_env
-                            spec_spec_env = ~phase2_ind_match_env
+                            #   OV2:  phase2_ind_match_env=True  -> spec-ind, False -> spec-spec
+                            #   Spread: ==1 -> spec-ind, ==0 -> spec-spec, ==2 -> ind-ind (spec 미참여)
+                            if is_spread:
+                                spec_ind_env = (phase2_ind_match_env == 1)
+                                spec_spec_env = (phase2_ind_match_env == 0)
+                            else:
+                                spec_ind_env = phase2_ind_match_env.astype(jnp.bool_)
+                                spec_spec_env = ~spec_ind_env
 
                             rng, rng_pick = jax.random.split(rng)
                             rand_agent = jax.random.randint(
@@ -1184,10 +1251,14 @@ def make_train(
                             )
                         else:
                             # ind role:
-                            #   phase2_ind_match_env=True  -> ind-ind (PH1처럼 1명 랜덤 치환)
-                            #   phase2_ind_match_env=False -> spec-ind (spec actor만 적용)
-                            spec_ind_env = ~phase2_ind_match_env
-                            ind_ind_env = phase2_ind_match_env
+                            #   OV2:  phase2_ind_match_env=True  -> ind-ind, False -> spec-ind
+                            #   Spread: ==2 -> ind-ind, ==1 -> spec-ind, ==0 -> spec-spec (ind 미참여)
+                            if is_spread:
+                                spec_ind_env = (phase2_ind_match_env == 1)
+                                ind_ind_env = (phase2_ind_match_env == 2)
+                            else:
+                                spec_ind_env = ~phase2_ind_match_env.astype(jnp.bool_)
+                                ind_ind_env = phase2_ind_match_env.astype(jnp.bool_)
                             spec_actor_mask = ~action_pick_mask_bool
                             selected_actor_spec_ind = spec_actor_mask & jnp.tile(
                                 env_mask & spec_ind_env, env.num_agents
@@ -1271,8 +1342,20 @@ def make_train(
                     # Update env-specific ring buffer pool: (E, Pool, H, W, C_full)
                     # ToyCoop: pool 미사용 (synthetic penalty state 직접 생성)
                     if env_name != "ToyCoop":
-                        ph1_pool_states = jnp.roll(ph1_pool_states, shift=-1, axis=1)
-                        ph1_pool_states = ph1_pool_states.at[:, -1].set(global_full_next_env0)
+                        new_pool = jnp.roll(ph1_pool_states, shift=-1, axis=1)
+                        new_pool = new_pool.at[:, -1].set(global_full_next_env0)
+                        if is_spread:
+                            # GridSpread: all_covered=True 상태는 pool에 추가하지 않음
+                            # info["shaped_reward_events"]["agent_0"]: (NUM_ENVS, 2)
+                            # index 0 = all_covered float, index 1 = coverage_ratio
+                            all_covered_env = info["shaped_reward_events"]["agent_0"][:, 0].astype(jnp.bool_)
+                            ph1_pool_states = jnp.where(
+                                (~all_covered_env)[:, jnp.newaxis, jnp.newaxis],  # (E,1,1) broadcast
+                                new_pool,
+                                ph1_pool_states,
+                            )
+                        else:
+                            ph1_pool_states = new_pool  # OV2: 기존과 동일
                 
                 # [STA-PH1] Apply Latent Distance Penalty
                 # Calculate Distance: || z(next_obs) - z(blocked) ||
@@ -1630,6 +1713,7 @@ def make_train(
                     episode_hit_counts,
                     returned_episode_hit_counts,
                     phase2_ind_match_env,
+                    ph2_spread_ind_ego_mask,  # (NUM_ACTORS,) bool — updated per-episode
                     rng,
                 )
                 return env_step_state, transition
@@ -1654,6 +1738,7 @@ def make_train(
                 episode_hit_counts,
                 returned_episode_hit_counts,
                 phase2_ind_match_env_state,
+                ph2_spread_ind_ego_mask_state,  # (NUM_ACTORS,) bool
                 rng,
             )
             env_step_state, traj_batch = jax.lax.scan(
@@ -1679,6 +1764,7 @@ def make_train(
                 episode_hit_counts,
                 returned_episode_hit_counts,
                 next_phase2_ind_match_env_state,
+                next_ph2_spread_ind_ego_mask_state,  # (NUM_ACTORS,) bool
                 rng,
             ) = env_step_state
 
@@ -2741,6 +2827,7 @@ def make_train(
                 next_ph1_probs,
                 ph1_pool_ready,
                 next_phase2_ind_match_env_state,
+                next_ph2_spread_ind_ego_mask_state,  # (NUM_ACTORS,) bool
                 rng,
             )
             return runner_state, metric
@@ -2827,11 +2914,19 @@ def make_train(
             initial_ph1_pool_ready = False
             if ph2_match_schedule:
                 rng, rng_init_match = jax.random.split(rng)
-                initial_phase2_ind_match_env = jax.random.bernoulli(
-                    rng_init_match,
-                    p=_phase2_ind_match_prob(initial_update_step),
-                    shape=(model_config["NUM_ENVS"],),
-                )
+                if is_spread:
+                    # GridSpread: 3-way categorical 초기화
+                    logits = jnp.log(jnp.array([1/3, 1/3, 1/3]))
+                    initial_phase2_ind_match_env = jax.random.categorical(
+                        rng_init_match, logits, shape=(model_config["NUM_ENVS"],)
+                    ).astype(jnp.int32)
+                else:
+                    # OV2: 기존 bernoulli 그대로
+                    initial_phase2_ind_match_env = jax.random.bernoulli(
+                        rng_init_match,
+                        p=_phase2_ind_match_prob(initial_update_step),
+                        shape=(model_config["NUM_ENVS"],),
+                    )
             else:
                 initial_phase2_ind_match_env = jnp.zeros((model_config["NUM_ENVS"],), dtype=jnp.bool_)
 
@@ -2858,6 +2953,7 @@ def make_train(
                 initial_ph1_probs,
                 initial_ph1_pool_ready,
                 initial_phase2_ind_match_env,
+                jnp.zeros((model_config["NUM_ACTORS"],), dtype=jnp.bool_),  # ph2_spread_ind_ego_mask
                 _rng,
             )
         else:

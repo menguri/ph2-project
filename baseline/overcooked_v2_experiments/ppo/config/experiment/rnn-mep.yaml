@@ -6,12 +6,16 @@ defaults:
 ALG_NAME: "MEP"
 
 # Population (S1)
-MEP_POPULATION_SIZE: 4
-MEP_ENTROPY_ALPHA: 0.1       # 원본 MEP ENTROPY_POOL=0.1
+MEP_POPULATION_SIZE: 5           # (구: 4)
+# MEP_POPULATION_SIZE: 4         # 원본 MEP 파라미터
+
+MEP_ENTROPY_ALPHA: 0.01          # (구: 0.1)
+# MEP_ENTROPY_ALPHA: 0.1         # 원본 MEP ENTROPY_POOL=0.1
 
 # Adaptive (S2)
 MEP_USE_PRIORITIZED_SAMPLING: True
-MEP_PRIORITIZED_ALPHA: 1.0
+MEP_PRIORITIZED_ALPHA: 3.0       # (구: 1.0)
+# MEP_PRIORITIZED_ALPHA: 1.0     # 원본 MEP 파라미터
 S2_NUM_SEEDS: 10
 
 NUM_SEEDS: 1           # S1은 항상 1
@@ -20,19 +24,35 @@ NUM_CHECKPOINTS: 3
 model:
   GRU_HIDDEN_DIM: 64
   FC_DIM_SIZE: 64
-  LR: 0.0003
+  OBS_ENCODER: "CNNGamma"        # (구: 없음 — default CNN)
+  ACTIVATION: "relu"             # (구: 없음 — default)
+
+  LR: 5e-4                       # (구: 0.0003)
+  # LR: 0.0003                   # 원본 MEP 파라미터
+  ANNEAL_LR: False               # (구: True)
+  # ANNEAL_LR: True              # 원본 MEP 파라미터
+  # LR_WARMUP: 0.05              # 원본 MEP 파라미터 (ANNEAL_LR=True일 때만 유효)
+
   ENT_COEF: 0.01
-  VF_COEF: 0.1              # 원본 MEP VF_COEF=0.1
-  GAE_LAMBDA: 0.98           # 원본 MEP LAM=0.98
-  NUM_ENVS: 64
-  NUM_STEPS: 128
-  UPDATE_EPOCHS: 8            # 원본 MEP STEPS_PER_UPDATE=8
-  NUM_MINIBATCHES: 4          # 원본 MEP MINIBATCHES=5 (NUM_ENVS=64 기준 4로 조정)
-  CLIP_EPS: 0.05              # 원본 MEP CLIPPING=0.05
-  MAX_GRAD_NORM: 0.1          # 원본 MEP MAX_GRAD_NORM=0.1
-  TOTAL_TIMESTEPS: 1e7       # S1 timesteps (원본 GAMMA 10M)
-  S2_TOTAL_TIMESTEPS: 3e7    # S2 timesteps
-  REW_SHAPING_HORIZON: 1e7   # S1: TOTAL_TIMESTEPS와 일치
-  S2_REW_SHAPING_HORIZON: 3e7  # S2: S2_TOTAL_TIMESTEPS와 일치
-  ANNEAL_LR: True
-  LR_WARMUP: 0.05
+  VF_COEF: 1.0                   # (구: 0.1)
+  # VF_COEF: 0.1                 # 원본 MEP VF_COEF=0.1
+  GAE_LAMBDA: 0.95               # (구: 0.98)
+  # GAE_LAMBDA: 0.98             # 원본 MEP LAM=0.98
+  CLIP_EPS: 0.2                  # (구: 0.05)
+  # CLIP_EPS: 0.05               # 원본 MEP CLIPPING=0.05
+  MAX_GRAD_NORM: 10.0            # (구: 0.1)
+  # MAX_GRAD_NORM: 0.1           # 원본 MEP MAX_GRAD_NORM=0.1
+
+  # NUM_ENVS: 100                  # (구: 64)
+  NUM_ENVS: 64                 # 원본 MEP 파라미터
+  # NUM_STEPS: 400                 # (구: 128)
+  NUM_STEPS: 128               # 원본 MEP 파라미터
+  UPDATE_EPOCHS: 15              # (구: 8)
+  # UPDATE_EPOCHS: 8             # 원본 MEP STEPS_PER_UPDATE=8
+  NUM_MINIBATCHES: 1             # (구: 4)
+  # NUM_MINIBATCHES: 4           # 원본 MEP MINIBATCHES=5 (NUM_ENVS=64 기준 4로 조정)
+
+  TOTAL_TIMESTEPS: 1e7
+  S2_TOTAL_TIMESTEPS: 3e7
+  REW_SHAPING_HORIZON: 1e7
+  S2_REW_SHAPING_HORIZON: 3e7

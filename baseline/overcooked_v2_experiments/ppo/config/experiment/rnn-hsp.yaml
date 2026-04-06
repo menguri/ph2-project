@@ -39,6 +39,6 @@ model:
   NUM_STEPS: 400                   # 논문 episode_length=400
   TOTAL_TIMESTEPS: 1e7             # S1 per-policy timesteps (원본 10M)
   S2_TOTAL_TIMESTEPS: 3e7          # S2 timesteps (30M 유지)
-  S2_NUM_ENVS: 200                 # S2: 논문 300 → 200 (GPU 메모리 제약)
+  S2_NUM_ENVS: 200                 # S2: 논문 300 → 128 (GPU 메모리 제약)
   REW_SHAPING_HORIZON: 0           # S1: utility weight만, no annealing
   S2_REW_SHAPING_HORIZON: 3e7      # S2: 전체 학습 기간

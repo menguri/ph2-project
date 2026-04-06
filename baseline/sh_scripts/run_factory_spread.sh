@@ -15,6 +15,8 @@ cd "$SCRIPT_DIR" || exit 1
 
 GPUS="${GPUS:-0,1}"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
+NENVS="${NENVS:-256}"
+NSTEPS="${NSTEPS:-512}"
 TOTAL_TS="1e8"                # 100M timesteps (S2에도 적용)
 
 # 에이전트 수: CLI 인자 또는 기본값 4
@@ -24,8 +26,13 @@ else
   AGENT_COUNTS=("$@")
 fi
 
+# rnn-cole.yaml의 NUM_MINIBATCHES=5는 16×128=2048을 나누지 못함 → 4로 override
+# 각 override는 별도 --extra 플래그로 전달해야 Hydra가 올바르게 파싱함
 TS_EXTRA="++model.TOTAL_TIMESTEPS=${TOTAL_TS}"
-S2_TS_EXTRA="++model.S2_TOTAL_TIMESTEPS=${TOTAL_TS} ++model.S2_REW_SHAPING_HORIZON=${TOTAL_TS}"
+S2_TS_EXTRA="++model.S2_TOTAL_TIMESTEPS=${TOTAL_TS}"
+MINIBATCH_EXTRA="++model.NUM_MINIBATCHES=4"
+MLP_ENCODER_EXTRA="++model.OBS_ENCODER=MLP"
+ENT_COEF_EXTRA="++model.ENT_COEF=0.01"
 
 # -----------------------------------------------------------------------------
 # FCP population 빌드: SP runs → fcp_populations/gridspread_{N}a_sp/
@@ -33,11 +40,12 @@ S2_TS_EXTRA="++model.S2_TOTAL_TIMESTEPS=${TOTAL_TS} ++model.S2_REW_SHAPING_HORIZ
 # -----------------------------------------------------------------------------
 build_fcp_population() {
   local n_agents=$1
-  local pop_dir="fcp_populations/gridspread_${n_agents}a_sp"
+  # bash cwd=sh_scripts/ → ../fcp_populations/ = baseline/fcp_populations/
+  local pop_dir="../fcp_populations/gridspread_${n_agents}a_sp"
 
   # runs/ 아래에서 가장 최근 GridSpread SP run 디렉토리 탐색
   local sp_run
-  sp_run=$(ls -dt ../runs/*gridspread_${n_agents}a*sp* 2>/dev/null | head -1)
+  sp_run=$(find ../runs -maxdepth 1 -type d -iname "*gridspread_${n_agents}a*sp*" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
 
   if [[ -z "$sp_run" ]]; then
     echo "[FCP-POP] SP run not found for N=${n_agents} — SKIP"
@@ -62,28 +70,64 @@ build_fcp_population() {
   echo "[FCP-POP] N=${n_agents}: ${counter} runs → ${subdir_counter} groups → ${pop_dir}"
 }
 
+NAGENTS_EXTRA="++env.ENV_KWARGS.n_agents="   # N을 뒤에 붙여서 사용
+
 for N in "${AGENT_COUNTS[@]}"; do
-  ENV="gridspread_${N}a"
+  ENV="gridspread"
   echo "================================================================"
   echo "  GridSpread N=${N}  (env=${ENV})"
   echo "================================================================"
 
-  # ===========================================================================
-  # 1. SP — 기존 rnn-sp-cole + 100M
-  # ===========================================================================
+  # # ===========================================================================
+  # # 1. SP — 기존 rnn-sp-cole + 100M
+  # # ===========================================================================
   echo "[SP] N=${N}"
   ./run_user_wandb.sh \
     --exp rnn-sp-cole \
     --env "${ENV}" \
     --gpus "${GPUS}" \
     --env-device "${ENV_DEVICE}" \
+    --nenvs "${NENVS}" \
+    --nsteps "${NSTEPS}" \
     --tags "sp,spread,N${N}" \
-    --extra "${TS_EXTRA}"
+    --extra "${TS_EXTRA}" \
+    --extra "${MINIBATCH_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "${ENT_COEF_EXTRA}" \
+    --extra "${NAGENTS_EXTRA}${N}"
 
   # ===========================================================================
   # 1.5. FCP population 빌드 (SP 완료 직후)
   # ===========================================================================
   build_fcp_population "${N}"
+
+  # ===========================================================================
+  # 3. FCP — SP population 필요
+  # ===========================================================================
+  # FCP_DIR_PY: Python cwd=baseline/ 기준 (run_user_wandb.sh --fcp 인자)
+  # FCP_DIR_BASH: bash cwd=sh_scripts/ 기준 ([ -d ] 체크용)
+  FCP_DIR_PY="fcp_populations/gridspread_${N}a_sp"
+  FCP_DIR_BASH="../fcp_populations/gridspread_${N}a_sp"
+  if [ -d "${FCP_DIR_BASH}" ]; then
+    echo "[FCP] N=${N}"
+    ./run_user_wandb.sh \
+      --exp rnn-fcp-cole \
+      --env "${ENV}" \
+      --gpus "${GPUS}" \
+      --env-device "${ENV_DEVICE}" \
+      --nenvs "${NENVS}" \
+      --nsteps "${NSTEPS}" \
+      --fcp "${FCP_DIR_PY}" \
+      --seeds 10 \
+      --tags "fcp,spread,N${N}" \
+      --extra "${TS_EXTRA}" \
+      --extra "${MINIBATCH_EXTRA}" \
+      --extra "${MLP_ENCODER_EXTRA}" \
+      --extra "${ENT_COEF_EXTRA}" \
+      --extra "${NAGENTS_EXTRA}${N}"
+  else
+    echo "[FCP] SKIP N=${N} — population 없음: ${FCP_DIR_BASH}"
+  fi
 
   # ===========================================================================
   # 2. E3T — 기존 rnn-e3t + epsilon 0.3 + prediction OFF + 100M
@@ -94,28 +138,16 @@ for N in "${AGENT_COUNTS[@]}"; do
     --env "${ENV}" \
     --gpus "${GPUS}" \
     --env-device "${ENV_DEVICE}" \
-    --e3t-epsilon 0.3 \
+    --nenvs "${NENVS}" \
+    --nsteps "${NSTEPS}" \
+    --e3t-epsilon 0.2 \
     --tags "e3t,spread,N${N}" \
-    --extra "${TS_EXTRA} ++USE_PREDICTION=False"
+    --extra "${TS_EXTRA}" \
+    --extra "${MINIBATCH_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "++USE_PREDICTION=False" \
+    --extra "${NAGENTS_EXTRA}${N}"
 
-  # ===========================================================================
-  # 3. FCP — SP population 필요
-  # ===========================================================================
-  FCP_DIR="fcp_populations/gridspread_${N}a_sp"
-  if [ -d "${FCP_DIR}" ]; then
-    echo "[FCP] N=${N}"
-    ./run_user_wandb.sh \
-      --exp rnn-fcp-cole \
-      --env "${ENV}" \
-      --gpus "${GPUS}" \
-      --env-device "${ENV_DEVICE}" \
-      --fcp "${FCP_DIR}" \
-      --seeds 1 \
-      --tags "fcp,spread,N${N}" \
-      --extra "${TS_EXTRA}"
-  else
-    echo "[FCP] SKIP N=${N} — population 없음: ${FCP_DIR}"
-  fi
 
   # ===========================================================================
   # 4. MEP — 기존 rnn-mep + S2 100M
@@ -125,9 +157,14 @@ for N in "${AGENT_COUNTS[@]}"; do
     --exp rnn-mep \
     --env "${ENV}" \
     --gpus "${GPUS}" \
+    --nenvs "${NENVS}" \
+    --nsteps "${NSTEPS}" \
     --seeds 1 \
     --tags "mep,spread,N${N}" \
-    --extra "${S2_TS_EXTRA}"
+    --extra "${S2_TS_EXTRA}" \
+    --extra "${MINIBATCH_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "${NAGENTS_EXTRA}${N}" \
 
 done
 

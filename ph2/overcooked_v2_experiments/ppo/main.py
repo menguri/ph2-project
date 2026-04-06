@@ -688,6 +688,9 @@ def single_run_with_viz(config):
         print(f"[EVAL] → reward_summary_cross.csv 저장 위치: {run_base_dir}")
         # PH2는 ind policy로 eval (spec은 학습 보조용)
         _policy_source = "ind" if "PH2" in alg_name else "params"
+        # GridSpread (n>=3): level_one cross-play (leave-one-out)
+        _cross_mode = "level_one" if "GridSpread" in layout_name else "full"
+        _eval_reward = "sparse" if "GridSpread" in layout_name else "sparse"
         visualize_ppo_policy(
             run_base_dir,
             key=jax.random.PRNGKey(config["SEED"]),
@@ -696,6 +699,8 @@ def single_run_with_viz(config):
             cross=True,
             no_viz=True,
             policy_source=_policy_source,
+            cross_mode=_cross_mode,
+            eval_reward=_eval_reward,
         )
 
     print("[RUNDBG] ===== single_run_with_viz 종료 =====")

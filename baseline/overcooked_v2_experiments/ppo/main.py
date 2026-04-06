@@ -51,6 +51,10 @@ def single_run_with_viz(config):
     # 이름 구성: 모델/레이아웃 정보는 항상 준비하고, CLI에서 wandb.name을 넘기면 이를 우선 사용 (예: rnn-sp-uc)
     model_name = config["model"]["TYPE"]
     layout_name = config["env"]["ENV_KWARGS"].get("layout", config["env"].get("ENV_NAME", "unknown"))
+    # GridSpread: n_agents 정보를 layout_name에 포함 (run 디렉토리에서 N 구분용)
+    _n_agents = config["env"]["ENV_KWARGS"].get("n_agents", None)
+    if _n_agents is not None and layout_name == "GridSpread":
+        layout_name = f"GridSpread_{_n_agents}a"
     agent_view_size = config["env"]["ENV_KWARGS"].get("agent_view_size", None)
     avs_str = f"avs-{agent_view_size}" if agent_view_size is not None else "avs-full"
 
@@ -259,6 +263,9 @@ def single_run_with_viz(config):
         cross_seeds = eval_cfg.get("CROSS_PLAY_SEEDS", 10)
         print(f"[EVAL] cross-play 평가 (num_seeds={cross_seeds}, no_viz=True)")
         print(f"[EVAL] → reward_summary_cross.csv 저장 위치: {run_base_dir}")
+        # GridSpread (n>=3): level_one cross-play (leave-one-out)
+        _cross_mode = "level_one" if "GridSpread" in layout_name else "full"
+        _eval_reward = "sparse" if "GridSpread" in layout_name else "sparse"
         visualize_ppo_policy(
             run_base_dir,
             key=jax.random.PRNGKey(config["SEED"]),
@@ -266,6 +273,8 @@ def single_run_with_viz(config):
             num_seeds=cross_seeds,
             cross=True,
             no_viz=True,  # CSV + heatmap만 저장, 비디오 생성 안 함
+            cross_mode=_cross_mode,
+            eval_reward=_eval_reward,
         )
 
     print("[RUNDBG] ===== single_run_with_viz 종료 =====")
