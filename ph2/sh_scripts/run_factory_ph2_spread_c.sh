@@ -9,7 +9,7 @@ cd "$(dirname "$0")" || exit 1
 
 EXP="rnn-ph2"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
-GPUS="${GPUS:-2,3}"
+GPUS="${GPUS:-6,7}"
 NENVS="${NENVS:-128}"
 NSTEPS="${NSTEPS:-512}"
 NUM_SEEDS="${NUM_SEEDS:-10}"
@@ -81,7 +81,6 @@ run_ph2_spread() {
     --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
     --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
     --extra "++model.OBS_ENCODER=MLP" \
-    --extra "++model.ENT_COEF=0.05" \
     --extra "++env.ENV_KWARGS.n_agents=${n_agents}"
 }
 
@@ -99,7 +98,7 @@ run_ph2_spread() {
 # ===========================================================================
 # 스윕: PH1_MAX_PENALTY_COUNT × PH1_OMEGA × PH1_SIGMA
 # ===========================================================================
-PENALTY_COUNTS=(2)
+PENALTY_COUNTS=(3)
 OMEGAS=(100.0 10.0 5.0 1.0)
 SIGMAS=(2.0 3.0 4.0 5.0 6.0 7.0 10.0)
 
@@ -142,7 +141,6 @@ for N in "${AGENT_COUNTS[@]}"; do
           --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
           --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
           --extra "++model.OBS_ENCODER=MLP" \
-          --extra "++model.ENT_COEF=0.05" \
           --extra "++env.ENV_KWARGS.n_agents=${N}"
       done
     done

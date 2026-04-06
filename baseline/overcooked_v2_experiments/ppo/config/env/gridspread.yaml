@@ -5,4 +5,4 @@
   "n_agents": 4
   "radius": 3
   "max_steps": 100
-  "step_cost": 1.0
+  "step_cost": 0.1

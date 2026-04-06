@@ -32,7 +32,7 @@ TS_EXTRA="++model.TOTAL_TIMESTEPS=${TOTAL_TS}"
 S2_TS_EXTRA="++model.S2_TOTAL_TIMESTEPS=${TOTAL_TS}"
 MINIBATCH_EXTRA="++model.NUM_MINIBATCHES=4"
 MLP_ENCODER_EXTRA="++model.OBS_ENCODER=MLP"
-ENT_COEF_EXTRA="++model.ENT_COEF=0.01"
+ENT_COEF_EXTRA="++model.ENT_COEF=0.05"
 
 # -----------------------------------------------------------------------------
 # FCP population 빌드: SP runs → fcp_populations/gridspread_{N}a_sp/
