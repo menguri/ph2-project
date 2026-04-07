@@ -7,7 +7,7 @@ defaults:
 ALG_NAME: "GAMMA"
 
 # Population (S1)
-MEP_POPULATION_SIZE: 5           # 논문/원본 default=5
+MEP_POPULATION_SIZE: 8           # GAMMA 원본 gen_mep_agents.sh 기준
 MEP_ENTROPY_ALPHA: 0.01          # 원본 mep_entropy_alpha=0.01
 
 # Adaptive (S2)
@@ -24,7 +24,7 @@ GAMMA_VAE_EPOCHS: 500
 GAMMA_VAE_BATCH_SIZE: 64
 GAMMA_VAE_CHUNK_LENGTH: 100
 GAMMA_VAE_KL_PENALTY: 1.0
-GAMMA_VAE_KL_INIT: 0.0
+GAMMA_VAE_KL_INIT: 0.01          # GAMMA 원본 train_vae.sh 기준
 GAMMA_VAE_ROLLOUT_EPISODES: 100
 GAMMA_VAE_Z_CHANGE_PROB: 0.0
 

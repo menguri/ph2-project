@@ -1,39 +1,39 @@
 # @package _global_
+# rnn-mep-s1: rnn-mep.yaml과 동일한 파라미터 (Stage 1 분리 실행용)
+# 원본 MEP (zsc-basecamp/MEP, human_aware_rl/PBT) 파라미터에 정렬.
 defaults:
   - override /model: rnn
 
 ALG_NAME: "MEP_S1"
 
-# MEP Population — 원본 MEP repo (pbt_model_pool_entropy_parallel.py) 기준
+# Population — 원본 POPULATION_SIZE=4
 MEP_POPULATION_SIZE: 4
-MEP_ENTROPY_ALPHA: 0.01       # 원본 ENTROPY_POOL=0.01 (script 기준)
+MEP_ENTROPY_ALPHA: 0.1               # 원본 ENTROPY_POOL=0.1
 
 NUM_SEEDS: 1
 NUM_CHECKPOINTS: 3
 
 model:
-  # Network — 원본 맞춤 (hidden=64, CNN 25 filters 5x5/3x3/3x3, leaky_relu)
-  "GRU_HIDDEN_DIM": 64
-  "FC_DIM_SIZE": 64
-  "OBS_ENCODER": "CNNSimple"    # 원본 conv_and_mlp 구조 (5x5/3x3/3x3)
-  "CNN_FEATURES": 25            # 원본 NUM_FILTERS=25
-  "ACTIVATION": "leaky_relu"    # 원본 leaky_relu
+  GRU_HIDDEN_DIM: 64
+  FC_DIM_SIZE: 64
+  CNN_FEATURES: 25                   # 원본 NUM_FILTERS=25
+  OBS_ENCODER: "CNNSimple"
+  ACTIVATION: "relu"
 
-  # PPO — 원본 fixed_mdp config 기준
-  "LR": 5e-4                   # 원본 LR=5e-4
-  "ANNEAL_LR": False           # 원본에 LR annealing 없음
-  "ENT_COEF": 0.5              # 원본 ENTROPY=0.5
-  "VF_COEF": 0.5               # 원본 script VF_COEF=0.5
-  "GAE_LAMBDA": 0.98           # 원본 LAM=0.98
-  "CLIP_EPS": 0.05             # 원본 CLIPPING=0.05
-  "MAX_GRAD_NORM": 0.1         # 원본 MAX_GRAD_NORM=0.1
+  LR: 3e-4                            # m2 안정값
+  ANNEAL_LR: True
+  LR_WARMUP: 0.05
 
-  # Batch — 원본 sim_threads=30, TOTAL_BATCH=12000
-  "NUM_ENVS": 30               # 원본 sim_threads=30
-  "NUM_STEPS": 400             # 원본 12000/30=400
-  "UPDATE_EPOCHS": 5           # 원본 fixed_mdp STEPS_PER_UPDATE=5
-  "NUM_MINIBATCHES": 6         # 원본 fixed_mdp MINIBATCHES=6
+  ENT_COEF: 0.01
+  VF_COEF: 0.1                        # 원본 VF_COEF=0.1
+  GAE_LAMBDA: 0.98                    # 원본 LAM=0.98
+  CLIP_EPS: 0.05                      # 원본 CLIPPING=0.05
+  MAX_GRAD_NORM: 0.1                  # 원본 MAX_GRAD_NORM=0.1
 
-  # 학습 길이
-  "TOTAL_TIMESTEPS": 1.1e7     # 원본 TOTAL_STEPS_PER_AGENT=1.1e7
-  "REW_SHAPING_HORIZON": 5e6   # 원본 REW_SHAPING_HORIZON=5e6
+  NUM_ENVS: 50                        # 원본 sim_threads=50
+  NUM_STEPS: 400
+  UPDATE_EPOCHS: 8                    # 원본 STEPS_PER_UPDATE=8
+  NUM_MINIBATCHES: 5                  # 원본 MINIBATCHES=5
+
+  TOTAL_TIMESTEPS: 1.5e7              # 원본 TOTAL_STEPS_PER_AGENT=1.5e7
+  REW_SHAPING_HORIZON: 1e7

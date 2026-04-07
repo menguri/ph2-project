@@ -157,20 +157,20 @@ run_ov1_all() {
   echo "============================================================"
 
   # cramped_room: omega=10 sigma=2 k=1 normal_prob=0.5
-  PH1_NORMAL_PROB=0.5
-  run_ph2 "$OV1_GPUS" "cramped_room" 10.0 2.0 1
+  # PH1_NORMAL_PROB=0.5
+  # run_ph2 "$OV1_GPUS" "cramped_room" 10.0 2.0 1
 
-  # asymm_advantages: omega=5 sigma=3 k=1 normal_prob=0.5
-  PH1_NORMAL_PROB=0.5
-  run_ph2 "$OV1_GPUS" "asymm_advantages" 5.0 3.0 1
+  # asymm_advantages: omega=5 sigma=3 k=1 normal_prob=0.2
+  # PH1_NORMAL_PROB=0.2
+  # run_ph2 "$OV1_GPUS" "asymm_advantages" 5.0 3.0 1
 
   # coord_ring: omega=10 sigma=2 k=3 normal_prob=0.0
-  PH1_NORMAL_PROB=0.0
-  run_ph2 "$OV1_GPUS" "coord_ring" 10.0 2.0 3
+  # PH1_NORMAL_PROB=0.0
+  # run_ph2 "$OV1_GPUS" "coord_ring" 10.0 2.0 3
 
   # counter_circuit: omega=10 sigma=2 k=1 normal_prob=0.0
-  PH1_NORMAL_PROB=0.0
-  run_ph2 "$OV1_GPUS" "counter_circuit" 10.0 2.0 1
+  # PH1_NORMAL_PROB=0.0
+  # run_ph2 "$OV1_GPUS" "counter_circuit" 10.0 2.0 1
 
   # forced_coord: omega=4 sigma=8 k=1 normal_prob=0.0
   PH1_NORMAL_PROB=0.0

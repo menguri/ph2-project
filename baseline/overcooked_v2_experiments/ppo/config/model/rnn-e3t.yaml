@@ -1,29 +1,30 @@
-# E3T 전용 모델 설정 — 원본 E3T-Overcooked (encoder_ppo.py) 파라미터 기준
-# GRU만 우리 구현 유지 (원본에는 RNN 없음), 나머지는 최대한 원본에 맞춤
+# E3T 전용 모델 설정 — CEC-zero-shot 파라미터 기준으로 맞춤
+# OBS_ENCODER는 OV1용 CNNSimple 유지 (CEC는 GraphNet이지만 OV1에서는 CNN)
 
 "TYPE": "RNN"
-"FC_DIM_SIZE": 64            # 원본 SIZE_HIDDEN_LAYERS=64
-"GRU_HIDDEN_DIM": 128        # GRU는 우리 구현 유지 (원본에 없음)
+"FC_DIM_SIZE": 256           # CEC FC_DIM_SIZE=256
+"GRU_HIDDEN_DIM": 256        # CEC GRU_HIDDEN_DIM=256
 "CNN_FEATURES": 25            # 원본 NUM_FILTERS=25
-"OBS_ENCODER": "CNNSimple"    # 원본과 동일 CNN 구조 (5x5/3x3/3x3, 3 layers)
-"ACTIVATION": "leaky_relu"    # 원본 leaky_relu
+"OBS_ENCODER": "CNNSimple"    # OV1용 CNN 구조 유지
+"ACTIVATION": "relu"          # CEC relu
 
-# PPO 파라미터 — 원본 encoder_ppo.py 기본값
-"LR": 1e-3                    # 원본 LR=1e-3
-"ANNEAL_LR": False            # 원본에 LR annealing 없음 (LR_ANNEALING=1)
-"GAMMA": 0.99                 # 원본 GAMMA=0.99
-"GAE_LAMBDA": 0.98            # 원본 LAM=0.98
-"VF_COEF": 0.1                # 원본 VF_COEF=0.1
-"ENT_COEF": 0.1               # 원본 ENTROPY=0.1
-"MAX_GRAD_NORM": 0.1          # 원본 MAX_GRAD_NORM=0.1
-"CLIP_EPS": 0.05              # 원본 CLIPPING=0.05
+# PPO 파라미터 — CEC ippo_final.yaml 기준
+"LR": 3e-4                    # CEC LR=3e-4
+"ANNEAL_LR": True             # CEC ANNEAL_LR=True
+"LR_WARMUP": 0.05             # warmup 비율 (ANNEAL_LR=True 시 필요)
+"GAMMA": 0.99                 # CEC GAMMA=0.99
+"GAE_LAMBDA": 0.95            # CEC GAE_LAMBDA=0.95
+"VF_COEF": 1.0                # CEC VF_COEF=1.0
+"ENT_COEF": 0.005             # CEC ENT_COEF=0.005
+"MAX_GRAD_NORM": 0.5          # CEC MAX_GRAD_NORM=0.5
+"CLIP_EPS": 0.2               # CEC CLIP_EPS=0.2
 
-# 배치/병렬 환경 — 원본 sim_threads=30, TOTAL_BATCH_SIZE=12000
-"NUM_ENVS": 30                # 원본 sim_threads=30
-"NUM_STEPS": 400              # 원본 BATCH_SIZE=12000/30=400
-"UPDATE_EPOCHS": 8            # 원본 STEPS_PER_UPDATE=8
-"NUM_MINIBATCHES": 6          # 원본 MINIBATCHES=6
+# 배치/병렬 환경 — CEC 기준
+"NUM_ENVS": 64                # 메모리 제약으로 조정
+"NUM_STEPS": 128              # 메모리 제약으로 조정
+"UPDATE_EPOCHS": 4            # CEC UPDATE_EPOCHS=4
+"NUM_MINIBATCHES": 2          # CEC NUM_MINIBATCHES=2
 
 # 학습 길이
-"TOTAL_TIMESTEPS": 3e7        # 30M (우리 기준 유지)
-"REW_SHAPING_HORIZON": 0      # 원본 기본값 0 (reward shaping 없음)
+"TOTAL_TIMESTEPS": 3e7        # 30M 유지
+"REW_SHAPING_HORIZON": 1.5e7  # PH2와 동일하게 맞춤 (TOTAL_TIMESTEPS의 절반)

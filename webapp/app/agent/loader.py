@@ -57,8 +57,9 @@ def detect_model_source(config: dict) -> str:
     alg = str(config.get("ALG_NAME", ""))
     if "PH2" in alg.upper() or config.get("TRANSFORMER_ACTION", False):
         return "ph2"
-    # MEP 체크포인트: value head (Dense_2/3)가 저장되지 않아 ph2 리매핑 불가
-    if "MEP" in alg.upper():
+    # MEP/HSP/Gamma: CNNGamma 인코더 사용 → ph2의 shared_encoder(CNN)와 구조 불일치
+    # baseline ActorCriticRNN을 직접 로드하여 actor_only=True로 추론
+    if alg.upper() in ("MEP", "HSP", "GAMMA"):
         return "baseline_native"
     return "baseline"
 

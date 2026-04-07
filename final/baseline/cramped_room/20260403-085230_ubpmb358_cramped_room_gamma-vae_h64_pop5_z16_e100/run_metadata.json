@@ -1,0 +1,28 @@
+{
+  "alg_name": "GAMMA",
+  "layout": "cramped_room",
+  "wandb_id": "ubpmb358",
+  "timestamp": "20260403-085230",
+  "num_seeds": 1,
+  "model": {
+    "GRU_HIDDEN_DIM": 64,
+    "FC_DIM_SIZE": 64,
+    "LR": 0.0005,
+    "NUM_ENVS": 100,
+    "NUM_STEPS": 400,
+    "TOTAL_TIMESTEPS": 10000000.0,
+    "ENT_COEF": 0.01,
+    "VF_COEF": 1.0,
+    "MAX_GRAD_NORM": 10.0,
+    "GAE_LAMBDA": 0.95,
+    "CLIP_EPS": 0.2,
+    "UPDATE_EPOCHS": 15,
+    "NUM_MINIBATCHES": 1,
+    "REW_SHAPING_HORIZON": 10000000.0
+  },
+  "population_size": 5,
+  "entropy_alpha": 0.01,
+  "gamma_method": "vae",
+  "vae_z_dim": 16,
+  "s2_num_seeds": 10
+}

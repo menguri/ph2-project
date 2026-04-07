@@ -1,0 +1,23 @@
+{
+  "alg_name": null,
+  "layout": "asymm_advantages",
+  "wandb_id": "6nlzt2da",
+  "timestamp": "20260403-193352",
+  "num_seeds": 10,
+  "model": {
+    "GRU_HIDDEN_DIM": 128,
+    "FC_DIM_SIZE": 128,
+    "LR": 0.0003,
+    "NUM_ENVS": 30,
+    "NUM_STEPS": 256,
+    "TOTAL_TIMESTEPS": 30000000.0,
+    "ENT_COEF": 0.0,
+    "VF_COEF": 0.5,
+    "MAX_GRAD_NORM": 0.5,
+    "GAE_LAMBDA": 0.95,
+    "CLIP_EPS": 0.2,
+    "UPDATE_EPOCHS": 10,
+    "NUM_MINIBATCHES": 5,
+    "REW_SHAPING_HORIZON": 0
+  }
+}

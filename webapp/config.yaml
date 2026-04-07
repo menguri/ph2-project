@@ -13,7 +13,7 @@ agent:
   model_dir: "models"              # webapp/models/{layout}/{algo_name}/{run0,run1,...}/ckpt_final/
   policy_source: "params"
   stochastic: true
-  algo_filter: ["ph2", "sp", "e3t", "fcp", "mep"]
+  algo_filter: ["ph2", "sp", "e3t", "fcp", "mep", "hsp", "gamma"]
 
 model:
   gru_hidden_dim: 128

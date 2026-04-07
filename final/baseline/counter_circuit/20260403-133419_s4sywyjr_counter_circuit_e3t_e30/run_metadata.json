@@ -1,0 +1,23 @@
+{
+  "alg_name": "E3T",
+  "layout": "counter_circuit",
+  "wandb_id": "s4sywyjr",
+  "timestamp": "20260403-133419",
+  "num_seeds": 10,
+  "model": {
+    "GRU_HIDDEN_DIM": 128,
+    "FC_DIM_SIZE": 64,
+    "LR": 0.001,
+    "NUM_ENVS": 30,
+    "NUM_STEPS": 400,
+    "TOTAL_TIMESTEPS": 30000000.0,
+    "ENT_COEF": 0.1,
+    "VF_COEF": 0.1,
+    "MAX_GRAD_NORM": 0.1,
+    "GAE_LAMBDA": 0.98,
+    "CLIP_EPS": 0.05,
+    "UPDATE_EPOCHS": 8,
+    "NUM_MINIBATCHES": 6,
+    "REW_SHAPING_HORIZON": 0
+  }
+}

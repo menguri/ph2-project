@@ -1,0 +1,30 @@
+{
+  "alg_name": "PH2-E3T",
+  "layout": "forced_coord",
+  "wandb_id": "0xqd2n0v",
+  "timestamp": "20260403-025306",
+  "num_seeds": 5,
+  "model": {
+    "GRU_HIDDEN_DIM": 128,
+    "FC_DIM_SIZE": 128,
+    "LR": 0.00025,
+    "NUM_ENVS": 64,
+    "NUM_STEPS": 256,
+    "TOTAL_TIMESTEPS": 30000000.0,
+    "ENT_COEF": 0.01,
+    "VF_COEF": 0.5,
+    "MAX_GRAD_NORM": 0.25,
+    "GAE_LAMBDA": 0.95,
+    "CLIP_EPS": 0.2,
+    "UPDATE_EPOCHS": 4,
+    "NUM_MINIBATCHES": 64,
+    "REW_SHAPING_HORIZON": 15000000.0
+  },
+  "ph1_epsilon": 0.2,
+  "ph1_omega": 4.0,
+  "ph1_sigma": 8.0,
+  "ph1_max_penalty_count": 1,
+  "ph1_beta": 1.0,
+  "e3t_epsilon": 0.0,
+  "action_prediction": true
+}

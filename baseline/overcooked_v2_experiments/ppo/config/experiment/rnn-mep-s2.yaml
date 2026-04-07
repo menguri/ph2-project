@@ -1,40 +1,40 @@
 # @package _global_
+# rnn-mep-s2: rnn-mep.yaml과 동일한 파라미터 (Stage 2 분리 실행용)
+# 원본 MEP (zsc-basecamp/MEP, human_aware_rl/PBT) 파라미터에 정렬.
 defaults:
   - override /model: rnn
 
 ALG_NAME: "MEP_S2"
 
-# MEP Prioritized Sampling — 원본 pbt_model_pool.py 기준
+# MEP Prioritized Sampling — baseline 자체 기능 (유지)
 MEP_USE_PRIORITIZED_SAMPLING: True
-MEP_PRIORITIZED_ALPHA: 3.0     # 원본 ALPHA=3.0 (script 기준)
+MEP_PRIORITIZED_ALPHA: 1.0           # 원본에 없음 → uniform 가까움
 # MEP_POPULATION_DIR is injected at runtime via CLI: +MEP_POPULATION_DIR=<path>
 
 NUM_SEEDS: 10
 NUM_CHECKPOINTS: 3
 
 model:
-  # Network — S1과 동일 (원본 hidden=64, CNN 25 filters, leaky_relu)
-  "GRU_HIDDEN_DIM": 64
-  "FC_DIM_SIZE": 64
-  "OBS_ENCODER": "CNNSimple"
-  "CNN_FEATURES": 25
-  "ACTIVATION": "leaky_relu"
+  GRU_HIDDEN_DIM: 64
+  FC_DIM_SIZE: 64
+  CNN_FEATURES: 25                   # 원본 NUM_FILTERS=25
+  OBS_ENCODER: "CNNSimple"
+  ACTIVATION: "relu"
 
-  # PPO — 원본 fixed_mdp config 기준 (S1과 동일)
-  "LR": 5e-4
-  "ANNEAL_LR": False
-  "ENT_COEF": 0.5
-  "VF_COEF": 0.5
-  "GAE_LAMBDA": 0.98
-  "CLIP_EPS": 0.05
-  "MAX_GRAD_NORM": 0.1
+  LR: 3e-4
+  ANNEAL_LR: True
+  LR_WARMUP: 0.05
 
-  # Batch — S1과 동일
-  "NUM_ENVS": 30
-  "NUM_STEPS": 400
-  "UPDATE_EPOCHS": 5
-  "NUM_MINIBATCHES": 6
+  ENT_COEF: 0.01
+  VF_COEF: 0.1                        # 원본 VF_COEF=0.1
+  GAE_LAMBDA: 0.98                    # 원본 LAM=0.98
+  CLIP_EPS: 0.05                      # 원본 CLIPPING=0.05
+  MAX_GRAD_NORM: 0.1                  # 원본 MAX_GRAD_NORM=0.1
 
-  # 학습 길이
-  "TOTAL_TIMESTEPS": 1.1e7     # 원본 TOTAL_STEPS_PER_AGENT=1.1e7
-  "REW_SHAPING_HORIZON": 5e6   # 원본 REW_SHAPING_HORIZON=5e6
+  NUM_ENVS: 50                        # 원본 sim_threads=50
+  NUM_STEPS: 400
+  UPDATE_EPOCHS: 8                    # 원본 STEPS_PER_UPDATE=8
+  NUM_MINIBATCHES: 5                  # 원본 MINIBATCHES=5
+
+  TOTAL_TIMESTEPS: 3e7
+  REW_SHAPING_HORIZON: 3e7

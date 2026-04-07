@@ -6,7 +6,7 @@ defaults:
 ALG_NAME: "E3T"
 
 # 파트너가 무작위 행동을 취할 확률 (원본 RAND=0.3~0.7, 고정 0.5)
-E3T_EPSILON: 0.5
+E3T_EPSILON: 0.3
 
 # 파트너 예측 컴포넌트 사용
 USE_PREDICTION: True
@@ -14,6 +14,4 @@ USE_PREDICTION: True
 # 파트너 예측 손실 계수
 PRED_LOSS_COEF: 1.0
 
-# JSD loss (원본 E3T에서 action distribution 다양성 장려, 계수 0.01)
-USE_JSD_LOSS: True
-JSD_LOSS_COEF: 0.01
+# JSD loss 비활성화 (CEC에서는 사용하지 않음)
