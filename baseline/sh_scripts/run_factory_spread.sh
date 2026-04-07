@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
 # 5,6
-GPUS="${GPUS:-6,7}"
+GPUS="${GPUS:-0,1}"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
 NENVS="${NENVS:-128}"
 NSTEPS="${NSTEPS:-512}"
@@ -91,24 +91,24 @@ for N in "${AGENT_COUNTS[@]}"; do
   # # ===========================================================================
   # # 1. SP — 기존 rnn-sp-cole + 100M
   # # ===========================================================================
-  # echo "[SP] N=${N}"
-  # ./run_user_wandb.sh \
-  #   --exp rnn-sp-cole \
-  #   --env "${ENV}" \
-  #   --gpus "${GPUS}" \
-  #   --env-device "${ENV_DEVICE}" \
-  #   --nenvs "${NENVS}" \
-  #   --nsteps "${NSTEPS}" \
-  #   --tags "sp,spread,N${N}" \
-  #   --extra "${TS_EXTRA}" \
-  #   --extra "${MINIBATCH_EXTRA}" \
-  #   --extra "${MLP_ENCODER_EXTRA}" \
-  #   --extra "${ENT_START_EXTRA}" \
-  #   --extra "${ENT_END_EXTRA}" \
-  #   --extra "${ENT_ANNEAL_EXTRA}" \
-  #   --extra "${DIST_SHAPING_EXTRA}" \
-  #   --extra "${EARLY_TERM_EXTRA}" \
-  #   --extra "${NAGENTS_EXTRA}${N}"
+  echo "[SP] N=${N}"
+  ./run_user_wandb.sh \
+    --exp rnn-sp-cole \
+    --env "${ENV}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --nenvs "${NENVS}" \
+    --nsteps "${NSTEPS}" \
+    --tags "sp,spread,N${N}" \
+    --extra "${TS_EXTRA}" \
+    --extra "${MINIBATCH_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "${ENT_START_EXTRA}" \
+    --extra "${ENT_END_EXTRA}" \
+    --extra "${ENT_ANNEAL_EXTRA}" \
+    --extra "${DIST_SHAPING_EXTRA}" \
+    --extra "${EARLY_TERM_EXTRA}" \
+    --extra "${NAGENTS_EXTRA}${N}"
 
   # # ===========================================================================
   # # 1.5. FCP population 빌드 (SP 완료 직후)
@@ -146,28 +146,28 @@ for N in "${AGENT_COUNTS[@]}"; do
   # ===========================================================================
   # 2. E3T — 기존 rnn-e3t + epsilon 0.2 + prediction OFF + 100M
   # ===========================================================================
-  echo "[E3T] N=${N}"
-  ./run_user_wandb.sh \
-    --exp rnn-e3t \
-    --env "${ENV}" \
-    --gpus "${GPUS}" \
-    --env-device "${ENV_DEVICE}" \
-    --nenvs "${NENVS}" \
-    --nsteps "${NSTEPS}" \
-    --e3t-epsilon 0.2 \
-    --tags "e3t,spread,N${N}" \
-    --extra "${TS_EXTRA}" \
-    --extra "${MINIBATCH_EXTRA}" \
-    --extra "${MLP_ENCODER_EXTRA}" \
-    --extra "++USE_PREDICTION=False" \
-    --extra "${ENT_START_EXTRA}" \
-    --extra "${ENT_END_EXTRA}" \
-    --extra "${ENT_ANNEAL_EXTRA}" \
-    --extra "${DIST_SHAPING_EXTRA}" \
-    --extra "${EARLY_TERM_EXTRA}" \
-    --extra "${EVAL_CKPT_DIR_EXTRA}" \
-    --extra "${EVAL_NUM_CKPT_EXTRA}" \
-    --extra "${NAGENTS_EXTRA}${N}"
+  # echo "[E3T] N=${N}"
+  # ./run_user_wandb.sh \
+  #   --exp rnn-e3t \
+  #   --env "${ENV}" \
+  #   --gpus "${GPUS}" \
+  #   --env-device "${ENV_DEVICE}" \
+  #   --nenvs "${NENVS}" \
+  #   --nsteps "${NSTEPS}" \
+  #   --e3t-epsilon 0.2 \
+  #   --tags "e3t,spread,N${N}" \
+  #   --extra "${TS_EXTRA}" \
+  #   --extra "${MINIBATCH_EXTRA}" \
+  #   --extra "${MLP_ENCODER_EXTRA}" \
+  #   --extra "++USE_PREDICTION=False" \
+  #   --extra "${ENT_START_EXTRA}" \
+  #   --extra "${ENT_END_EXTRA}" \
+  #   --extra "${ENT_ANNEAL_EXTRA}" \
+  #   --extra "${DIST_SHAPING_EXTRA}" \
+  #   --extra "${EARLY_TERM_EXTRA}" \
+  #   --extra "${EVAL_CKPT_DIR_EXTRA}" \
+  #   --extra "${EVAL_NUM_CKPT_EXTRA}" \
+  #   --extra "${NAGENTS_EXTRA}${N}"
 
 
   # # ===========================================================================

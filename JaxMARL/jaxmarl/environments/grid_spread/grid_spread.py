@@ -165,7 +165,7 @@ class GridSpread(MultiAgentEnv):
             50.0,
             jnp.where(
                 n_single_covered == self.n_agents - 1,
-                5.0,
+                1.0,
                 jnp.where(
                     n_single_covered == self.n_agents - 2,
                     0.5,
