@@ -28,6 +28,7 @@ import wandb
 from overcooked_v2_experiments.ppo.models.rnn import ActorCriticRNN
 from overcooked_v2_experiments.ppo.gamma.vae_model import GAMMAVAE
 from overcooked_v2_experiments.ppo.utils.store import store_checkpoint
+from overcooked_v2_experiments.ppo.utils.utils import get_num_devices
 
 
 class S2Transition(NamedTuple):
@@ -106,27 +107,33 @@ def _collect_population_rollouts(pop_params, config, env, network, n_episodes, r
         # obs_seq: (max_steps, N, *obs_shape), act_seq: (max_steps, N), invalid_mask: (max_steps,)
         return obs_seq, act_seq, invalid_mask
 
-    # eps_per_member 에피소드를 vmap으로 병렬화 + JIT
-    _rollout_member = jax.jit(jax.vmap(_rollout_single_episode, in_axes=(None, 0)))
+    # member × episode 병렬 rollout (이중 vmap)
+    # pop_params: leading axis = N (member). ep_rngs_all: (N, eps_per_member, 2)
+    _rollout_all = jax.jit(
+        jax.vmap(
+            jax.vmap(_rollout_single_episode, in_axes=(None, 0)),
+            in_axes=(0, 0),
+        )
+    )
+
+    rng, rollout_rng = jax.random.split(rng)
+    ep_rngs_all = jax.random.split(rollout_rng, N * eps_per_member)
+    ep_rngs_all = ep_rngs_all.reshape((N, eps_per_member, 2))
+
+    obs_all, act_all, invalid_all = _rollout_all(pop_params, ep_rngs_all)
+    # shapes: (N, eps, max_steps, num_agents, *obs_shape) / (N, eps, max_steps, num_agents) / (N, eps, max_steps)
+    obs_all = np.array(obs_all)
+    act_all = np.array(act_all)
+    invalid_all = np.array(invalid_all)
 
     all_obs, all_actions = [], []
-    for member_idx in range(N):
-        member_params = jax.tree_util.tree_map(lambda x: x[member_idx], pop_params)
-        rng, member_rng = jax.random.split(rng)
-        ep_rngs = jax.random.split(member_rng, eps_per_member)
-
-        obs_all, act_all, invalid_all = _rollout_member(member_params, ep_rngs)
-        # obs_all: (eps, max_steps, N, *obs_shape), act_all: (eps, max_steps, N)
-        obs_all = np.array(obs_all)
-        act_all = np.array(act_all)
-        invalid_all = np.array(invalid_all)
-
+    for m in range(N):
         for ep in range(eps_per_member):
-            T = int(np.sum(~invalid_all[ep]))
+            T = int(np.sum(~invalid_all[m, ep]))
             if T > 10:
                 for ai in range(num_env_agents):
-                    all_obs.append(obs_all[ep, :T, ai])
-                    all_actions.append(act_all[ep, :T, ai])
+                    all_obs.append(obs_all[m, ep, :T, ai])
+                    all_actions.append(act_all[m, ep, :T, ai])
 
     print(f"[VAE] Collected {len(all_obs)} trajectories from {N} members")
     return all_obs, all_actions
@@ -181,54 +188,82 @@ def _train_vae(config, all_obs, all_actions, obs_shape, rng):
     n_chunks = len(chunks_obs)
     print(f"[VAE] {n_chunks} chunks, chunk_length={chunk_length}, obs_shape={obs_shape}")
 
-    @jax.jit
-    def vae_step(params, opt_state, obs_batch, act_batch, kl_w, rng):
-        def loss_fn(params):
-            T, B = obs_batch.shape[:2]
-            enc_carry = jnp.zeros((B, hidden_dim))
-            dec_carry = jnp.zeros((B, hidden_dim))
-            logits, z_mean, z_logvar, z, _, _ = vae.apply(
-                params, obs_batch, act_batch, enc_carry, dec_carry, rng,
-            )
-            log_probs = jax.nn.log_softmax(logits, axis=-1)
-            act_onehot = jax.nn.one_hot(act_batch, action_dim)
-            recon_loss = -(log_probs * act_onehot).sum(-1).sum(0).mean()
-            kl = GAMMAVAE.kl_divergence(z_mean, z_logvar).mean()
-            total = recon_loss + kl_w * kl
-            pred = jnp.argmax(logits, axis=-1)
-            acc = (pred == act_batch).mean()
-            return total, (recon_loss, kl, acc)
+    # === Pre-stack chunks once to device → per-batch host transfer 제거 ===
+    chunks_obs_arr = jnp.stack([jnp.asarray(c) for c in chunks_obs], axis=0)  # (n_chunks, T, *obs_shape)
+    chunks_act_arr = jnp.stack([jnp.asarray(c) for c in chunks_act], axis=0)  # (n_chunks, T)
 
-        (loss, aux), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
-        updates, opt_state_new = tx.update(grads, opt_state, params)
-        params_new = optax.apply_updates(params, updates)
-        return params_new, opt_state_new, loss, aux
+    n_batches = n_chunks // batch_size  # drop remainder (jit 고정 shape)
+    if n_batches < 1:
+        raise ValueError(f"[VAE] n_chunks({n_chunks}) < batch_size({batch_size})")
+    print(f"[VAE] n_batches per epoch = {n_batches}, dropping {n_chunks - n_batches * batch_size} chunks/epoch")
+
+    def _loss_fn(params, obs_batch, act_batch, kl_w, rng):
+        T, B = obs_batch.shape[:2]
+        enc_carry = jnp.zeros((B, hidden_dim))
+        dec_carry = jnp.zeros((B, hidden_dim))
+        logits, z_mean, z_logvar, _, _, _ = vae.apply(
+            params, obs_batch, act_batch, enc_carry, dec_carry, rng,
+        )
+        log_probs = jax.nn.log_softmax(logits, axis=-1)
+        act_onehot = jax.nn.one_hot(act_batch, action_dim)
+        recon_loss = -(log_probs * act_onehot).sum(-1).sum(0).mean()
+        kl = GAMMAVAE.kl_divergence(z_mean, z_logvar).mean()
+        total = recon_loss + kl_w * kl
+        pred = jnp.argmax(logits, axis=-1)
+        acc = (pred == act_batch).mean()
+        return total, (recon_loss, kl, acc)
+
+    def _batch_step(carry, batch_idx):
+        params, opt_state, rng, kl_w = carry
+        obs_b = jnp.take(chunks_obs_arr, batch_idx, axis=0)  # (B, T, ...)
+        obs_b = jnp.swapaxes(obs_b, 0, 1)                     # (T, B, ...)
+        act_b = jnp.take(chunks_act_arr, batch_idx, axis=0)
+        act_b = jnp.swapaxes(act_b, 0, 1)
+        rng, step_rng = jax.random.split(rng)
+        (loss, aux), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
+            params, obs_b, act_b, kl_w, step_rng,
+        )
+        updates, opt_state = tx.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return (params, opt_state, rng, kl_w), (loss, aux[2])  # (loss, acc)
+
+    def _epoch_step(carry, kl_w):
+        params, opt_state, rng = carry
+        rng, perm_rng = jax.random.split(rng)
+        perm = jax.random.permutation(perm_rng, n_chunks)[: n_batches * batch_size]
+        perm = perm.reshape(n_batches, batch_size)
+        (params, opt_state, rng, _), (losses, accs) = jax.lax.scan(
+            _batch_step, (params, opt_state, rng, kl_w), perm,
+        )
+        return (params, opt_state, rng), (losses.mean(), accs.mean())
+
+    # epoch별 kl_w 스케줄
+    kl_ws = kl_penalty_init + (kl_penalty_final - kl_penalty_init) * (
+        jnp.arange(vae_epochs, dtype=jnp.float32) / max(vae_epochs - 1, 1)
+    )
+
+    # 전체 학습을 하나의 scan으로 jit → Python overhead 제거
+    @jax.jit
+    def _train_all(params, opt_state, rng):
+        (params, opt_state, rng), (epoch_losses, epoch_accs) = jax.lax.scan(
+            _epoch_step, (params, opt_state, rng), kl_ws,
+        )
+        return params, opt_state, epoch_losses, epoch_accs
+
+    vae_params, opt_state, epoch_losses, epoch_accs = _train_all(
+        vae_params, opt_state, rng,
+    )
+    epoch_losses = np.array(epoch_losses)
+    epoch_accs = np.array(epoch_accs)
 
     for epoch in range(vae_epochs):
-        kl_w = kl_penalty_init + (kl_penalty_final - kl_penalty_init) * epoch / max(vae_epochs - 1, 1)
-        rng, perm_rng = jax.random.split(rng)
-        perm = jax.random.permutation(perm_rng, n_chunks)
-
-        epoch_loss, epoch_acc, n_batches = 0.0, 0.0, 0
-        for batch_start in range(0, n_chunks, batch_size):
-            batch_idx = perm[batch_start:batch_start + batch_size]
-            if len(batch_idx) < 2:
-                continue
-            obs_batch = jnp.stack([chunks_obs[int(i)] for i in batch_idx], axis=1)  # (T, B, ...)
-            act_batch = jnp.stack([chunks_act[int(i)] for i in batch_idx], axis=1)
-
-            rng, step_rng = jax.random.split(rng)
-            vae_params, opt_state, loss, (recon, kl, acc) = vae_step(
-                vae_params, opt_state, obs_batch, act_batch, kl_w, step_rng,
-            )
-            epoch_loss += float(loss)
-            epoch_acc += float(acc)
-            n_batches += 1
-
-        if n_batches > 0 and epoch % 10 == 0:
-            print(f"[VAE] epoch {epoch}/{vae_epochs}: loss={epoch_loss/n_batches:.4f} acc={epoch_acc/n_batches:.3f}")
-        if n_batches > 0:
-            wandb.log({"vae/loss": epoch_loss / n_batches, "vae/accuracy": epoch_acc / n_batches, "vae/epoch": epoch})
+        if epoch % 10 == 0:
+            print(f"[VAE] epoch {epoch}/{vae_epochs}: loss={epoch_losses[epoch]:.4f} acc={epoch_accs[epoch]:.3f}")
+        wandb.log({
+            "vae/loss": float(epoch_losses[epoch]),
+            "vae/accuracy": float(epoch_accs[epoch]),
+            "vae/epoch": epoch,
+        })
 
     return vae, vae_params
 
@@ -237,10 +272,11 @@ def _train_vae(config, all_obs, all_actions, obs_shape, rng):
 # Phase B: 순수 VAE 파트너 RL (원본 GAMMA: train_coordinator_vs_vae)
 # =====================================================================
 
-def _run_s2_vae_only(config, vae, vae_params, rng):
+def _build_s2_vae_train(config, vae, vae_params):
     """
-    순수 VAE decoder를 파트너로 사용한 PPO 학습 (원본 GAMMA와 동일).
-    모든 파트너 = VAE decoder(raw_obs, z). Population 멤버 미사용.
+    순수 VAE decoder 파트너 PPO 학습 — pure `train(rng)` 클로저 생성 후 반환.
+    jit/vmap/pmap은 호출자가 적용 (Phase B 멀티시드 병렬 학습 지원).
+    `vae`, `vae_params`는 Python closure로 캡처되어 vmap 축에 올라가지 않음(broadcast).
     """
     model_config = config["model"]
     env_config = config["env"]
@@ -476,13 +512,16 @@ def _run_s2_vae_only(config, vae, vae_params, rng):
             metric["update_step"] = update_step
 
             def _log(m):
+                # vmap 아래서 leaf가 (num_seeds,) 배열일 수 있으므로 평균으로 집계.
+                def _scalar(v):
+                    return float(np.asarray(v).reshape(-1).mean())
                 flat = {}
                 for k, v in m.items():
                     if isinstance(v, dict):
                         for kk, vv in v.items():
-                            flat[f"{k}/{kk}"] = float(vv)
+                            flat[f"{k}/{kk}"] = _scalar(vv)
                     else:
-                        flat[k] = float(v)
+                        flat[k] = _scalar(v)
                 wandb.log({f"gamma_s2_vae/{k}": v for k, v in flat.items()})
             jax.debug.callback(_log, metric)
 
@@ -496,7 +535,13 @@ def _run_s2_vae_only(config, vae, vae_params, rng):
         final_runner, metrics = jax.lax.scan(_update_step, init_runner, None, NUM_UPDATES)
         return {"actor_params": final_runner[0].params, "actor_ckpts": final_runner[7]}
 
-    return jax.jit(train)(rng)
+    return train
+
+
+def _run_s2_vae_only(config, vae, vae_params, rng):
+    """하위호환 wrapper: 단일 seed 순차 학습용."""
+    train_fn = _build_s2_vae_train(config, vae, vae_params)
+    return jax.jit(train_fn)(rng)
 
 
 # =====================================================================
@@ -544,26 +589,56 @@ def run_gamma_s2_vae(config, pop_params, pop_dir):
         pickle.dump(vae_params, f)
     print(f"[GAMMA S2 VAE] VAE saved to {vae_dir}")
 
-    # ---- Phase B: 순수 VAE 파트너 RL (multi-seed) ----
-    print("[GAMMA S2 VAE] Phase B: Pure VAE partner RL training")
+    # ---- Phase B: 순수 VAE 파트너 RL (multi-seed 병렬) ----
+    print("[GAMMA S2 VAE] Phase B: Pure VAE partner RL training (parallel)")
     num_seeds = config["NUM_SEEDS"]
     rng, rl_rng = jax.random.split(rng)
     rngs = jax.random.split(rl_rng, num_seeds)
+    rngs = jax.device_put(rngs, jax.devices("cpu")[0])
 
-    all_outs = []
-    for s in range(num_seeds):
-        print(f"[GAMMA S2 VAE] Seed {s+1}/{num_seeds}")
-        out_s = _run_s2_vae_only(config, vae, vae_params, rngs[s])
-        all_outs.append(out_s)
+    train_fn = _build_s2_vae_train(config, vae, vae_params)
+    num_devices = get_num_devices()
+    print(f"[GAMMA S2 VAE] num_seeds={num_seeds}, num_devices={num_devices}")
 
-        num_checkpoints = config.get("NUM_CHECKPOINTS", 3)
-        if num_checkpoints > 0:
-            ckpts = out_s["actor_ckpts"]
+    if num_devices <= 1:
+        train_jit = jax.jit(train_fn)
+        if num_seeds == 1:
+            out = train_jit(rngs[0])
+        else:
+            out = jax.vmap(train_jit)(rngs)
+    else:
+        if num_seeds == num_devices:
+            out = jax.pmap(train_fn)(rngs)
+        elif num_seeds % num_devices == 0:
+            rngs_2d = rngs.reshape((num_devices, num_seeds // num_devices, *rngs.shape[1:]))
+            out = jax.pmap(jax.vmap(train_fn))(rngs_2d)
+            out = jax.tree_util.tree_map(
+                lambda x: x.reshape((num_seeds, *x.shape[2:])), out
+            )
+        else:
+            print(f"[warn] num_seeds({num_seeds}) % num_devices({num_devices}) != 0; fallback to vmap")
+            train_jit = jax.jit(train_fn)
+            out = jax.vmap(train_jit)(rngs)
+
+    # 체크포인트 저장 (MEP/GAMMA rl S2 동일 패턴)
+    num_checkpoints = config.get("NUM_CHECKPOINTS", 3)
+    if num_checkpoints > 0:
+        actor_ckpts = out["actor_ckpts"]
+        sample_leaf = jax.tree_util.tree_leaves(actor_ckpts)[0]
+        has_seed_axis = sample_leaf.shape[0] == num_seeds and num_seeds > 1
+
+        for s in range(num_seeds):
+            if has_seed_axis:
+                seed_ckpts = jax.tree_util.tree_map(lambda x: x[s], actor_ckpts)
+            else:
+                seed_ckpts = actor_ckpts
             for slot in range(num_checkpoints - 1):
-                params = jax.tree_util.tree_map(lambda x: x[slot], ckpts)
+                params = jax.tree_util.tree_map(lambda x: x[slot], seed_ckpts)
                 store_checkpoint(config, params, s, slot, final=False)
-            params_final = jax.tree_util.tree_map(lambda x: x[num_checkpoints - 1], ckpts)
+            params_final = jax.tree_util.tree_map(
+                lambda x: x[num_checkpoints - 1], seed_ckpts
+            )
             store_checkpoint(config, params_final, s, num_checkpoints - 1, final=True)
 
     print(f"[GAMMA S2 VAE] Saved {num_seeds} seeds to {config['RUN_BASE_DIR']}")
-    return {"vae_params": vae_params, "rl_outs": all_outs}
+    return {"vae_params": vae_params, "rl_outs": out}

@@ -102,6 +102,11 @@
 # "ENT_COEF": 0.02
 "ENT_COEF": 0.01
 
+# ENT_COEF 선형 스케줄링 (optional). ANNEAL_STEPS > 0이면 활성화.
+"ENT_COEF_START": 0.5
+"ENT_COEF_END": 0.01
+"ENT_COEF_ANNEAL_STEPS": 0
+
 
 # "NUM_ENVS": 256
 # "NUM_STEPS": 256

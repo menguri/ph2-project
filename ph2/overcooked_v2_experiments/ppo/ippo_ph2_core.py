@@ -53,6 +53,7 @@ class Transition(NamedTuple):
     hstate: any
     global_obs: jnp.ndarray   # (NUM_ACTORS, H, W, C_full) — CT recon 타겟용 full global state
     partner_gru_z: jnp.ndarray  # (NUM_ACTORS, D) — CT v3: partner GRU hidden state 복원 타겟
+    avail_actions: jnp.ndarray  # (NUM_ACTORS, ACTION_DIM) — GridSpread masking용, 타 env는 placeholder zeros
 
 
 def batchify(x: dict, agent_list, num_actors):
@@ -950,14 +951,34 @@ def make_train(
                 if _blocked_input is not None and _is_mpe:
                     _blocked_input = _blocked_input[np.newaxis, :]
 
-                net_out = network.apply(
-                    train_state.params,
-                    hstate,
-                    ac_in,
-                    partner_prediction=partner_prediction,
-                    blocked_states=_blocked_input,
-                )
-                
+                # === GridSpread 전용 action masking ===
+                # env._env는 LogWrapper 내부 base env. get_avail_actions는 base env 메서드.
+                if is_spread:
+                    _avail_dict = jax.vmap(env._env.get_avail_actions)(env_state.env_state)
+                    _avail_batch = jnp.stack(
+                        [_avail_dict[a] for a in env.agents]
+                    ).reshape(-1, ACTION_DIM)  # (NUM_ACTORS, ACTION_DIM)
+                    _avail_in = _avail_batch[np.newaxis, :]  # (1, NUM_ACTORS, ACTION_DIM)
+                    net_out = network.apply(
+                        train_state.params,
+                        hstate,
+                        ac_in,
+                        partner_prediction=partner_prediction,
+                        blocked_states=_blocked_input,
+                        avail_actions=_avail_in,
+                    )
+                else:
+                    _avail_batch = jnp.zeros(
+                        (model_config["NUM_ACTORS"], ACTION_DIM), dtype=jnp.int32
+                    )
+                    net_out = network.apply(
+                        train_state.params,
+                        hstate,
+                        ac_in,
+                        partner_prediction=partner_prediction,
+                        blocked_states=_blocked_input,
+                    )
+
                 ph1_extras = {}
                 if len(net_out) == 4:
                     hstate, pi, value, ph1_extras = net_out
@@ -1691,6 +1712,7 @@ def make_train(
                     hstate,
                     _global_obs,
                     current_partner_gru_z,
+                    _avail_batch,
                 )
 
                 env_step_state = (
@@ -1906,13 +1928,24 @@ def make_train(
                         if _blocked_for_loss is not None and (env_name == "ToyCoop" or _is_mpe):
                             _blocked_for_loss = jnp.where(_blocked_for_loss == -1.0, 0.0, _blocked_for_loss)
 
-                        net_out = network.apply(
-                            params,
-                            hstate,
-                            (traj_batch.obs, traj_batch.done),
-                            partner_prediction=partner_prediction,
-                            blocked_states=_blocked_for_loss,
-                        )
+                        # GridSpread: traj_batch.avail_actions를 전달해서 rollout과 동일한 masked pi 재생성.
+                        if is_spread:
+                            net_out = network.apply(
+                                params,
+                                hstate,
+                                (traj_batch.obs, traj_batch.done),
+                                partner_prediction=partner_prediction,
+                                blocked_states=_blocked_for_loss,
+                                avail_actions=traj_batch.avail_actions,
+                            )
+                        else:
+                            net_out = network.apply(
+                                params,
+                                hstate,
+                                (traj_batch.obs, traj_batch.done),
+                                partner_prediction=partner_prediction,
+                                blocked_states=_blocked_for_loss,
+                            )
 
                         if len(net_out) == 4:
                             _, pi, value, rerun_extras = net_out
@@ -2213,10 +2246,26 @@ def make_train(
                         ratio = ratio.mean(where=train_mask)
                         # ratio = safe_mean(ratio, train_mask)
 
+                        # ENT_COEF 선형 스케줄링 (optional):
+                        #   ENT_COEF_ANNEAL_STEPS > 0이면 [0, ANNEAL_STEPS]에서 START→END 선형 감쇠.
+                        _ent_anneal_steps = float(model_config.get("ENT_COEF_ANNEAL_STEPS", 0) or 0)
+                        if _ent_anneal_steps > 0:
+                            _ent_start = float(model_config.get("ENT_COEF_START", model_config["ENT_COEF"]))
+                            _ent_end = float(model_config.get("ENT_COEF_END", model_config["ENT_COEF"]))
+                            _env_steps_f = (
+                                update_step
+                                * model_config["NUM_STEPS"]
+                                * model_config["NUM_ENVS"]
+                            ).astype(jnp.float32)
+                            _frac = jnp.clip(_env_steps_f / _ent_anneal_steps, 0.0, 1.0)
+                            ent_coef_used = _ent_start + (_ent_end - _ent_start) * _frac
+                        else:
+                            ent_coef_used = model_config["ENT_COEF"]
+
                         total_loss = (
                             loss_actor
                             + model_config["VF_COEF"] * value_loss
-                            - model_config["ENT_COEF"] * entropy
+                            - ent_coef_used * entropy
                             + pred_loss
                             + z_pred_loss
                             + off_cycle_loss
@@ -2549,6 +2598,10 @@ def make_train(
                 return x
 
             metric = jax.tree_util.tree_map(_safe_mean, metric)
+
+            # GridSpread success_rate 파생: episode 종료 중 all_covered 비율.
+            if is_spread and "success_at_done" in metric and "ep_done_flag" in metric:
+                metric["success_rate"] = metric["success_at_done"] / (metric["ep_done_flag"] + 1e-8)
 
             # 업데이트 스텝 카운터 증가 및 메트릭에 기록
             update_step += 1

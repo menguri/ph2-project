@@ -37,6 +37,7 @@ class MEPTransition(NamedTuple):
     critic_value: jnp.ndarray # (NUM_STEPS, E) or (NUM_STEPS, N*E)
     reward: jnp.ndarray       # (NUM_STEPS, E) or (NUM_STEPS, N*E)
     info: dict
+    avail_actions: jnp.ndarray  # (NUM_STEPS, E or N*E, ACTION_DIM) — GridSpread masking용, 타 env는 placeholder
 
 
 def make_train_mep_s2(config):
@@ -50,6 +51,7 @@ def make_train_mep_s2(config):
 
     env_name = str(env_config.get("ENV_NAME", "overcooked_v2"))
     env_kwargs = dict(env_config.get("ENV_KWARGS", {}))
+    is_spread = (env_name == "GridSpread")
     env_raw = jaxmarl.make(env_name, **env_kwargs)
     ACTION_DIM = env_raw.action_space(env_raw.agents[0]).n
 
@@ -254,11 +256,13 @@ def make_train_mep_s2(config):
                 done_t = last_done  # (E,)
 
                 if num_env_agents == 2:
-                    # 2-agent: bidirectional ego/partner
+                    # 2-agent: bidirectional ego/partner (GridSpread는 이 분기 타지 않음 — non-masked)
                     agent0_obs_t = last_obs[env.agents[0]]
                     agent1_obs_t = last_obs[env.agents[1]]
                     ego_obs_t     = jnp.where(ego_role == 0, agent0_obs_t, agent1_obs_t)
                     partner_obs_t = jnp.where(ego_role == 0, agent1_obs_t, agent0_obs_t)
+
+                    _avail_store = jnp.zeros((NUM_ENVS, ACTION_DIM), dtype=jnp.int32)
 
                     # Ego: actor + critic in one forward pass
                     rng, _rng = jax.random.split(rng)
@@ -291,13 +295,33 @@ def make_train_mep_s2(config):
                     # done_flat: tile done_t N times → (N*E,)
                     done_flat = jnp.tile(done_t, num_env_agents)  # (N*E,)
 
+                    # === GridSpread 전용: avail_actions를 agent-major로 flat하게 (N*E, ACTION_DIM) ===
+                    if is_spread:
+                        _avail_dict = jax.vmap(env._env.get_avail_actions)(env_state.env_state)
+                        _avail_flat = jnp.concatenate(
+                            [_avail_dict[a] for a in env.agents], axis=0
+                        )  # (N*E, ACTION_DIM)
+                    else:
+                        _avail_flat = jnp.zeros(
+                            (num_env_agents * NUM_ENVS, ACTION_DIM), dtype=jnp.int32
+                        )
+                    _avail_store = _avail_flat
+
                     # Forward ALL N agents through train network (actor_hstate: (N*E, H))
                     rng, _rng_train, _rng_partner = jax.random.split(rng, 3)
-                    new_actor_hstate, all_pi, all_values, _ = network.apply(
-                        actor_state.params,
-                        actor_hstate,
-                        (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
-                    )
+                    if is_spread:
+                        new_actor_hstate, all_pi, all_values, _ = network.apply(
+                            actor_state.params,
+                            actor_hstate,
+                            (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
+                            avail_actions=_avail_flat[jnp.newaxis],
+                        )
+                    else:
+                        new_actor_hstate, all_pi, all_values, _ = network.apply(
+                            actor_state.params,
+                            actor_hstate,
+                            (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
+                        )
                     train_actions = all_pi.sample(seed=_rng_train).squeeze(0)  # (N*E,)
                     train_log_probs = all_pi.log_prob(
                         train_actions[jnp.newaxis]
@@ -305,11 +329,19 @@ def make_train_mep_s2(config):
                     all_crit_vals = all_values.squeeze(0)  # (N*E,)
 
                     # Forward ALL N agents through partner network (partner_hstate: (N*E, H))
-                    new_partner_hstate, partner_pi, _, _ = network.apply(
-                        shared_partner_params,
-                        partner_hstate,
-                        (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
-                    )
+                    if is_spread:
+                        new_partner_hstate, partner_pi, _, _ = network.apply(
+                            shared_partner_params,
+                            partner_hstate,
+                            (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
+                            avail_actions=_avail_flat[jnp.newaxis],
+                        )
+                    else:
+                        new_partner_hstate, partner_pi, _, _ = network.apply(
+                            shared_partner_params,
+                            partner_hstate,
+                            (all_obs_flat[jnp.newaxis], done_flat[jnp.newaxis]),
+                        )
                     partner_actions = partner_pi.sample(seed=_rng_partner).squeeze(0)  # (N*E,)
 
                     # Select action: ego agents → train_actions, partners → partner_actions
@@ -370,6 +402,7 @@ def make_train_mep_s2(config):
                     critic_value=crit_val,
                     reward=ego_reward,
                     info=info,
+                    avail_actions=_avail_store,
                 )
                 step_state = (
                     env_state, obsv, done_env,
@@ -495,19 +528,26 @@ def make_train_mep_s2(config):
                     (mb_ah,
                      mb_ego_obs, mb_done,
                      mb_action, mb_log_prob, mb_val_old,
-                     mb_adv, mb_targets) = mb
+                     mb_adv, mb_targets, mb_avail) = mb
                 else:
                     # 3+ agent: extra is_ego_mask_mb for actor loss weighting
                     (mb_ah,
                      mb_ego_obs, mb_done,
                      mb_action, mb_log_prob, mb_val_old,
-                     mb_adv, mb_targets, mb_ego_mask) = mb
+                     mb_adv, mb_targets, mb_ego_mask, mb_avail) = mb
                 mb_ah = mb_ah.squeeze(0)  # (MB_SIZE, hidden)
 
                 def _loss(params):
-                    _, pi, value, _ = network.apply(
-                        params, mb_ah, (mb_ego_obs, mb_done)
-                    )
+                    # GridSpread: rollout과 동일한 masked pi 재생성
+                    if is_spread:
+                        _, pi, value, _ = network.apply(
+                            params, mb_ah, (mb_ego_obs, mb_done),
+                            avail_actions=mb_avail,
+                        )
+                    else:
+                        _, pi, value, _ = network.apply(
+                            params, mb_ah, (mb_ego_obs, mb_done)
+                        )
                     lp = pi.log_prob(mb_action)
                     ratio = jnp.exp(lp - mb_log_prob)
                     adv_n = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
@@ -552,10 +592,22 @@ def make_train_mep_s2(config):
                             jnp.square(v_cl - mb_targets),
                         ).mean()
                     entropy = pi.entropy().mean()
+                    # ENT_COEF 선형 스케줄링 (optional): ANNEAL_STEPS>0이면 START→END 선형.
+                    _ent_anneal_steps = float(model_config.get("ENT_COEF_ANNEAL_STEPS", 0) or 0)
+                    if _ent_anneal_steps > 0:
+                        _ent_start = float(model_config.get("ENT_COEF_START", model_config["ENT_COEF"]))
+                        _ent_end = float(model_config.get("ENT_COEF_END", model_config["ENT_COEF"]))
+                        _env_steps_f = (
+                            update_step * NUM_STEPS * NUM_ENVS
+                        ).astype(jnp.float32)
+                        _frac = jnp.clip(_env_steps_f / _ent_anneal_steps, 0.0, 1.0)
+                        ent_coef_used = _ent_start + (_ent_end - _ent_start) * _frac
+                    else:
+                        ent_coef_used = model_config["ENT_COEF"]
                     total = (
                         actor_loss
                         + model_config.get("VF_COEF", 0.5) * critic_loss
-                        - model_config["ENT_COEF"] * entropy
+                        - ent_coef_used * entropy
                     )
                     return total, (actor_loss, critic_loss, entropy)
 
@@ -581,6 +633,7 @@ def make_train_mep_s2(config):
                         jnp.take(traj.critic_value, perm, axis=1),       # (T, E)
                         jnp.take(advantages, perm, axis=1),               # (T, E)
                         jnp.take(targets, perm, axis=1),                  # (T, E)
+                        jnp.take(traj.avail_actions, perm, axis=1),       # (T, E, ACTION_DIM)
                     )
                 else:
                     # 3+ agent: permute over N*E dimension, include ego mask
@@ -594,6 +647,7 @@ def make_train_mep_s2(config):
                         jnp.take(advantages, perm, axis=1),               # (T, N*E)
                         jnp.take(targets, perm, axis=1),                  # (T, N*E)
                         jnp.take(is_ego_mask_T, perm, axis=1),            # (T, N*E) bool
+                        jnp.take(traj.avail_actions, perm, axis=1),       # (T, N*E, ACTION_DIM)
                     )
                 minibatches = jax.tree_util.tree_map(_split_mb, batch)
 
@@ -625,6 +679,9 @@ def make_train_mep_s2(config):
 
             # ---- Metrics -------------------------------------------------
             metric = jax.tree_util.tree_map(lambda x: x.mean(), traj.info)
+            # GridSpread success_rate 파생
+            if is_spread and "success_at_done" in metric and "ep_done_flag" in metric:
+                metric["success_rate"] = metric["success_at_done"] / (metric["ep_done_flag"] + 1e-8)
             metric["total_loss"] = all_losses[0].mean()
             metric["actor_loss"] = all_losses[1].mean()
             metric["critic_loss"] = all_losses[2].mean()

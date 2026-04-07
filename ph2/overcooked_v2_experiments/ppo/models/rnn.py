@@ -185,6 +185,7 @@ class ActorCriticRNN(ActorCriticBase):
         partner_prediction=None,
         blocked_states=None,
         agent_idx=None,
+        avail_actions=None,
     ):
         # NOTE: `agent_idx` is accepted for backward compatibility with older
         # training scripts, but is intentionally ignored (PH1 agent index
@@ -450,6 +451,13 @@ class ActorCriticRNN(ActorCriticBase):
         actor_mean = nn.Dense(
             self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(actor_mean)
+
+        # GridSpread 전용 action masking: invalid action logit을 -inf로.
+        # avail_actions is None이면 no-op이라 Overcooked 등 다른 환경엔 영향 없음.
+        if avail_actions is not None:
+            actor_mean = actor_mean + jnp.where(
+                avail_actions == 1, 0.0, -jnp.inf
+            )
 
         pi = distrax.Categorical(logits=actor_mean)
 

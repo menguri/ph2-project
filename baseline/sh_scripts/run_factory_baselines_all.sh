@@ -9,6 +9,11 @@ cd "$SCRIPT_DIR" || exit 1
 GPUS="4,5"
 ENV_DEVICE="cpu"
 
+# Eval 체크포인트: eval/ 서브폴더에 1M step 단위로 저장 (전부 30M → 31 ckpts)
+EVAL_CKPT_DIR_EXTRA="++SAVE_TO_EVAL_DIR=true"
+EVAL_NUM_CKPT_EXTRA="++NUM_CHECKPOINTS=31"
+EVAL_NUM_CKPT_SP_EXTRA="${EVAL_NUM_CKPT_EXTRA}"
+
 # OV1_LAYOUTS=(cramped_room asymm_advantages coord_ring forced_coord counter_circuit)
 OV1_LAYOUTS=(asymm_advantages)
 
@@ -18,60 +23,66 @@ declare -A NENVS_OVERRIDE=(
   [counter_circuit]=64
 )
 
-# # =============================================================================
-# # 1. SP (COLE-sync)
-# # =============================================================================
-# echo "============================================================"
-# echo "  SP (COLE-sync) — OV1"
-# echo "============================================================"
-# for layout in "${OV1_LAYOUTS[@]}"; do
-#   echo "[SP] ${layout}"
-#   ./run_user_wandb.sh \
-#     --exp rnn-sp-cole \
-#     --env "${layout}" \
-#     --gpus "${GPUS}" \
-#     --env-device "${ENV_DEVICE}" \
-#     --tags sp-cole
-# done
+# =============================================================================
+# 1. SP (COLE-sync)
+# =============================================================================
+echo "============================================================"
+echo "  SP (COLE-sync) — OV1"
+echo "============================================================"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  echo "[SP] ${layout}"
+  ./run_user_wandb.sh \
+    --exp rnn-sp-cole \
+    --env "${layout}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --tags sp-cole \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_SP_EXTRA}"
+done
 
-# # =============================================================================
-# # 2. E3T (원본 E3T-Overcooked sync)
-# # =============================================================================
-# echo "============================================================"
-# echo "  E3T — OV1"
-# echo "============================================================"
-# for layout in "${OV1_LAYOUTS[@]}"; do
-#   echo "[E3T] ${layout}"
-#   ./run_user_wandb.sh \
-#     --exp rnn-e3t \
-#     --env "${layout}" \
-#     --gpus "${GPUS}" \
-#     --env-device "${ENV_DEVICE}" \
-#     --tags e3t
-# done
+# =============================================================================
+# 2. E3T (원본 E3T-Overcooked sync)
+# =============================================================================
+echo "============================================================"
+echo "  E3T — OV1"
+echo "============================================================"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  echo "[E3T] ${layout}"
+  ./run_user_wandb.sh \
+    --exp rnn-e3t \
+    --env "${layout}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --tags e3t \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_SP_EXTRA}"
+done
 
-# # =============================================================================
-# # 3. FCP (COLE-sync) — SP population 필요
-# # =============================================================================
-# echo "============================================================"
-# echo "  FCP (COLE-sync) — OV1"
-# echo "============================================================"
-# for layout in "${OV1_LAYOUTS[@]}"; do
-#   FCP_DIR="fcp_populations/${layout}_sp"
-#   if [ ! -d "${FCP_DIR}" ]; then
-#     echo "[FCP] SKIP ${layout} — population 없음: ${FCP_DIR}"
-#     continue
-#   fi
-#   echo "[FCP] ${layout}"
-#   ./run_user_wandb.sh \
-#     --exp rnn-fcp-cole \
-#     --env "${layout}" \
-#     --gpus "${GPUS}" \
-#     --env-device "${ENV_DEVICE}" \
-#     --fcp "${FCP_DIR}" \
-#     --seeds 1 \
-#     --tags fcp-cole
-# done
+# =============================================================================
+# 3. FCP (COLE-sync) — SP population 필요
+# =============================================================================
+echo "============================================================"
+echo "  FCP (COLE-sync) — OV1"
+echo "============================================================"
+for layout in "${OV1_LAYOUTS[@]}"; do
+  FCP_DIR="fcp_populations/${layout}_sp"
+  if [ ! -d "${FCP_DIR}" ]; then
+    echo "[FCP] SKIP ${layout} — population 없음: ${FCP_DIR}"
+    continue
+  fi
+  echo "[FCP] ${layout}"
+  ./run_user_wandb.sh \
+    --exp rnn-fcp-cole \
+    --env "${layout}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --fcp "${FCP_DIR}" \
+    --seeds 1 \
+    --tags fcp-cole \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_SP_EXTRA}"
+done
 
 # =============================================================================
 # 4. MEP (원본 MEP sync)
@@ -85,7 +96,9 @@ for layout in "${OV1_LAYOUTS[@]}"; do
     --exp rnn-mep \
     --env "${layout}" \
     --gpus "${GPUS}" \
-    --seeds 1
+    --seeds 1 \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_EXTRA}"
 done
 
 # =============================================================================
@@ -117,6 +130,8 @@ for layout in "${OV1_LAYOUTS[@]}"; do
       --seeds 1 \
       --gamma-pop-dir "${GAMMA_POP_DIRS[$layout]}" \
       --extra "++GAMMA_S2_METHOD=vae" \
+      --extra "${EVAL_CKPT_DIR_EXTRA}" \
+      --extra "${EVAL_NUM_CKPT_EXTRA}" \
       ${NENVS_ARG}
   else
     # asymm_advantages: population 없어 S1부터 전체 실행
@@ -126,6 +141,8 @@ for layout in "${OV1_LAYOUTS[@]}"; do
       --gpus "${GPUS}" \
       --seeds 1 \
       --extra "++GAMMA_S2_METHOD=vae" \
+      --extra "${EVAL_CKPT_DIR_EXTRA}" \
+      --extra "${EVAL_NUM_CKPT_EXTRA}" \
       ${NENVS_ARG}
   fi
 done

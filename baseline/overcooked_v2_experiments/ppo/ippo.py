@@ -43,6 +43,7 @@ class Transition(NamedTuple):
     partner_action: jnp.ndarray
     is_ego: jnp.ndarray
     prev_action: jnp.ndarray
+    avail_actions: jnp.ndarray  # (NUM_ACTORS, ACTION_DIM) — GridSpread masking용, 타 env는 placeholder zeros
 
 
 def batchify(x: dict, agent_list, num_actors):
@@ -435,9 +436,27 @@ def make_train(
                     last_done[np.newaxis, :],
                 )
 
-                hstate, pi, value, _ = network.apply(
-                    train_state.params, hstate, ac_in, use_prediction=use_pred_flag
-                )
+                # === GridSpread 전용 action masking ===
+                # env._env는 LogWrapper 내부의 base env. get_avail_actions는 base env 메서드이므로 unwrap 필요.
+                # vmap으로 (NUM_ENVS,) batched state에서 mask 계산 → agent-major stack → (NUM_ACTORS, ACTION_DIM)
+                if is_spread:
+                    _avail_dict = jax.vmap(env._env.get_avail_actions)(env_state.env_state)
+                    _avail_batch = jnp.stack(
+                        [_avail_dict[a] for a in env.agents]
+                    ).reshape(-1, ACTION_DIM)  # (NUM_ACTORS, ACTION_DIM)
+                    _avail_in = _avail_batch[np.newaxis, :]  # (1, NUM_ACTORS, ACTION_DIM)
+                    hstate, pi, value, _ = network.apply(
+                        train_state.params, hstate, ac_in,
+                        use_prediction=use_pred_flag,
+                        avail_actions=_avail_in,
+                    )
+                else:
+                    _avail_batch = jnp.zeros(
+                        (model_config["NUM_ACTORS"], ACTION_DIM), dtype=jnp.int32
+                    )
+                    hstate, pi, value, _ = network.apply(
+                        train_state.params, hstate, ac_in, use_prediction=use_pred_flag
+                    )
 
                 # jax.debug.print("check5 {x}", x=hstate.flatten()[0])
 
@@ -704,6 +723,7 @@ def make_train(
                     current_partner_action,
                     is_ego,
                     last_action,
+                    _avail_batch,
                 )
 
                 # jax.debug.print("check6 {x}", x=hstate.flatten()[0])
@@ -840,12 +860,22 @@ def make_train(
                         pred_accuracy = 0.0
 
                         # Single forward pass: computes pi, value, and pred_logits together
-                        _, pi, value, pred_logits = network.apply(
-                            params,
-                            hstate,
-                            (traj_batch.obs, traj_batch.done),
-                            use_prediction=use_pred_flag,
-                        )
+                        # GridSpread: traj_batch.avail_actions를 전달해서 rollout과 동일한 masked pi 재생성.
+                        if is_spread:
+                            _, pi, value, pred_logits = network.apply(
+                                params,
+                                hstate,
+                                (traj_batch.obs, traj_batch.done),
+                                use_prediction=use_pred_flag,
+                                avail_actions=traj_batch.avail_actions,
+                            )
+                        else:
+                            _, pi, value, pred_logits = network.apply(
+                                params,
+                                hstate,
+                                (traj_batch.obs, traj_batch.done),
+                                use_prediction=use_pred_flag,
+                            )
 
                         if alg_name == "E3T" and use_prediction:
                             is_ego_flat = traj_batch.is_ego
@@ -958,10 +988,28 @@ def make_train(
                         ratio = ratio.mean(where=train_mask)
                         # ratio = safe_mean(ratio, train_mask)
 
+                        # ENT_COEF 선형 스케줄링 (optional):
+                        #   ENT_COEF_ANNEAL_STEPS > 0이면 env_steps ∈ [0, ANNEAL_STEPS]에서
+                        #   ENT_COEF_START → ENT_COEF_END 선형 감쇠. 이후 END 고정.
+                        #   아니면 기존 ENT_COEF 상수 사용.
+                        _ent_anneal_steps = float(model_config.get("ENT_COEF_ANNEAL_STEPS", 0) or 0)
+                        if _ent_anneal_steps > 0:
+                            _ent_start = float(model_config.get("ENT_COEF_START", model_config["ENT_COEF"]))
+                            _ent_end = float(model_config.get("ENT_COEF_END", model_config["ENT_COEF"]))
+                            _env_steps_f = (
+                                update_step
+                                * model_config["NUM_STEPS"]
+                                * model_config["NUM_ENVS"]
+                            ).astype(jnp.float32)
+                            _frac = jnp.clip(_env_steps_f / _ent_anneal_steps, 0.0, 1.0)
+                            ent_coef_used = _ent_start + (_ent_end - _ent_start) * _frac
+                        else:
+                            ent_coef_used = model_config["ENT_COEF"]
+
                         total_loss = (
                             loss_actor
                             + model_config["VF_COEF"] * value_loss
-                            - model_config["ENT_COEF"] * entropy
+                            - ent_coef_used * entropy
                             + pred_loss
                             + jsd_loss
                         )
@@ -1108,6 +1156,11 @@ def make_train(
 
             # 모든 메트릭 값을 배치/스텝 차원에 대해 평균 계산 (스칼라로 축약)
             metric = jax.tree_util.tree_map(lambda x: x.mean(), metric)
+
+            # GridSpread success_rate 파생: episode 중 all_covered로 종료된 비율.
+            # env가 success_at_done / ep_done_flag를 per-step으로 찍어주고, .mean() 후 나눔.
+            if is_spread and "success_at_done" in metric and "ep_done_flag" in metric:
+                metric["success_rate"] = metric["success_at_done"] / (metric["ep_done_flag"] + 1e-8)
 
             # 업데이트 스텝 카운터 증가 및 메트릭에 기록
             update_step += 1

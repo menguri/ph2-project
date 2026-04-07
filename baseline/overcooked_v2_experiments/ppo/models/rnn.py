@@ -77,7 +77,7 @@ class ActorCriticRNN(ActorCriticBase):
         return ScannedRNN.initialize_carry(batch_size, hidden_size)
 
     @nn.compact
-    def __call__(self, hidden, x, train=False, use_prediction=False, actor_only=False, encode_only=False):
+    def __call__(self, hidden, x, train=False, use_prediction=False, actor_only=False, encode_only=False, avail_actions=None):
         rnn_state = hidden
 
         obs, dones = x
@@ -147,6 +147,13 @@ class ActorCriticRNN(ActorCriticBase):
         actor_mean = nn.Dense(
             self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
         )(actor_mean)
+
+        # GridSpread 전용 action masking: invalid action logit을 -inf로.
+        # avail_actions is None이면 no-op이라 Overcooked 등 다른 환경엔 영향 없음.
+        if avail_actions is not None:
+            actor_mean = actor_mean + jnp.where(
+                avail_actions == 1, 0.0, -jnp.inf
+            )
 
         pi = distrax.Categorical(logits=actor_mean)
 

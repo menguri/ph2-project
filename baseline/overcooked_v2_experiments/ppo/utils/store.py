@@ -36,16 +36,20 @@ def load_model(filename_base):
     return network_params, config
 
 
-def _get_checkpoint_dir(run_base_dir, run_num, checkpoint, final=False):
+def _get_checkpoint_dir(run_base_dir, run_num, checkpoint, final=False, eval_dir=False):
     ckpt_name = "ckpt_final" if final else f"ckpt_{checkpoint}"
-    checkpoint_dir = run_base_dir / f"run_{run_num}" / ckpt_name
+    if eval_dir:
+        checkpoint_dir = run_base_dir / "eval" / f"run_{run_num}" / ckpt_name
+    else:
+        checkpoint_dir = run_base_dir / f"run_{run_num}" / ckpt_name
 
     return checkpoint_dir.resolve()
 
 
 def store_checkpoint(config, params, run_num, checkpoint, final=False):
+    eval_dir = bool(config.get("SAVE_TO_EVAL_DIR", False))
     checkpoint_dir = _get_checkpoint_dir(
-        config["RUN_BASE_DIR"], run_num, checkpoint, final=final
+        config["RUN_BASE_DIR"], run_num, checkpoint, final=final, eval_dir=eval_dir
     )
 
     orbax_checkpointer = ocp.PyTreeCheckpointer()

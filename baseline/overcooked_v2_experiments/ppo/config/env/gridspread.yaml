@@ -3,6 +3,8 @@
 "ENV_NAME": "GridSpread"
 "ENV_KWARGS":
   "n_agents": 4
-  "radius": 3
-  "max_steps": 100
+  "radius": 2
+  "max_steps": 150
   "step_cost": 0.1
+  "dist_shaping_coef": 0.0   # === DIST_SHAPING_EXPERIMENT === (0이면 off)
+  "early_terminate": false   # true면 all_covered 달성 즉시 episode 종료

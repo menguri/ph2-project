@@ -81,7 +81,11 @@ run_ph2_spread() {
     --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
     --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
     --extra "++model.OBS_ENCODER=MLP" \
-    --extra "++model.ENT_COEF=0.05" \
+    --extra "++model.ENT_COEF_START=0.5" \
+    --extra "++model.ENT_COEF_END=0.01" \
+    --extra "++model.ENT_COEF_ANNEAL_STEPS=1e7" \
+    --extra "++env.ENV_KWARGS.dist_shaping_coef=0.01" \
+    --extra "++env.ENV_KWARGS.early_terminate=true" \
     --extra "++env.ENV_KWARGS.n_agents=${n_agents}"
 }
 
@@ -142,7 +146,11 @@ for N in "${AGENT_COUNTS[@]}"; do
           --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
           --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
           --extra "++model.OBS_ENCODER=MLP" \
-          --extra "++model.ENT_COEF=0.05" \
+          --extra "++model.ENT_COEF_START=0.5" \
+          --extra "++model.ENT_COEF_END=0.01" \
+          --extra "++model.ENT_COEF_ANNEAL_STEPS=1e7" \
+    --extra "++env.ENV_KWARGS.dist_shaping_coef=0.01" \
+    --extra "++env.ENV_KWARGS.early_terminate=true" \
           --extra "++env.ENV_KWARGS.n_agents=${N}"
       done
     done
