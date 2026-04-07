@@ -140,11 +140,15 @@ class GridSpread(MultiAgentEnv):
         per_goal_count = jnp.sum(on_goal, axis=0)  # (n_agents,)
         all_covered = jnp.all(per_goal_count == 1)
 
-        # shaped reward: 점령된 goal 수에 따른 단계별 보상
-        #   1~3개 goal 점령: 1점씩 (충돌 방지로 겹침 불가 → single_covered만 유효)
-        #   4개 전부 점령 (all_covered): 10점
-        n_single_covered = jnp.sum(per_goal_count == 1).astype(jnp.float32)
-        shaped = jnp.where(all_covered, 10.0, n_single_covered)
+        # shaped reward: 협력 강제 — N-2개까지는 0, N-1개일 때 5, 전부(N) 점령 시 10
+        #   목적: "혼자 goal 차지하고 stay" lazy local optimum 제거.
+        #   N=4 기준: 0,1,2개 → 0,  3개 → 5,  4개(all_covered) → 10
+        n_single_covered = jnp.sum(per_goal_count == 1).astype(jnp.int32)
+        _reward_table = jnp.concatenate([
+            jnp.zeros(self.n_agents - 1, dtype=jnp.float32),  # 0 ~ N-2 점령: 0
+            jnp.array([5.0, 10.0], dtype=jnp.float32),         # N-1 점령: 5, N 점령: 10
+        ])  # 길이 N+1
+        shaped = _reward_table[n_single_covered]
         reward = shaped - self.step_cost
 
         next_state = state.replace(agent_pos=next_pos, time=state.time + 1)
@@ -159,7 +163,7 @@ class GridSpread(MultiAgentEnv):
         coverage_ratio = n_single_covered / self.n_agents
         # eval용: step_cost 미포함 (순수 성과 지표)
         sparse_reward = jnp.where(all_covered, 10.0, 0.0)
-        combined_reward = shaped  # = n_single_covered or 10.0 (step_cost 미포함)
+        combined_reward = shaped  # = 0/1/3/5/10 (step_cost 미포함)
         shaped_reward_events = {
             f"agent_{i}": jnp.array([
                 all_covered.astype(jnp.float32),
@@ -168,43 +172,57 @@ class GridSpread(MultiAgentEnv):
             for i in range(self.n_agents)
         }
 
-        return obs, next_state, rewards, dones, {
+        # GridSpread 전용 로깅: 매 step에 전체 점령된 goal 개수 (env당 스칼라, 0 ~ N)
+        # 모든 에이전트를 통틀어 "현재 점령된 goal 수" — per-agent가 아니라 환경 전체 지표
+        n_goals_reached_f = n_single_covered.astype(jnp.float32)
+        # k-cover 비율 로깅: 각 step에서 정확히 k개 goal이 점령되었는지 0/1 indicator.
+        # rollout 전체에 대해 mean을 취하면 "전체 step 중 k-cover가 발생한 비율"이 됨.
+        # k = 2, 3, ..., N 에 대해 각각 cover_k 로 기록.
+        info_dict = {
             "sparse_reward": {f"agent_{i}": sparse_reward for i in range(self.n_agents)},
             "combined_reward": {f"agent_{i}": combined_reward for i in range(self.n_agents)},
+            "n_goals_reached": n_goals_reached_f,
             "shaped_reward_events": shaped_reward_events,
         }
+        for k in range(2, self.n_agents + 1):
+            info_dict[f"cover_{k}"] = (n_single_covered == k).astype(jnp.float32)
+        return obs, next_state, rewards, dones, info_dict
 
     @partial(jax.jit, static_argnums=[0])
     def get_obs(self, state: State) -> Dict[str, chex.Array]:
-        """좌표 벡터 observation: (5N,) 1D 벡터.
+        """Ego-centric 좌표 벡터 observation: (4N,) 1D 벡터.
 
-        [ego_onehot(N) | agent0_x, agent0_y, ..., agentN-1_x, agentN-1_y | goal0_x, goal0_y, ..., goalN-1_x, goalN-1_y]
-        좌표는 0~1 정규화. agent slot 고정 (rotation 없음).
+        [self_x, self_y, other1_x, other1_y, ..., otherN-1_x, otherN-1_y | goal0_x, goal0_y, ..., goalN-1_x, goalN-1_y]
+
+        Agent position 블록은 agent별 cyclic shift로 self가 항상 slot 0에 위치.
+        나머지 파트너는 원래 idx 순서를 유지 (temporal consistency 보존).
+        Goal은 agent-agnostic 공유 타겟이므로 절대 순서로 고정.
+        ego_onehot 불필요 (self 식별이 슬롯 위치에 암묵적으로 인코딩됨).
+        좌표는 0~1 정규화.
         """
         n = self.n_agents
 
-        # 에이전트 좌표 정규화: (2N,)
+        # 에이전트 좌표 정규화: (N, 2)
         norm_ax = state.agent_pos[:, 0].astype(jnp.float32) / max(self.width - 1, 1)
         norm_ay = state.agent_pos[:, 1].astype(jnp.float32) / max(self.height - 1, 1)
-        agent_coords = jnp.stack([norm_ax, norm_ay], axis=-1).ravel()  # (2N,)
+        agent_pos_norm = jnp.stack([norm_ax, norm_ay], axis=-1)  # (N, 2)
 
-        # goal 좌표 정규화: (2N,)
+        # goal 좌표 정규화: (2N,) 고정 순서
         norm_gx = state.goal_pos[:, 0].astype(jnp.float32) / max(self.width - 1, 1)
         norm_gy = state.goal_pos[:, 1].astype(jnp.float32) / max(self.height - 1, 1)
         goal_coords = jnp.stack([norm_gx, norm_gy], axis=-1).ravel()  # (2N,)
 
-        shared = jnp.concatenate([agent_coords, goal_coords])  # (4N,)
-
         obs = {}
         for i in range(n):
-            ego_onehot = jnp.zeros(n).at[i].set(1.0)           # (N,)
-            obs[f"agent_{i}"] = jnp.concatenate([ego_onehot, shared])  # (5N,)
+            # self가 slot 0에 오도록 cyclic shift: [i, i+1, ..., N-1, 0, ..., i-1]
+            rolled = jnp.roll(agent_pos_norm, shift=-i, axis=0).ravel()  # (2N,)
+            obs[f"agent_{i}"] = jnp.concatenate([rolled, goal_coords])   # (4N,)
         return obs
 
     @partial(jax.jit, static_argnums=[0])
     def get_obs_default(self, state: State) -> chex.Array:
         """Full global obs for PH1 pool / CT recon target.
-        Returns: (n_agents, 5N)
+        Returns: (n_agents, 4N)
         """
         obs_dict = self.get_obs(state)
         return jnp.stack(
@@ -232,4 +250,4 @@ class GridSpread(MultiAgentEnv):
         return spaces.Discrete(9)
 
     def observation_space(self, agent_id: str = "") -> spaces.Box:
-        return spaces.Box(0, 1, (5 * self.n_agents,))
+        return spaces.Box(0, 1, (4 * self.n_agents,))

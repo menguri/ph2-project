@@ -13,7 +13,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
-GPUS="${GPUS:-0,1}"
+GPUS="${GPUS:-0,1,2,3,4}"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
 NENVS="${NENVS:-256}"
 NSTEPS="${NSTEPS:-512}"
@@ -96,75 +96,77 @@ for N in "${AGENT_COUNTS[@]}"; do
     --extra "${ENT_COEF_EXTRA}" \
     --extra "${NAGENTS_EXTRA}${N}"
 
-  # ===========================================================================
-  # 1.5. FCP population 빌드 (SP 완료 직후)
-  # ===========================================================================
-  build_fcp_population "${N}"
+  # # ===========================================================================
+  # # 1.5. FCP population 빌드 (SP 완료 직후)
+  # # ===========================================================================
+  # build_fcp_population "${N}"
 
-  # ===========================================================================
-  # 3. FCP — SP population 필요
-  # ===========================================================================
-  # FCP_DIR_PY: Python cwd=baseline/ 기준 (run_user_wandb.sh --fcp 인자)
-  # FCP_DIR_BASH: bash cwd=sh_scripts/ 기준 ([ -d ] 체크용)
-  FCP_DIR_PY="fcp_populations/gridspread_${N}a_sp"
-  FCP_DIR_BASH="../fcp_populations/gridspread_${N}a_sp"
-  if [ -d "${FCP_DIR_BASH}" ]; then
-    echo "[FCP] N=${N}"
-    ./run_user_wandb.sh \
-      --exp rnn-fcp-cole \
-      --env "${ENV}" \
-      --gpus "${GPUS}" \
-      --env-device "${ENV_DEVICE}" \
-      --nenvs "${NENVS}" \
-      --nsteps "${NSTEPS}" \
-      --fcp "${FCP_DIR_PY}" \
-      --seeds 10 \
-      --tags "fcp,spread,N${N}" \
-      --extra "${TS_EXTRA}" \
-      --extra "${MINIBATCH_EXTRA}" \
-      --extra "${MLP_ENCODER_EXTRA}" \
-      --extra "${ENT_COEF_EXTRA}" \
-      --extra "${NAGENTS_EXTRA}${N}"
-  else
-    echo "[FCP] SKIP N=${N} — population 없음: ${FCP_DIR_BASH}"
-  fi
+  # # ===========================================================================
+  # # 3. FCP — SP population 필요
+  # # ===========================================================================
+  # # FCP_DIR_PY: Python cwd=baseline/ 기준 (run_user_wandb.sh --fcp 인자)
+  # # FCP_DIR_BASH: bash cwd=sh_scripts/ 기준 ([ -d ] 체크용)
+  # FCP_DIR_PY="fcp_populations/gridspread_${N}a_sp"
+  # FCP_DIR_BASH="../fcp_populations/gridspread_${N}a_sp"
+  # if [ -d "${FCP_DIR_BASH}" ]; then
+  #   echo "[FCP] N=${N}"
+  #   ./run_user_wandb.sh \
+  #     --exp rnn-fcp-cole \
+  #     --env "${ENV}" \
+  #     --gpus "${GPUS}" \
+  #     --env-device "${ENV_DEVICE}" \
+  #     --nenvs "${NENVS}" \
+  #     --nsteps "${NSTEPS}" \
+  #     --fcp "${FCP_DIR_PY}" \
+  #     --seeds 10 \
+  #     --tags "fcp,spread,N${N}" \
+  #     --extra "${TS_EXTRA}" \
+  #     --extra "${MINIBATCH_EXTRA}" \
+  #     --extra "${MLP_ENCODER_EXTRA}" \
+  #     --extra "${ENT_COEF_EXTRA}" \
+  #     --extra "${NAGENTS_EXTRA}${N}"
+  # else
+  #   echo "[FCP] SKIP N=${N} — population 없음: ${FCP_DIR_BASH}"
+  # fi
 
-  # ===========================================================================
-  # 2. E3T — 기존 rnn-e3t + epsilon 0.3 + prediction OFF + 100M
-  # ===========================================================================
-  echo "[E3T] N=${N}"
-  ./run_user_wandb.sh \
-    --exp rnn-e3t \
-    --env "${ENV}" \
-    --gpus "${GPUS}" \
-    --env-device "${ENV_DEVICE}" \
-    --nenvs "${NENVS}" \
-    --nsteps "${NSTEPS}" \
-    --e3t-epsilon 0.2 \
-    --tags "e3t,spread,N${N}" \
-    --extra "${TS_EXTRA}" \
-    --extra "${MINIBATCH_EXTRA}" \
-    --extra "${MLP_ENCODER_EXTRA}" \
-    --extra "++USE_PREDICTION=False" \
-    --extra "${NAGENTS_EXTRA}${N}"
+  # # ===========================================================================
+  # # 2. E3T — 기존 rnn-e3t + epsilon 0.2 + prediction OFF + 100M
+  # # ===========================================================================
+  # echo "[E3T] N=${N}"
+  # ./run_user_wandb.sh \
+  #   --exp rnn-e3t \
+  #   --env "${ENV}" \
+  #   --gpus "${GPUS}" \
+  #   --env-device "${ENV_DEVICE}" \
+  #   --nenvs "${NENVS}" \
+  #   --nsteps "${NSTEPS}" \
+  #   --e3t-epsilon 0.2 \
+  #   --tags "e3t,spread,N${N}" \
+  #   --extra "${TS_EXTRA}" \
+  #   --extra "${MINIBATCH_EXTRA}" \
+  #   --extra "${MLP_ENCODER_EXTRA}" \
+  #   --extra "++USE_PREDICTION=False" \
+  #   --extra "${ENT_COEF_EXTRA}" \
+  #   --extra "${NAGENTS_EXTRA}${N}"
 
 
-  # ===========================================================================
-  # 4. MEP — 기존 rnn-mep + S2 100M
-  # ===========================================================================
-  echo "[MEP] N=${N}"
-  ./run_user_wandb.sh \
-    --exp rnn-mep \
-    --env "${ENV}" \
-    --gpus "${GPUS}" \
-    --nenvs "${NENVS}" \
-    --nsteps "${NSTEPS}" \
-    --seeds 1 \
-    --tags "mep,spread,N${N}" \
-    --extra "${S2_TS_EXTRA}" \
-    --extra "${MINIBATCH_EXTRA}" \
-    --extra "${MLP_ENCODER_EXTRA}" \
-    --extra "${NAGENTS_EXTRA}${N}" \
+  # # ===========================================================================
+  # # 4. MEP — 기존 rnn-mep + S2 100M
+  # # ===========================================================================
+  # echo "[MEP] N=${N}"
+  # ./run_user_wandb.sh \
+  #   --exp rnn-mep \
+  #   --env "${ENV}" \
+  #   --gpus "${GPUS}" \
+  #   --nenvs "${NENVS}" \
+  #   --nsteps "${NSTEPS}" \
+  #   --seeds 1 \
+  #   --tags "mep,spread,N${N}" \
+  #   --extra "${S2_TS_EXTRA}" \
+  #   --extra "${MINIBATCH_EXTRA}" \
+  #   --extra "${MLP_ENCODER_EXTRA}" \
+  #   --extra "${ENT_COEF_EXTRA}" \
+  #   --extra "${NAGENTS_EXTRA}${N}"
 
 done
 
