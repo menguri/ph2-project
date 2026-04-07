@@ -140,13 +140,13 @@ class GridSpread(MultiAgentEnv):
         per_goal_count = jnp.sum(on_goal, axis=0)  # (n_agents,)
         all_covered = jnp.all(per_goal_count == 1)
 
-        # shaped reward: 협력 강제 — N-2개까지는 0, N-1개일 때 5, 전부(N) 점령 시 10
+        # shaped reward: 협력 강제 — N-2개까지는 0, N-1개일 때 5, 전부(N) 점령 시 20
         #   목적: "혼자 goal 차지하고 stay" lazy local optimum 제거.
-        #   N=4 기준: 0,1,2개 → 0,  3개 → 5,  4개(all_covered) → 10
+        #   N=4 기준: 0,1,2개 → 0,  3개 → 5,  4개(all_covered) → 20
         n_single_covered = jnp.sum(per_goal_count == 1).astype(jnp.int32)
         _reward_table = jnp.concatenate([
             jnp.zeros(self.n_agents - 1, dtype=jnp.float32),  # 0 ~ N-2 점령: 0
-            jnp.array([5.0, 10.0], dtype=jnp.float32),         # N-1 점령: 5, N 점령: 10
+            jnp.array([5.0, 20.0], dtype=jnp.float32),         # N-1 점령: 5, N 점령: 20
         ])  # 길이 N+1
         shaped = _reward_table[n_single_covered]
         reward = shaped - self.step_cost
@@ -162,8 +162,8 @@ class GridSpread(MultiAgentEnv):
 
         coverage_ratio = n_single_covered / self.n_agents
         # eval용: step_cost 미포함 (순수 성과 지표)
-        sparse_reward = jnp.where(all_covered, 10.0, 0.0)
-        combined_reward = shaped  # = 0/1/3/5/10 (step_cost 미포함)
+        sparse_reward = jnp.where(all_covered, 20.0, 0.0)
+        combined_reward = shaped  # = 0/5/20 (step_cost 미포함)
         shaped_reward_events = {
             f"agent_{i}": jnp.array([
                 all_covered.astype(jnp.float32),

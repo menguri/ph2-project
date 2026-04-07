@@ -36,7 +36,7 @@ ALL_LAYOUTS=(counter_circuit forced_coord asymm_advantages coord_ring cramped_ro
 #    S1=10M, S2=100M, nenvs=32, S2 12 seeds
 # =============================================================================
 echo "============================================================"
-echo "  MEP (S1=10M, S2=100M, nenvs=32, 12 seeds) — 전 레이아웃"
+echo "  MEP (S1=10M, S2=30M, nenvs=32, 12 seeds) — 전 레이아웃"
 echo "============================================================"
 
 for layout in "${ALL_LAYOUTS[@]}"; do

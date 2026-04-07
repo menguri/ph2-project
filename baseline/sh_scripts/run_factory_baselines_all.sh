@@ -129,32 +129,3 @@ for layout in "${OV1_LAYOUTS[@]}"; do
       ${NENVS_ARG}
   fi
 done
-
-# # =============================================================================
-# # 6. HSP (논문 sync, S1→Greedy→S2 통합)
-# # =============================================================================
-echo "============================================================"
-echo "  HSP — OV1"
-echo "============================================================"
-for layout in "${OV1_LAYOUTS[@]}"; do
-  echo "[HSP] ${layout}"
-  NENVS_ARG=""
-  [[ -n "${NENVS_OVERRIDE[$layout]+_}" ]] && NENVS_ARG="--nenvs ${NENVS_OVERRIDE[$layout]}"
-  ./run_user_wandb.sh \
-    --exp rnn-hsp \
-    --env "${layout}" \
-    --gpus "${GPUS}" \
-    --seeds 1 \
-    --tags hsp \
-    ${NENVS_ARG}
-done
-
-NENVS_ARG=""
-[[ -n "${NENVS_OVERRIDE[counter_circuit]+_}" ]] && NENVS_ARG="--nenvs ${NENVS_OVERRIDE[counter_circuit]}"
-./run_user_wandb.sh \
-  --exp rnn-hsp \
-  --env "counter_circuit" \
-  --gpus "${GPUS}" \
-  --seeds 1 \
-  --tags hsp \
-  ${NENVS_ARG}
