@@ -16,7 +16,7 @@ cd "$SCRIPT_DIR" || exit 1
 # 5,6
 GPUS="${GPUS:-4,5}"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
-TOTAL_TS="1e8"                # 100M timesteps (S2에도 적용)
+TOTAL_TS="3e7"                # 30M timesteps (S2에도 적용)
 
 # 에이전트 수: CLI 인자 또는 기본값 4
 if [ $# -eq 0 ]; then
@@ -34,7 +34,7 @@ MLP_ENCODER_EXTRA="++model.OBS_ENCODER=MLP"
 # Eval 체크포인트: eval/ 서브폴더에 1M step 단위로 저장 (TOTAL_TS=1e8 → 101 ckpts: 0M..100M)
 EVAL_CKPT_DIR_EXTRA="++SAVE_TO_EVAL_DIR=true"
 # ph2 의 PH1_EVAL_EVERY_ENV_STEPS=1000000 과 동일 cadence (1M env step 마다 저장).
-EVAL_NUM_CKPT_EXTRA="++EVAL_CKPT_EVERY_ENV_STEPS=10000000"
+EVAL_NUM_CKPT_EXTRA="++EVAL_CKPT_EVERY_ENV_STEPS=3000000"
 
 # -----------------------------------------------------------------------------
 # FCP population 빌드: SP runs → fcp_populations/gridspread_{N}a_sp/
@@ -130,38 +130,38 @@ for N in "${AGENT_COUNTS[@]}"; do
   # # # ===========================================================================
   # # # 2. E3T — 기존 rnn-e3t + epsilon 0.2 + prediction OFF + 100M
   # # # ===========================================================================
-  # echo "[E3T] N=${N}"
-  # ./run_user_wandb.sh \
-  #   --exp rnn-e3t \
-  #   --env "${ENV}" \
-  #   --gpus "${GPUS}" \
-  #   --env-device "${ENV_DEVICE}" \
-  #   --e3t-epsilon 0.2 \
-  #   --tags "e3t,spread,N${N}" \
-  #   --extra "${TS_EXTRA}" \
-  #   --extra "${MLP_ENCODER_EXTRA}" \
-  #   --extra "++USE_PREDICTION=False" \
-  #   --extra "${EVAL_CKPT_DIR_EXTRA}" \
-  #   --extra "${EVAL_NUM_CKPT_EXTRA}" \
-  #   --extra "${NAGENTS_EXTRA}${N}"
+  echo "[E3T] N=${N}"
+  ./run_user_wandb.sh \
+    --exp rnn-e3t \
+    --env "${ENV}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --e3t-epsilon 0.2 \
+    --tags "e3t,spread,N${N}" \
+    --extra "${TS_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "++USE_PREDICTION=False" \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_EXTRA}" \
+    --extra "${NAGENTS_EXTRA}${N}"
 
 
   # # # ===========================================================================
   # # # 4. MEP — 기존 rnn-mep + S2 100M
   # # # ===========================================================================
-  # echo "[MEP] N=${N}"
-  # ./run_user_wandb.sh \
-  #   --exp rnn-mep \
-  #   --env "${ENV}" \
-  #   --gpus "${GPUS}" \
-  #   --seeds 1 \
-  #   --tags "mep,spread,N${N}" \
-  #   --extra "++model.TOTAL_TIMESTEPS=5e6" \
-  #   --extra "${S2_TS_EXTRA}" \
-  #   --extra "${MLP_ENCODER_EXTRA}" \
-  #   --extra "${EVAL_CKPT_DIR_EXTRA}" \
-  #   --extra "${EVAL_NUM_CKPT_EXTRA}" \
-  #   --extra "${NAGENTS_EXTRA}${N}"
+  echo "[MEP] N=${N}"
+  ./run_user_wandb.sh \
+    --exp rnn-mep \
+    --env "${ENV}" \
+    --gpus "${GPUS}" \
+    --seeds 1 \
+    --tags "mep,spread,N${N}" \
+    --extra "++model.TOTAL_TIMESTEPS=5e6" \
+    --extra "${S2_TS_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_EXTRA}" \
+    --extra "${NAGENTS_EXTRA}${N}"
 
 
 done

@@ -1419,18 +1419,19 @@ def make_train(
                     if env_name != "ToyCoop":
                         new_pool = jnp.roll(ph1_pool_states, shift=-1, axis=1)
                         new_pool = new_pool.at[:, -1].set(global_full_next_env0)
-                        if is_spread:
-                            # GridSpread: all_covered=True 상태는 pool에 추가하지 않음
-                            # info["shaped_reward_events"]["agent_0"]: (NUM_ENVS, 2)
-                            # index 0 = all_covered float, index 1 = coverage_ratio
-                            all_covered_env = info["shaped_reward_events"]["agent_0"][:, 0].astype(jnp.bool_)
-                            ph1_pool_states = jnp.where(
-                                (~all_covered_env)[:, jnp.newaxis, jnp.newaxis],  # (E,1,1) broadcast
-                                new_pool,
-                                ph1_pool_states,
-                            )
-                        else:
-                            ph1_pool_states = new_pool  # OV2: 기존과 동일
+                        # GridSpread: all_covered=True 상태를 pool에서 제외하려면 아래 블록 주석 해제.
+                        # if is_spread:
+                        #     # info["shaped_reward_events"]["agent_0"]: (NUM_ENVS, 2)
+                        #     # index 0 = all_covered float, index 1 = coverage_ratio
+                        #     all_covered_env = info["shaped_reward_events"]["agent_0"][:, 0].astype(jnp.bool_)
+                        #     ph1_pool_states = jnp.where(
+                        #         (~all_covered_env)[:, jnp.newaxis, jnp.newaxis],  # (E,1,1) broadcast
+                        #         new_pool,
+                        #         ph1_pool_states,
+                        #     )
+                        # else:
+                        #     ph1_pool_states = new_pool
+                        ph1_pool_states = new_pool
                 
                 # [STA-PH1] Apply Latent Distance Penalty
                 # Calculate Distance: || z(next_obs) - z(blocked) ||

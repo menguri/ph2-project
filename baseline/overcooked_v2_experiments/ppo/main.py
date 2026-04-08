@@ -57,7 +57,10 @@ def _apply_gridspread_overrides(config):
         "ANNEAL_LR": True,
         "LR_SCHEDULE": "linear",       # ref onpolicy use_linear_lr_decay=True 매칭 (LR → 0 선형 감쇠)
         "SPLIT_OPTIMIZER": False,      # (일시 OFF) ref onpolicy 처럼 actor/critic 분리 — 검증용으로 잠시 끔
-        "ENT_COEF": 0.03,
+        "ENT_COEF": 0.05,
+        "ENT_COEF_START": 0.03,
+        "ENT_COEF_END": 0.03,
+        "ENT_COEF_ANNEAL_STEPS": 1e7,
         "VF_COEF": 1.0,
         "MAX_GRAD_NORM": 1.0,
         # ref 는 MLP-only (RNN 없음). fully-observable GridSpread 에 GRU 는 불필요 + 학습 느림.
@@ -74,10 +77,6 @@ def _apply_gridspread_overrides(config):
     }
     for k, v in gs_overrides.items():
         model[k] = v
-    # ref 는 entropy anneal 안 씀 → 혹시 set 돼 있으면 무력화
-    for k in ("ENT_COEF_START", "ENT_COEF_END", "ENT_COEF_ANNEAL_STEPS"):
-        if k in model:
-            model.pop(k)
     print(f"[GS-OVERRIDE] GridSpread 감지 — model 파라미터 ref 기준으로 강제 override: {gs_overrides}")
 
 

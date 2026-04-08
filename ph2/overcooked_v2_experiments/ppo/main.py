@@ -51,9 +51,12 @@ def _apply_gridspread_overrides(config):
         "ANNEAL_LR": True,
         "LR_SCHEDULE": "linear",       # ref onpolicy use_linear_lr_decay=True 매칭
         "SPLIT_OPTIMIZER": False,      # (일시 OFF) actor/critic 분리 — 검증용으로 잠시 끔
-        "ENT_COEF": 0.005,
+        "ENT_COEF": 0.05,
+        "ENT_COEF_START": 0.05,
+        "ENT_COEF_END": 0.001,
+        "ENT_COEF_ANNEAL_STEPS": 1e7,
         "VF_COEF": 1.0,
-        "MAX_GRAD_NORM": 10.0,
+        "MAX_GRAD_NORM": 1.0,
         # ref 는 MLP-only (RNN 없음). fully-observable GridSpread 에 GRU 는 불필요 + 학습 느림.
         "USE_RNN": False,
         "OBS_ENCODER": "MLP",
@@ -62,15 +65,12 @@ def _apply_gridspread_overrides(config):
         # ref MAPPO 표준 안정화 트릭들 (sunwoo wandb config):
         "USE_VALUENORM": True,
         "USE_HUBER_LOSS": True,
-        "HUBER_DELTA": 10.0,
+        "HUBER_DELTA": 1.0,
         "NORMALIZE_OBS_DIVISOR": 6.0,  # = 2*radius (radius=3)
         "TOTAL_TIMESTEPS": 1e8,
     }
     for k, v in gs_overrides.items():
         model[k] = v
-    for k in ("ENT_COEF_START", "ENT_COEF_END", "ENT_COEF_ANNEAL_STEPS"):
-        if k in model:
-            model.pop(k)
     print(f"[GS-OVERRIDE] GridSpread 감지 — model 파라미터 ref 기준으로 강제 override: {gs_overrides}")
 
 

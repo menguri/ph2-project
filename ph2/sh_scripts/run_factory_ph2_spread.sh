@@ -9,10 +9,10 @@ cd "$(dirname "$0")" || exit 1
 
 EXP="rnn-ph2"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
-GPUS="${GPUS:-2,3,4,5,6}"
-NUM_SEEDS="${NUM_SEEDS:-10}"
+GPUS="${GPUS:-0,3,4,6}"
+NUM_SEEDS="${NUM_SEEDS:-12}"
 FIXED_SEED="${FIXED_SEED:-42}"
-TOTAL_TS="${TOTAL_TS:-2e7}"     # 10M
+TOTAL_TS="${TOTAL_TS:-3e7}"     # 10M
 
 # PH1/PH2 파라미터 (기본값)W
 : "${PH1_BETA:=1.0}"
@@ -95,7 +95,7 @@ run_ph2_spread() {
 # 스윕: PH1_MAX_PENALTY_COUNT × PH1_OMEGA × PH1_SIGMA
 # ===========================================================================
 PENALTY_COUNTS=(1 2 3)
-OMEGAS=(10.0 5.0) # 5.0 1.0)
+OMEGAS=(10.0 100.0 50.0 20.0) # 5.0 1.0)
 SIGMAS=(2.0 3.0 7.0 10.0) # 3.0 4.0 5.0 6.0 7.0 10.0)
 
 for N in "${AGENT_COUNTS[@]}"; do
