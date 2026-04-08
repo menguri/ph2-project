@@ -71,8 +71,15 @@ def visualize_ppo_policy(
     )
 
     # 2) 환경 생성
-    initial_env_kwargs = copy.deepcopy(config["env"]["ENV_KWARGS"])
+    # 일부 알고리즘은 ckpt 저장 시 OmegaConf nested 직렬화 누락으로 config["env"]가 None일 수 있음
+    # → extra_env_kwargs로 fallback.
+    _env_section = config.get("env") if isinstance(config, dict) else None
+    if _env_section and isinstance(_env_section, dict) and _env_section.get("ENV_KWARGS"):
+        initial_env_kwargs = copy.deepcopy(_env_section["ENV_KWARGS"])
+    else:
+        initial_env_kwargs = {}
     env_kwargs = initial_env_kwargs | extra_env_kwargs
+    _extra_env_name = env_kwargs.pop("ENV_NAME", None)
     cfg_old_overcooked = False
     cfg_disable_old_auto = True
     if old_overcooked_override or disable_old_overcooked_auto_override:
@@ -81,7 +88,12 @@ def visualize_ppo_policy(
     env_kwargs_no_layout = copy.deepcopy(env_kwargs)
     env_kwargs_no_layout.pop("layout", None)
     # ToyCoop, MPE 등 layout 없는 환경 감지
-    _env_name = config["env"].get("ENV_NAME", "overcooked_v2")
+    if _env_section and isinstance(_env_section, dict):
+        _env_name = _env_section.get("ENV_NAME", "overcooked_v2")
+    elif _extra_env_name:
+        _env_name = _extra_env_name
+    else:
+        _env_name = "overcooked_v2"
     _env_name_override = _env_name if (_env_name in ("ToyCoop", "GridSpread") or _env_name.startswith("MPE_")) else None
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,

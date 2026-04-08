@@ -52,17 +52,28 @@ def visualize_ppo_policy(
     eval_reward="sparse",
     old_overcooked_override=None,
     disable_old_overcooked_auto_override=None,
+    ckpt_filter=None,
 ):
-    # cross-play인데 모든 ckpt를 쓰려고 하면 모순 → 방어 코드
-    if cross and not final_only:
+    # cross-play인데 모든 ckpt를 쓰려고 하면 모순 → 방어 코드 (ckpt_filter 모드는 단일 ckpt만 쓰므로 예외)
+    if cross and not final_only and ckpt_filter is None:
         raise ValueError("Cannot run cross play with all checkpoints")
 
     # 1) PPO 파라미터 로드: all_params: dict[run_id][ckpt_id] -> PPOParams
-    all_params, config, configs = load_all_checkpoints(run_base_dir, final_only=final_only)
+    all_params, config, configs = load_all_checkpoints(
+        run_base_dir, final_only=final_only, ckpt_filter=ckpt_filter
+    )
 
     # 2) 환경 생성
-    initial_env_kwargs = copy.deepcopy(config["env"]["ENV_KWARGS"])
+    # 일부 알고리즘(E3T 등)은 store_checkpoint 시 OmegaConf nested 변환 누락으로
+    # config["env"]가 None이 될 수 있음 → extra_env_kwargs로 대체.
+    _env_section = config.get("env") if isinstance(config, dict) else None
+    if _env_section and isinstance(_env_section, dict) and _env_section.get("ENV_KWARGS"):
+        initial_env_kwargs = copy.deepcopy(_env_section["ENV_KWARGS"])
+    else:
+        initial_env_kwargs = {}
     env_kwargs = initial_env_kwargs | extra_env_kwargs
+    # ENV_NAME은 fallback 용으로 extra_env_kwargs에 들어올 수 있으므로 env 생성 전에 분리.
+    _extra_env_name = env_kwargs.pop("ENV_NAME", None)
     cfg_old_overcooked = False
     cfg_disable_old_auto = True
     if old_overcooked_override or disable_old_overcooked_auto_override:
@@ -71,9 +82,23 @@ def visualize_ppo_policy(
     env_kwargs_no_layout = copy.deepcopy(env_kwargs)
     env_kwargs_no_layout.pop("layout", None)
     # ToyCoop, MPE 등 layout 없는 환경 감지
-    _env_name = config["env"].get("ENV_NAME", "overcooked_v2")
+    if _env_section and isinstance(_env_section, dict):
+        _env_name = _env_section.get("ENV_NAME", "overcooked_v2")
+    elif _extra_env_name:
+        _env_name = _extra_env_name
+    else:
+        _env_name = "overcooked_v2"
     _non_overcooked_envs = ("ToyCoop", "GridSpread", "MPE_simple_spread_v3", "MPE_simple_reference_v3")
     _env_name_override = _env_name if _env_name.startswith("MPE_") or _env_name in _non_overcooked_envs else None
+
+    # GridSpread eval: 학습과 동일하게 all_covered 즉시 종료를 강제.
+    # run dir 에 hydra config 가 저장돼 있지 않으면 env_kwargs={} 가 되어 early_terminate=False 가 되고,
+    # episode 가 max_steps 까지 돌면서 per-step reward 가 누적되어 total_reward 가 비정상적으로 커짐.
+    # → eval 에서는 항상 early_terminate=True 로 강제.
+    if _env_name_override == "GridSpread":
+        env_kwargs_no_layout.setdefault("early_terminate", True)
+        if env_kwargs_no_layout.get("early_terminate") is not True:
+            env_kwargs_no_layout["early_terminate"] = True
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,
@@ -152,9 +177,10 @@ def visualize_ppo_policy(
         run_combinations = cross_combos + self_play_combos
         print(f"Run combinations: {len(run_combinations)} total ({len(cross_combos)} cross + {len(self_play_combos)} self)")
 
-        # 각 run의 ckpt_final만 모아놓기
+        # 각 run에서 사용할 ckpt 선택: ckpt_filter 가 주어지면 그걸, 아니면 ckpt_final
+        _ckpt_key = ckpt_filter if ckpt_filter is not None else "ckpt_final"
         policy_pairings = [
-            all_params[run_keys[i]]["ckpt_final"] for i in range(num_runs)
+            all_params[run_keys[i]][_ckpt_key] for i in range(num_runs)
         ]
 
         cross_combinations = {}
@@ -402,8 +428,11 @@ def visualize_ppo_policy(
         for i in range(num_actors):
             fieldnames.append(f"pred_acc_agent_{i}")
 
-        # sparse CSV (항상 저장)
-        summery_name = f"reward_summary_cross.csv" if cross else f"reward_summary_sp.csv"
+        # sparse CSV (항상 저장). ckpt_filter 모드는 파일명에 ckpt suffix 추가.
+        _suffix = f"__{ckpt_filter}" if ckpt_filter is not None else ""
+        summery_name = (
+            f"reward_summary_cross{_suffix}.csv" if cross else f"reward_summary_sp{_suffix}.csv"
+        )
         summery_file = run_base_dir / summery_name
         with open(summery_file, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
@@ -414,7 +443,9 @@ def visualize_ppo_policy(
 
         # combined CSV (GridSpread 등 combined_reward가 있을 때만)
         if has_combined:
-            summery_name_c = f"reward_summary_cross_combined.csv" if cross else f"reward_summary_sp_combined.csv"
+            summery_name_c = (
+                f"reward_summary_cross_combined{_suffix}.csv" if cross else f"reward_summary_sp_combined{_suffix}.csv"
+            )
             summery_file_c = run_base_dir / summery_name_c
             with open(summery_file_c, "w", newline="") as csvfile:
                 writer = csv.writer(csvfile)
@@ -437,6 +468,11 @@ if __name__ == "__main__":
     parser.add_argument("--num_seeds", type=int)
     parser.add_argument("--all_ckpt", action="store_true")
     parser.add_argument("--cross", action="store_true")
+    parser.add_argument(
+        "--per_ckpt_cross",
+        action="store_true",
+        help="각 ckpt(ckpt_0..ckpt_final) 별로 cross-play 를 수행. ckpt 별 SP/XP/gap 산출용.",
+    )
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--no_viz", action="store_true")
     parser.add_argument("--no_reset", action="store_true")
@@ -482,19 +518,52 @@ if __name__ == "__main__":
     if args.max_steps is not None:
         extra_env_kwargs["max_steps"] = int(args.max_steps)
 
-    for mode in modes:
-        fo = final_only or (mode == "cross")
-        visualize_ppo_policy(
-            Path(directory),
-            key_sp if mode == "sp" else key_cross,
-            num_seeds=num_seeds,
-            final_only=fo,
-            cross=mode == "cross",
-            cross_mode=args.cross_mode,
-            eval_reward=args.eval_reward,
-            no_viz=args.no_viz,
-            extra_env_kwargs=extra_env_kwargs,
-            pairing_policy=args.pairing_policy,
-            old_overcooked_override=args.old_overcooked,
-            disable_old_overcooked_auto_override=args.disable_old_overcooked_auto,
+    # per_ckpt_cross 모드: 각 ckpt별로 cross-play 를 별도 호출. 기존 sp/cross 경로는 건드리지 않음.
+    if args.per_ckpt_cross:
+        # 첫 번째 run_X dir 에서 ckpt 이름 목록 추출
+        run_root = Path(directory)
+        # SAVE_TO_EVAL_DIR=true 대응: top-level 에 run_* 없으면 eval/ 사용
+        eval_sub = run_root / "eval"
+        top_has_runs = any(p.is_dir() and "run_" in p.name for p in run_root.iterdir())
+        scan_root = eval_sub if (not top_has_runs and eval_sub.is_dir()) else run_root
+        first_run_dir = sorted(
+            [p for p in scan_root.iterdir() if p.is_dir() and "run_" in p.name]
+        )[0]
+        ckpt_names = sorted(
+            [p.name for p in first_run_dir.iterdir() if p.is_dir() and p.name.startswith("ckpt_")]
         )
+        print(f"[per_ckpt_cross] discovered ckpts: {ckpt_names}")
+        for ckpt_name in ckpt_names:
+            print(f"[per_ckpt_cross] ===== {ckpt_name} =====")
+            visualize_ppo_policy(
+                Path(directory),
+                key_cross,
+                num_seeds=num_seeds,
+                final_only=False,  # ckpt_filter 가 우선
+                cross=True,
+                cross_mode=args.cross_mode,
+                eval_reward=args.eval_reward,
+                no_viz=args.no_viz,
+                extra_env_kwargs=extra_env_kwargs,
+                pairing_policy=args.pairing_policy,
+                old_overcooked_override=args.old_overcooked,
+                disable_old_overcooked_auto_override=args.disable_old_overcooked_auto,
+                ckpt_filter=ckpt_name,
+            )
+    else:
+        for mode in modes:
+            fo = final_only or (mode == "cross")
+            visualize_ppo_policy(
+                Path(directory),
+                key_sp if mode == "sp" else key_cross,
+                num_seeds=num_seeds,
+                final_only=fo,
+                cross=mode == "cross",
+                cross_mode=args.cross_mode,
+                eval_reward=args.eval_reward,
+                no_viz=args.no_viz,
+                extra_env_kwargs=extra_env_kwargs,
+                pairing_policy=args.pairing_policy,
+                old_overcooked_override=args.old_overcooked,
+                disable_old_overcooked_auto_override=args.disable_old_overcooked_auto,
+            )

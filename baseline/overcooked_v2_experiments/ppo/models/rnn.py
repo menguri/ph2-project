@@ -77,7 +77,10 @@ class ActorCriticRNN(ActorCriticBase):
         return ScannedRNN.initialize_carry(batch_size, hidden_size)
 
     @nn.compact
-    def __call__(self, hidden, x, train=False, use_prediction=False, actor_only=False, encode_only=False, avail_actions=None):
+    def __call__(self, hidden, x, train=False, use_prediction=False, actor_only=False, encode_only=False, avail_actions=None, global_obs=None):
+        # MAPPO_MODE: global_obs 가 주어지면 critic head 는 기존 GRU embedding 대신
+        # 별도 MLP 를 통해 global state 에서 value 를 산출한다 (centralized critic).
+        # global_obs=None 이면 기존 IPPO 경로와 완전히 동일 (파라미터 키 불변).
         rnn_state = hidden
 
         obs, dones = x
@@ -161,15 +164,37 @@ class ActorCriticRNN(ActorCriticBase):
             dummy_value = jnp.zeros(embedding.shape[:-1])
             return rnn_state, pi, dummy_value, pred_logits
 
-        critic = nn.Dense(
-            self.config["FC_DIM_SIZE"],
-            kernel_init=orthogonal(jnp.sqrt(2)),
-            bias_init=constant(0.0),
-        )(embedding)
-        critic = activation(critic)
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
-            critic
-        )
+        if global_obs is not None:
+            # Centralized critic: global_obs 를 별도 MLP 로 통과 (param 이름 명시 → 기존 IPPO ckpt 키와 충돌 X)
+            # global_obs shape 가 (T, B, D) 또는 임의 leading dims 라도 마지막 축이 feature.
+            g = global_obs
+            if g.ndim > 2:
+                g = g.reshape((-1, g.shape[-1]))
+            critic = nn.Dense(
+                self.config["FC_DIM_SIZE"],
+                kernel_init=orthogonal(jnp.sqrt(2)),
+                bias_init=constant(0.0),
+                name="critic_global_dense",
+            )(g)
+            critic = activation(critic)
+            critic = nn.Dense(
+                1,
+                kernel_init=orthogonal(1.0),
+                bias_init=constant(0.0),
+                name="critic_global_out",
+            )(critic)
+            # embedding leading dims 에 맞춰 reshape (마지막 축은 1 → squeeze 후 매칭)
+            critic = critic.reshape(embedding.shape[:-1] + (1,))
+        else:
+            critic = nn.Dense(
+                self.config["FC_DIM_SIZE"],
+                kernel_init=orthogonal(jnp.sqrt(2)),
+                bias_init=constant(0.0),
+            )(embedding)
+            critic = activation(critic)
+            critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
+                critic
+            )
 
         return rnn_state, pi, jnp.squeeze(critic, axis=-1), pred_logits
 

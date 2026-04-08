@@ -691,10 +691,17 @@ def single_run_with_viz(config):
         # GridSpread (n>=3): level_one cross-play (leave-one-out)
         _cross_mode = "level_one" if "GridSpread" in layout_name else "full"
         _eval_reward = "sparse" if "GridSpread" in layout_name else "sparse"
+        # 체크포인트 config에 env가 누락된 경우 대비해 hydra config의 env_kwargs를 fallback으로 전달.
+        try:
+            _ek_native = OmegaConf.to_container(config["env"]["ENV_KWARGS"], resolve=True)
+            _ek_native["ENV_NAME"] = config["env"].get("ENV_NAME", "overcooked_v2")
+        except Exception:
+            _ek_native = {}
         visualize_ppo_policy(
             run_base_dir,
             key=jax.random.PRNGKey(config["SEED"]),
             final_only=True,
+            extra_env_kwargs=_ek_native,
             num_seeds=cross_seeds,
             cross=True,
             no_viz=True,

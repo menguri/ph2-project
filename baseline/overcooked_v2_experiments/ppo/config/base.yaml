@@ -7,9 +7,17 @@ SEED: 42
 NUM_SEEDS: 10
 TUNE: False
 NUM_CHECKPOINTS: 3
+# Eval ckpt 기본값: 모든 학습이 1M env step cadence 로 eval/run_X/ 에 저장하도록 디폴트 ON.
+# 개별 실험에서 끄려면 ++SAVE_TO_EVAL_DIR=false 또는 ++EVAL_CKPT_EVERY_ENV_STEPS=0 으로 override.
+SAVE_TO_EVAL_DIR: True
+EVAL_CKPT_EVERY_ENV_STEPS: 1000000
 VISUALIZE: False
 OLD_OVERCOOKED: False
 DISABLE_OLD_OVERCOOKED_AUTO: False
 USE_PARTNER_MODELING: False
+# MAPPO_MODE: True 일 때만 baseline IPPO trainer의 critic 입력을 local obs → global(per-actor full) obs로 전환.
+# Actor 경로는 불변이므로 기존 cross-play/FCP population/ckpt 호환성 유지. 기본값 False → 기존 IPPO 경로 동일.
+# SP 실험에서만 활성화하는 것을 권장 (E3T/FCP/MEP 등은 config override 하지 말 것).
+MAPPO_MODE: False
 
 # NUM_ITERATIONS: 10

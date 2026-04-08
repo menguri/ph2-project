@@ -5,13 +5,15 @@ import re
 
 def _is_not_self_play(label: str) -> bool:
     """
-    'policy_labels' (예: 'cross-0_1')를 파싱하여 self-play가 아닌지(예: 0 != 1) 확인합니다.
-    'cross-0_0'과 같은 self-play는 False를 반환합니다.
+    'policy_labels' (예: 'cross-0_1', 'cross-0_1_1_1')를 파싱하여
+    모든 인덱스가 동일한 self-play 가 아닌지 확인합니다.
+    n-agent 환경 (GridSpread 의 4-agent 등) 도 정확히 처리.
     """
-    match = re.search(r'cross-(\d+)_(\d+)', str(label))
-    if match:
-        return match.group(1) != match.group(2)
-    return False # 매칭되지 않는 형식은 cross-play로 간주하지 않음
+    match = re.search(r'cross-([\d_]+)', str(label))
+    if not match:
+        return False
+    tokens = match.group(1).split('_')
+    return len(set(tokens)) > 1
 
 def calculate_metrics_for_run(run_path: str) -> Optional[Dict[str, float]]:
     """
@@ -38,6 +40,10 @@ def calculate_metrics_for_run(run_path: str) -> Optional[Dict[str, float]]:
         if 'total_reward' not in cross_df.columns or 'policy_labels' not in cross_df.columns:
             print(f"[{run_name}] Cross-Play 파일에 'total_reward' 또는 'policy_labels' 열이 없어 건너뜁니다.")
             return None
+
+        # 페어 내 집계 행(annotation == 'mean') 은 통계에서 제외 — seed-* 행만 사용
+        if 'annotation' in cross_df.columns:
+            cross_df = cross_df[cross_df['annotation'] != 'mean']
 
         # 1. Self-Play(SP) 성능 계산: 자기 자신과의 대결 (예: cross-0_0, cross-1_1)
         sp_df = cross_df[~cross_df['policy_labels'].apply(_is_not_self_play)]

@@ -281,6 +281,7 @@ def get_rollout(
             dist_sum,
             pen_sum,
             stat_count,
+            episode_done,
         ) = carry
 
         key_sample, key_step = jax.random.split(key, 2)
@@ -341,14 +342,18 @@ def get_rollout(
         )
 
         # eval 기록용: sparse/combined 둘 다 누적 (step_cost 미포함)
+        # 첫 episode 종료 후 LogWrapper auto-reset으로 다음 episode가 시작되므로,
+        # episode_done latch로 추가 누적을 차단해 episode 1회분만 기록.
         _sparse_r = info["sparse_reward"]["agent_0"] if isinstance(info, dict) and "sparse_reward" in info else reward["agent_0"]
         _combined_r = info["combined_reward"]["agent_0"] if isinstance(info, dict) and "combined_reward" in info else reward["agent_0"]
-        new_total_reward = total_reward + _sparse_r
-        new_total_reward_combined = total_reward_combined + _combined_r
-        penalized_total_reward = penalized_total_reward + (_sparse_r - step_penalty_env)
-        dist_sum = dist_sum + step_dist_env
-        pen_sum = pen_sum + step_penalty_env
-        stat_count = stat_count + jnp.float32(1.0)
+        _alive = (1.0 - episode_done.astype(jnp.float32))
+        new_total_reward = total_reward + _sparse_r * _alive
+        new_total_reward_combined = total_reward_combined + _combined_r * _alive
+        penalized_total_reward = penalized_total_reward + (_sparse_r - step_penalty_env) * _alive
+        dist_sum = dist_sum + step_dist_env * _alive
+        pen_sum = pen_sum + step_penalty_env * _alive
+        stat_count = stat_count + _alive
+        new_episode_done = episode_done | next_done["__all__"]
 
         carry = (
             next_obs,
@@ -361,6 +366,7 @@ def get_rollout(
             dist_sum,
             pen_sum,
             stat_count,
+            new_episode_done,
         )
         return carry, (
             next_state,
@@ -386,6 +392,7 @@ def get_rollout(
             dist_sum,
             pen_sum,
             stat_count,
+            episode_done,
         ) = carry
 
         key_sample, key_step = jax.random.split(key, 2)
@@ -445,12 +452,14 @@ def get_rollout(
 
         _sparse_r = info["sparse_reward"]["agent_0"] if isinstance(info, dict) and "sparse_reward" in info else reward["agent_0"]
         _combined_r = info["combined_reward"]["agent_0"] if isinstance(info, dict) and "combined_reward" in info else reward["agent_0"]
-        new_total_reward = total_reward + _sparse_r
-        new_total_reward_combined = total_reward_combined + _combined_r
-        penalized_total_reward = penalized_total_reward + (_sparse_r - step_penalty_env)
-        dist_sum = dist_sum + step_dist_env
-        pen_sum = pen_sum + step_penalty_env
-        stat_count = stat_count + jnp.float32(1.0)
+        _alive = (1.0 - episode_done.astype(jnp.float32))
+        new_total_reward = total_reward + _sparse_r * _alive
+        new_total_reward_combined = total_reward_combined + _combined_r * _alive
+        penalized_total_reward = penalized_total_reward + (_sparse_r - step_penalty_env) * _alive
+        dist_sum = dist_sum + step_dist_env * _alive
+        pen_sum = pen_sum + step_penalty_env * _alive
+        stat_count = stat_count + _alive
+        new_episode_done = episode_done | next_done["__all__"]
 
         # Compute value for each e_t candidate for target agent
         agent_id = f"agent_{target_agent}"
@@ -482,6 +491,7 @@ def get_rollout(
             dist_sum,
             pen_sum,
             stat_count,
+            new_episode_done,
         )
         return carry, (
             next_state,
@@ -517,6 +527,7 @@ def get_rollout(
         jnp.float32(0.0),  # dist_sum
         jnp.float32(0.0),  # pen_sum
         jnp.float32(0.0),  # stat_count
+        jnp.bool_(False),  # episode_done latch
     )
     value_by_et_seq = None
     step_reward_seq = None

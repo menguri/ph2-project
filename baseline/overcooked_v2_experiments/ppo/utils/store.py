@@ -70,8 +70,8 @@ def store_checkpoint(config, params, run_num, checkpoint, final=False):
     orbax_checkpointer.save(checkpoint_dir, checkpoint, save_args=save_args)
 
 
-def load_checkpoint(run_dir, run_num, checkpoint):
-    checkpoint_dir = _get_checkpoint_dir(run_dir, run_num, checkpoint)
+def load_checkpoint(run_dir, run_num, checkpoint, eval_dir=False):
+    checkpoint_dir = _get_checkpoint_dir(run_dir, run_num, checkpoint, eval_dir=eval_dir)
     print(f"[DEBUG] Loading checkpoint from: {checkpoint_dir}")
 
     orbax_checkpointer = ocp.PyTreeCheckpointer()
@@ -118,11 +118,25 @@ def _convert_config_to_native(config):
     return config
 
 
-def load_all_checkpoints(run_dir, final_only=True, skip_initial=False):
+def load_all_checkpoints(run_dir, final_only=True, skip_initial=False, ckpt_filter=None):
+    # ckpt_filter: 특정 ckpt 이름(예: "ckpt_5", "ckpt_final") 만 로드. 지정 시 final_only/skip_initial 무시.
     first_config = None
     all_checkpoints = {}
     configs = {}
-    for run_num_dir in run_dir.iterdir():
+    # SAVE_TO_EVAL_DIR=true 인 경우 체크포인트는 run_dir/eval/run_X/ 안에 저장됨.
+    # 먼저 top-level 에 run_* 가 있는지 확인하고, 없으면 eval/ 하위를 순회한다.
+    eval_subdir = run_dir / "eval"
+    top_has_runs = any(
+        p.is_dir() and "run_" in p.name for p in run_dir.iterdir()
+    )
+    if not top_has_runs and eval_subdir.is_dir():
+        scan_root = eval_subdir
+        use_eval_dir = True
+        print(f"[DEBUG] Top-level has no run_* dirs — scanning eval/ subdir: {eval_subdir}")
+    else:
+        scan_root = run_dir
+        use_eval_dir = False
+    for run_num_dir in scan_root.iterdir():
         print(f"[DEBUG] Examining directory: {run_num_dir.name}")
         if not run_num_dir.is_dir() or "run_" not in run_num_dir.name:
             print(f"[DEBUG] Skipping (not a run dir): {run_num_dir.name}")
@@ -135,15 +149,19 @@ def load_all_checkpoints(run_dir, final_only=True, skip_initial=False):
             if not checkpoint_dir.is_dir() or "ckpt_" not in checkpoint_dir.name:
                 print(f"[DEBUG]   Skipping (not a ckpt dir): {checkpoint_dir.name}")
                 continue
-            if final_only and "final" not in checkpoint_dir.name:
-                print(f"[DEBUG]   Skipping (final_only and not final): {checkpoint_dir.name}")
-                continue
-            if skip_initial and "ckpt_0" in checkpoint_dir.name:
-                print(f"[DEBUG]   Skipping (skip_initial): {checkpoint_dir.name}")
-                continue
+            if ckpt_filter is not None:
+                if checkpoint_dir.name != ckpt_filter:
+                    continue
+            else:
+                if final_only and "final" not in checkpoint_dir.name:
+                    print(f"[DEBUG]   Skipping (final_only and not final): {checkpoint_dir.name}")
+                    continue
+                if skip_initial and "ckpt_0" in checkpoint_dir.name:
+                    print(f"[DEBUG]   Skipping (skip_initial): {checkpoint_dir.name}")
+                    continue
             ckpt_id = checkpoint_dir.name.split("_")[1]
             print(f"[DEBUG]   Loading ckpt_id={ckpt_id} for run_num={run_num}")
-            config, params = load_checkpoint(run_dir, run_num, ckpt_id)
+            config, params = load_checkpoint(run_dir, run_num, ckpt_id, eval_dir=use_eval_dir)
             policy = PPOParams(params=params)
             checkpoints[checkpoint_dir.name] = policy
             if not first_config:

@@ -44,6 +44,7 @@ class Transition(NamedTuple):
     is_ego: jnp.ndarray
     prev_action: jnp.ndarray
     avail_actions: jnp.ndarray  # (NUM_ACTORS, ACTION_DIM) — GridSpread masking용, 타 env는 placeholder zeros
+    global_obs: jnp.ndarray  # (NUM_ACTORS, GLOBAL_DIM) — MAPPO_MODE=True 일 때만 의미 있음. False 면 (NUM_ACTORS, 1) placeholder.
 
 
 def batchify(x: dict, agent_list, num_actors):
@@ -75,6 +76,10 @@ def make_train(
     alg_name = config.get("ALG_NAME", "SP")
     e3t_epsilon = config.get("E3T_EPSILON", 0.05)
     use_prediction = config.get("USE_PREDICTION", True)
+
+    # MAPPO_MODE: True 이면 critic 입력을 per-actor global(full) obs 로 전환 (centralized critic).
+    # 기본값 False → 기존 IPPO 경로와 완전히 동일. SP 실험에서만 활성화 권장.
+    mappo_mode = bool(config.get("MAPPO_MODE", False))
 
     env_name, env_kwargs = _prepare_env_spec(config, env_config)
 
@@ -109,17 +114,34 @@ def make_train(
         // model_config["NUM_MINIBATCHES"]
     )
 
-    num_checkpoints = config["NUM_CHECKPOINTS"]
-    checkpoint_steps = jnp.linspace(
-        0,
-        model_config["NUM_UPDATES"],
-        num_checkpoints,
-        endpoint=True,
-        dtype=jnp.int32,
-    )
-    if num_checkpoints > 0:
-        # make sure the last checkpoint is the last update step
-        checkpoint_steps = checkpoint_steps.at[-1].set(model_config["NUM_UPDATES"])
+    # EVAL_CKPT_EVERY_ENV_STEPS 가 주어지면 env step cadence 로 ckpt 스케줄을 만든다 (ph2 의 PH1_EVAL_EVERY_ENV_STEPS 와 동일 의미).
+    # 주어지지 않으면 기존대로 NUM_CHECKPOINTS 를 linspace 분할.
+    _ckpt_every_env = int(config.get("EVAL_CKPT_EVERY_ENV_STEPS", 0) or 0)
+    if _ckpt_every_env > 0:
+        _steps_per_update = int(model_config["NUM_STEPS"]) * int(model_config["NUM_ENVS"])
+        _total_ts = int(model_config["TOTAL_TIMESTEPS"])
+        _target_env_steps = list(range(0, _total_ts + _ckpt_every_env, _ckpt_every_env))
+        if _target_env_steps[-1] != _total_ts:
+            _target_env_steps.append(_total_ts)
+        _ckpt_update_idxs = sorted({
+            min(model_config["NUM_UPDATES"], (s + _steps_per_update - 1) // _steps_per_update)
+            for s in _target_env_steps
+        })
+        checkpoint_steps = jnp.asarray(_ckpt_update_idxs, dtype=jnp.int32)
+        num_checkpoints = int(checkpoint_steps.shape[0])
+        config["NUM_CHECKPOINTS"] = num_checkpoints  # downstream save 루프가 이 값을 본다
+    else:
+        num_checkpoints = config["NUM_CHECKPOINTS"]
+        checkpoint_steps = jnp.linspace(
+            0,
+            model_config["NUM_UPDATES"],
+            num_checkpoints,
+            endpoint=True,
+            dtype=jnp.int32,
+        )
+        if num_checkpoints > 0:
+            # make sure the last checkpoint is the last update step
+            checkpoint_steps = checkpoint_steps.at[-1].set(model_config["NUM_UPDATES"])
 
     print("Checkpoint steps: ", checkpoint_steps)
 
@@ -262,6 +284,38 @@ def make_train(
                 f"!= reset obs shape={state_shape}; using reset obs shape."
             )
 
+        # ---------------------------------------------------------------
+        # MAPPO_MODE 용 global obs 추출 헬퍼.
+        # ph2 의 _extract_global_full_obs_per_actor 와 동일한 패턴:
+        #   - MPE (GridSpread): 모든 agent obs 를 concat → (NUM_ENVS, global_dim) → N 번 tile → (NUM_ACTORS, global_dim)
+        #   - OV2: per-actor full obs (각 actor 시점의 get_obs_default 결과) → (NUM_ACTORS, *state_shape)
+        # mappo_mode=False 이면 placeholder (NUM_ACTORS, 1) 로 대체.
+        # ---------------------------------------------------------------
+        _is_mpe_for_mappo = (env_name == "GridSpread")
+
+        def _extract_global_obs_per_actor(_log_env_state):
+            if _is_mpe_for_mappo:
+                _obs_dict = jax.vmap(env.get_obs)(_log_env_state.env_state)
+                _global = jnp.concatenate(
+                    [_obs_dict[a].astype(jnp.float32) for a in env.agents], axis=-1
+                )  # (NUM_ENVS, global_dim)
+                return jnp.tile(_global, [env.num_agents, 1])  # (NUM_ACTORS, global_dim) agent-major
+            _full = jax.vmap(env.get_obs_default)(_log_env_state.env_state)
+            _per_agent = [
+                _full[:, i].astype(jnp.float32) for i in range(env.num_agents)
+            ]
+            return jnp.concatenate(_per_agent, axis=0)  # (NUM_ACTORS, *state_shape)
+
+        # mappo_mode 시 global_obs placeholder shape 계산 (init network 용)
+        if mappo_mode:
+            # env_state 는 LogEnvState (LogWrapper 적용). _extract_global_obs_per_actor 는 .env_state attr 만 사용.
+            _gobs_sample = _extract_global_obs_per_actor(env_state)
+            # per-env slice 를 shape 로 사용. (NUM_ACTORS, ...) → per-actor shape
+            _global_obs_feat_shape = tuple(_gobs_sample.shape[1:])
+            print(f"[MAPPO] global_obs per-actor feature shape = {_global_obs_feat_shape}")
+        else:
+            _global_obs_feat_shape = (1,)
+
         # INIT NETWORK
         network = get_actor_critic(config)
 
@@ -287,12 +341,25 @@ def make_train(
         use_pred_flag = alg_name == "E3T" and use_prediction
 
         # Initialize network parameters (PartnerPredictor params included when use_prediction=True)
-        network_params = network.init(
-            _rng,
-            init_hstate,
-            init_x,
-            use_prediction=use_pred_flag,
-        )
+        if mappo_mode:
+            _init_global_obs = jnp.zeros(
+                (1, model_config["NUM_ENVS"], *_global_obs_feat_shape),
+                dtype=jnp.float32,
+            )
+            network_params = network.init(
+                _rng,
+                init_hstate,
+                init_x,
+                use_prediction=use_pred_flag,
+                global_obs=_init_global_obs,
+            )
+        else:
+            network_params = network.init(
+                _rng,
+                init_hstate,
+                init_x,
+                use_prediction=use_pred_flag,
+            )
 
         if model_config["ANNEAL_LR"]:
             tx = optax.chain(
@@ -439,6 +506,17 @@ def make_train(
                 # === GridSpread 전용 action masking ===
                 # env._env는 LogWrapper 내부의 base env. get_avail_actions는 base env 메서드이므로 unwrap 필요.
                 # vmap으로 (NUM_ENVS,) batched state에서 mask 계산 → agent-major stack → (NUM_ACTORS, ACTION_DIM)
+                # MAPPO_MODE: per-actor global obs 추출 → critic 입력으로 전달.
+                # mappo_mode=False 면 placeholder (NUM_ACTORS, 1) → network 에는 None 으로 넘김.
+                if mappo_mode:
+                    _global_obs_step = _extract_global_obs_per_actor(env_state)  # (NUM_ACTORS, *G)
+                    _global_obs_in = _global_obs_step[np.newaxis, :]  # (1, NUM_ACTORS, *G)
+                else:
+                    _global_obs_step = jnp.zeros(
+                        (model_config["NUM_ACTORS"], 1), dtype=jnp.float32
+                    )
+                    _global_obs_in = None
+
                 if is_spread:
                     _avail_dict = jax.vmap(env._env.get_avail_actions)(env_state.env_state)
                     _avail_batch = jnp.stack(
@@ -449,13 +527,16 @@ def make_train(
                         train_state.params, hstate, ac_in,
                         use_prediction=use_pred_flag,
                         avail_actions=_avail_in,
+                        global_obs=_global_obs_in,
                     )
                 else:
                     _avail_batch = jnp.zeros(
                         (model_config["NUM_ACTORS"], ACTION_DIM), dtype=jnp.int32
                     )
                     hstate, pi, value, _ = network.apply(
-                        train_state.params, hstate, ac_in, use_prediction=use_pred_flag
+                        train_state.params, hstate, ac_in,
+                        use_prediction=use_pred_flag,
+                        global_obs=_global_obs_in,
                     )
 
                 # jax.debug.print("check5 {x}", x=hstate.flatten()[0])
@@ -724,6 +805,7 @@ def make_train(
                     is_ego,
                     last_action,
                     _avail_batch,
+                    _global_obs_step,
                 )
 
                 # jax.debug.print("check6 {x}", x=hstate.flatten()[0])
@@ -791,8 +873,14 @@ def make_train(
                 last_done[np.newaxis, :],
             )
 
+            if mappo_mode:
+                _last_global = _extract_global_obs_per_actor(env_state)[np.newaxis, :]
+            else:
+                _last_global = None
             _, _, last_val, _ = network.apply(
-                train_state.params, next_initial_hstate, ac_in, use_prediction=use_pred_flag
+                train_state.params, next_initial_hstate, ac_in,
+                use_prediction=use_pred_flag,
+                global_obs=_last_global,
             )
 
             last_val = last_val.squeeze()
@@ -861,6 +949,7 @@ def make_train(
 
                         # Single forward pass: computes pi, value, and pred_logits together
                         # GridSpread: traj_batch.avail_actions를 전달해서 rollout과 동일한 masked pi 재생성.
+                        _global_obs_loss = traj_batch.global_obs if mappo_mode else None
                         if is_spread:
                             _, pi, value, pred_logits = network.apply(
                                 params,
@@ -868,6 +957,7 @@ def make_train(
                                 (traj_batch.obs, traj_batch.done),
                                 use_prediction=use_pred_flag,
                                 avail_actions=traj_batch.avail_actions,
+                                global_obs=_global_obs_loss,
                             )
                         else:
                             _, pi, value, pred_logits = network.apply(
@@ -875,6 +965,7 @@ def make_train(
                                 hstate,
                                 (traj_batch.obs, traj_batch.done),
                                 use_prediction=use_pred_flag,
+                                global_obs=_global_obs_loss,
                             )
 
                         if alg_name == "E3T" and use_prediction:

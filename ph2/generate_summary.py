@@ -57,9 +57,16 @@ def main(args):
         print(f"기존 파일 '{output_path}'에 결과를 덧붙입니다.")
         try:
             existing_df = pd.read_csv(output_path)
-            # 기존 데이터와 새 데이터를 합치고 중복(run_name 기준)을 제거 (새 데이터 우선)
-            combined_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=['run_name'], keep='last')
-            combined_df.to_csv(output_path, index=False)
+            # 컬럼 스키마가 다르면 섞지 않고 새 데이터로 덮어쓰기
+            if list(existing_df.columns) != list(new_df.columns):
+                print(f"[WARN] 컬럼 스키마 불일치 — 기존 파일을 덮어씁니다.")
+                print(f"       기존: {list(existing_df.columns)}")
+                print(f"       신규: {list(new_df.columns)}")
+                new_df.to_csv(output_path, index=False)
+            else:
+                # 동일 스키마: run_name 기준 중복 제거하며 병합 (새 데이터 우선)
+                combined_df = pd.concat([existing_df, new_df]).drop_duplicates(subset=['run_name'], keep='last')
+                combined_df.to_csv(output_path, index=False)
         except Exception as e:
             print(f"기존 파일을 읽거나 합치는 중 오류 발생: {e}")
             # 오류 발생 시 새 데이터만으로 덮어쓰기 (안전장치)

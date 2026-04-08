@@ -93,8 +93,8 @@ def _select_policy_params(ckpt, policy_source="params"):
     return ckpt.get("params", ckpt.get("params_ind", ckpt.get("params_spec")))
 
 
-def load_checkpoint(run_dir, run_num, checkpoint, policy_source="params"):
-    checkpoint_dir = _get_checkpoint_dir(run_dir, run_num, checkpoint)
+def load_checkpoint(run_dir, run_num, checkpoint, policy_source="params", eval_dir=False):
+    checkpoint_dir = _get_checkpoint_dir(run_dir, run_num, checkpoint, eval_dir=eval_dir)
     print(f"[DEBUG] Loading checkpoint from: {checkpoint_dir}")
 
     orbax_checkpointer = ocp.PyTreeCheckpointer()
@@ -138,7 +138,19 @@ def load_all_checkpoints(run_dir, final_only=True, skip_initial=False, policy_so
     first_config = None
     all_checkpoints = {}
     configs = {}
-    for run_num_dir in run_dir.iterdir():
+    # SAVE_TO_EVAL_DIR=true 인 경우 체크포인트는 run_dir/eval/run_X/ 안에 저장됨.
+    eval_subdir = run_dir / "eval"
+    top_has_runs = any(
+        p.is_dir() and "run_" in p.name for p in run_dir.iterdir()
+    )
+    if not top_has_runs and eval_subdir.is_dir():
+        scan_root = eval_subdir
+        use_eval_dir = True
+        print(f"[DEBUG] Top-level has no run_* dirs — scanning eval/ subdir: {eval_subdir}")
+    else:
+        scan_root = run_dir
+        use_eval_dir = False
+    for run_num_dir in scan_root.iterdir():
         print(f"[DEBUG] Examining directory: {run_num_dir.name}")
         if not run_num_dir.is_dir() or "run_" not in run_num_dir.name:
             print(f"[DEBUG] Skipping (not a run dir): {run_num_dir.name}")
@@ -164,6 +176,7 @@ def load_all_checkpoints(run_dir, final_only=True, skip_initial=False, policy_so
                 run_num,
                 ckpt_id,
                 policy_source=policy_source,
+                eval_dir=use_eval_dir,
             )
             policy = PPOParams(params=params)
             checkpoints[checkpoint_dir.name] = policy

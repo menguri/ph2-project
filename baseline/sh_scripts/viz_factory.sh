@@ -6,10 +6,10 @@ cd "$(dirname "$0")" || exit 1
 # GridSpread baseline level-one cross-play — sparse (기본) + combined
 PRESET_FACTORY_COMMANDS=(
   # GridSpread baseline level-one cross-play — combined (step_cost 미포함)
-  "./run_visualize.sh --gpu 0 --dir runs/20260405-171643_ktv8k8f9_GridSpread_sp --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  "./run_visualize.sh --gpu 1 --dir runs/20260405-182435_uuqwto44_GridSpread_fcp --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  "./run_visualize.sh --gpu 0 --dir runs/20260405-195201_fpre9e74_GridSpread_e3t --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  "./run_visualize.sh --gpu 1 --dir runs/20260405-204455_qtvxc1xs_GridSpread_mep_h64_pop5 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
+  "./run_visualize.sh --gpu 0 --dir runs/20260407-162621_rw4wzyxo_GridSpread_fcp --cross --num_seeds 5 --no_viz --max_steps 100"
+  # "./run_visualize.sh --gpu 1 --dir runs/20260407-180000_dt6clc2k_GridSpread_sp_e128 --cross --num_seeds 5 --no_viz --max_steps 100"
+  # "./run_visualize.sh --gpu 0 --dir runs/20260405-195201_fpre9e74_GridSpread_e3t --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
+  # "./run_visualize.sh --gpu 1 --dir runs/20260405-204455_qtvxc1xs_GridSpread_mep_h64_pop5 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
 )
 
 BATCH_SIZE=2

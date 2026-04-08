@@ -31,10 +31,10 @@ fi
 # 각 override는 별도 --extra 플래그로 전달해야 Hydra가 올바르게 파싱함
 TS_EXTRA="++model.TOTAL_TIMESTEPS=${TOTAL_TS}"
 S2_TS_EXTRA="++model.S2_TOTAL_TIMESTEPS=${TOTAL_TS}"
-MINIBATCH_EXTRA="++model.NUM_MINIBATCHES=4"
+MINIBATCH_EXTRA="++model.NUM_MINIBATCHES=16"
 MLP_ENCODER_EXTRA="++model.OBS_ENCODER=MLP"
 ENT_START_EXTRA="++model.ENT_COEF_START=0.1"
-ENT_END_EXTRA="++model.ENT_COEF_END=0.01"
+ENT_END_EXTRA="++model.ENT_COEF_END=0.005"
 ENT_ANNEAL_EXTRA="++model.ENT_COEF_ANNEAL_STEPS=1e7"
 # === DIST_SHAPING_EXPERIMENT === (0이면 off, 예: 0.01) > 최대 penalty: 0.1(0.05) 0.2(0.1) 0.5(0.25)
 DIST_SHAPING_EXTRA="++env.ENV_KWARGS.dist_shaping_coef=0.0"
@@ -42,7 +42,9 @@ DIST_SHAPING_EXTRA="++env.ENV_KWARGS.dist_shaping_coef=0.0"
 EARLY_TERM_EXTRA="++env.ENV_KWARGS.early_terminate=true"
 # Eval 체크포인트: eval/ 서브폴더에 1M step 단위로 저장 (TOTAL_TS=1e8 → 101 ckpts: 0M..100M)
 EVAL_CKPT_DIR_EXTRA="++SAVE_TO_EVAL_DIR=true"
-EVAL_NUM_CKPT_EXTRA="++NUM_CHECKPOINTS=101"
+# ph2 의 PH1_EVAL_EVERY_ENV_STEPS=1000000 과 동일 cadence (1M env step 마다 저장).
+# baseline ippo.py 가 이 값을 보면 NUM_CHECKPOINTS 를 자동으로 산출함.
+EVAL_NUM_CKPT_EXTRA="++EVAL_CKPT_EVERY_ENV_STEPS=1000000"
 
 # -----------------------------------------------------------------------------
 # FCP population 빌드: SP runs → fcp_populations/gridspread_{N}a_sp/
@@ -88,78 +90,46 @@ for N in "${AGENT_COUNTS[@]}"; do
   echo "  GridSpread N=${N}  (env=${ENV})"
   echo "================================================================"
 
-  # # ===========================================================================
-  # # 1. SP — 기존 rnn-sp-cole + 100M
-  # # ===========================================================================
-  echo "[SP] N=${N}"
-  ./run_user_wandb.sh \
-    --exp rnn-sp-cole \
-    --env "${ENV}" \
-    --gpus "${GPUS}" \
-    --env-device "${ENV_DEVICE}" \
-    --nenvs "${NENVS}" \
-    --nsteps "${NSTEPS}" \
-    --tags "sp,spread,N${N}" \
-    --extra "${TS_EXTRA}" \
-    --extra "${MINIBATCH_EXTRA}" \
-    --extra "${MLP_ENCODER_EXTRA}" \
-    --extra "${ENT_START_EXTRA}" \
-    --extra "${ENT_END_EXTRA}" \
-    --extra "${ENT_ANNEAL_EXTRA}" \
-    --extra "${DIST_SHAPING_EXTRA}" \
-    --extra "${EARLY_TERM_EXTRA}" \
-    --extra "${NAGENTS_EXTRA}${N}"
-
-  # # ===========================================================================
-  # # 1.5. FCP population 빌드 (SP 완료 직후)
-  # # ===========================================================================
-  # build_fcp_population "${N}"
-
-  # # ===========================================================================
-  # # 3. FCP — SP population 필요
-  # # ===========================================================================
-  # # FCP_DIR_PY: Python cwd=baseline/ 기준 (run_user_wandb.sh --fcp 인자)
-  # # FCP_DIR_BASH: bash cwd=sh_scripts/ 기준 ([ -d ] 체크용)
-  # FCP_DIR_PY="fcp_populations/gridspread_${N}a_sp"
-  # FCP_DIR_BASH="../fcp_populations/gridspread_${N}a_sp"
-  # if [ -d "${FCP_DIR_BASH}" ]; then
-  #   echo "[FCP] N=${N}"
-  #   ./run_user_wandb.sh \
-  #     --exp rnn-fcp-cole \
-  #     --env "${ENV}" \
-  #     --gpus "${GPUS}" \
-  #     --env-device "${ENV_DEVICE}" \
-  #     --nenvs "${NENVS}" \
-  #     --nsteps "${NSTEPS}" \
-  #     --fcp "${FCP_DIR_PY}" \
-  #     --seeds 10 \
-  #     --tags "fcp,spread,N${N}" \
-  #     --extra "${TS_EXTRA}" \
-  #     --extra "${MINIBATCH_EXTRA}" \
-  #     --extra "${MLP_ENCODER_EXTRA}" \
-  #     --extra "${ENT_COEF_EXTRA}" \
-  #     --extra "${NAGENTS_EXTRA}${N}"
-  # else
-  #   echo "[FCP] SKIP N=${N} — population 없음: ${FCP_DIR_BASH}"
-  # fi
-
   # ===========================================================================
-  # 2. E3T — 기존 rnn-e3t + epsilon 0.2 + prediction OFF + 100M
+  # 1. SP — 기존 rnn-sp-cole + 100M
   # ===========================================================================
-  # echo "[E3T] N=${N}"
+
+  # SP-MAPPO: 동일 환경/하이퍼파라미터에서 centralized critic 으로 분기 학습.
+  # MAPPO_MODE=true 는 baseline ippo.py 에서만 의미 있음 (E3T/FCP/MEP 블럭에는 절대 추가 금지).
+  # echo "[SP-MAPPO] N=${N}"
   # ./run_user_wandb.sh \
-  #   --exp rnn-e3t \
+  #   --exp rnn-sp-cole \
   #   --env "${ENV}" \
   #   --gpus "${GPUS}" \
   #   --env-device "${ENV_DEVICE}" \
   #   --nenvs "${NENVS}" \
   #   --nsteps "${NSTEPS}" \
-  #   --e3t-epsilon 0.2 \
-  #   --tags "e3t,spread,N${N}" \
+  #   --tags "sp,mappo,spread,N${N}" \
   #   --extra "${TS_EXTRA}" \
   #   --extra "${MINIBATCH_EXTRA}" \
   #   --extra "${MLP_ENCODER_EXTRA}" \
-  #   --extra "++USE_PREDICTION=False" \
+  #   --extra "${ENT_START_EXTRA}" \
+  #   --extra "${ENT_END_EXTRA}" \
+  #   --extra "${ENT_ANNEAL_EXTRA}" \
+  #   --extra "${DIST_SHAPING_EXTRA}" \
+  #   --extra "${EARLY_TERM_EXTRA}" \
+  #   --extra "${EVAL_CKPT_DIR_EXTRA}" \
+  #   --extra "${EVAL_NUM_CKPT_EXTRA}" \
+  #   --extra "++MAPPO_MODE=true" \
+  #   --extra "${NAGENTS_EXTRA}${N}"
+
+  # echo "[SP-IPPO] N=${N}"
+  # ./run_user_wandb.sh \
+  #   --exp rnn-sp-cole \
+  #   --env "${ENV}" \
+  #   --gpus "${GPUS}" \
+  #   --env-device "${ENV_DEVICE}" \
+  #   --nenvs "${NENVS}" \
+  #   --nsteps "${NSTEPS}" \
+  #   --tags "sp,ippo,spread,N${N}" \
+  #   --extra "${TS_EXTRA}" \
+  #   --extra "${MINIBATCH_EXTRA}" \
+  #   --extra "${MLP_ENCODER_EXTRA}" \
   #   --extra "${ENT_START_EXTRA}" \
   #   --extra "${ENT_END_EXTRA}" \
   #   --extra "${ENT_ANNEAL_EXTRA}" \
@@ -169,29 +139,97 @@ for N in "${AGENT_COUNTS[@]}"; do
   #   --extra "${EVAL_NUM_CKPT_EXTRA}" \
   #   --extra "${NAGENTS_EXTRA}${N}"
 
+  # # ===========================================================================
+  # # 1.5. FCP population 빌드 (SP 완료 직후)
+  # # ===========================================================================
+  # # build_fcp_population "${N}"
+
+  # # ===========================================================================
+  # # 3. FCP — SP population 필요
+  # # ===========================================================================
+  # FCP_DIR_PY: Python cwd=baseline/ 기준 (run_user_wandb.sh --fcp 인자)
+  # FCP_DIR_BASH: bash cwd=sh_scripts/ 기준 ([ -d ] 체크용)
+  FCP_DIR_PY="fcp_populations/gridspread_${N}a_sp"
+  FCP_DIR_BASH="../fcp_populations/gridspread_${N}a_sp"
+  if [ -d "${FCP_DIR_BASH}" ]; then
+    echo "[FCP] N=${N}"
+    ./run_user_wandb.sh \
+      --exp rnn-fcp-cole \
+      --env "${ENV}" \
+      --gpus "${GPUS}" \
+      --env-device "${ENV_DEVICE}" \
+      --nenvs "${NENVS}" \
+      --nsteps "${NSTEPS}" \
+      --fcp "${FCP_DIR_PY}" \
+      --seeds 10 \
+      --tags "fcp,spread,N${N}" \
+      --extra "${TS_EXTRA}" \
+      --extra "${MINIBATCH_EXTRA}" \
+      --extra "${MLP_ENCODER_EXTRA}" \
+      --extra "${ENT_START_EXTRA}" \
+      --extra "${ENT_END_EXTRA}" \
+      --extra "${ENT_ANNEAL_EXTRA}" \
+      --extra "${DIST_SHAPING_EXTRA}" \
+      --extra "${EARLY_TERM_EXTRA}" \
+      --extra "${EVAL_CKPT_DIR_EXTRA}" \
+      --extra "${EVAL_NUM_CKPT_EXTRA}" \
+      --extra "${NAGENTS_EXTRA}${N}"
+  else
+    echo "[FCP] SKIP N=${N} — population 없음: ${FCP_DIR_BASH}"
+  fi
+
+  # # ===========================================================================
+  # # 2. E3T — 기존 rnn-e3t + epsilon 0.2 + prediction OFF + 100M
+  # # ===========================================================================
+  echo "[E3T] N=${N}"
+  ./run_user_wandb.sh \
+    --exp rnn-e3t \
+    --env "${ENV}" \
+    --gpus "${GPUS}" \
+    --env-device "${ENV_DEVICE}" \
+    --nenvs "${NENVS}" \
+    --nsteps "${NSTEPS}" \
+    --e3t-epsilon 0.1 \
+    --tags "e3t,spread,N${N}" \
+    --extra "${TS_EXTRA}" \
+    --extra "${MINIBATCH_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "++USE_PREDICTION=False" \
+    --extra "${ENT_START_EXTRA}" \
+    --extra "${ENT_END_EXTRA}" \
+    --extra "${ENT_ANNEAL_EXTRA}" \
+    --extra "${DIST_SHAPING_EXTRA}" \
+    --extra "${EARLY_TERM_EXTRA}" \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_EXTRA}" \
+    --extra "${NAGENTS_EXTRA}${N}"
+
 
   # # ===========================================================================
   # # 4. MEP — 기존 rnn-mep + S2 100M
   # # ===========================================================================
-  # echo "[MEP] N=${N}"
-  # ./run_user_wandb.sh \
-  #   --exp rnn-mep \
-  #   --env "${ENV}" \
-  #   --gpus "${GPUS}" \
-  #   --nenvs "${NENVS}" \
-  #   --nsteps "${NSTEPS}" \
-  #   --seeds 1 \
-  #   --tags "mep,spread,N${N}" \
-  #   --extra "++model.TOTAL_TIMESTEPS=5e7" \
-  #   --extra "${S2_TS_EXTRA}" \
-  #   --extra "${MINIBATCH_EXTRA}" \
-  #   --extra "${MLP_ENCODER_EXTRA}" \
-  #   --extra "${ENT_START_EXTRA}" \
-  #   --extra "${ENT_END_EXTRA}" \
-  #   --extra "${ENT_ANNEAL_EXTRA}" \
-  #   --extra "${DIST_SHAPING_EXTRA}" \
-  #   --extra "${EARLY_TERM_EXTRA}" \
-  #   --extra "${NAGENTS_EXTRA}${N}"
+  echo "[MEP] N=${N}"
+  ./run_user_wandb.sh \
+    --exp rnn-mep \
+    --env "${ENV}" \
+    --gpus "${GPUS}" \
+    --nenvs "${NENVS}" \
+    --nsteps "${NSTEPS}" \
+    --seeds 1 \
+    --tags "mep,spread,N${N}" \
+    --extra "++model.TOTAL_TIMESTEPS=5e7" \
+    --extra "${S2_TS_EXTRA}" \
+    --extra "${MINIBATCH_EXTRA}" \
+    --extra "${MLP_ENCODER_EXTRA}" \
+    --extra "${ENT_START_EXTRA}" \
+    --extra "${ENT_END_EXTRA}" \
+    --extra "${ENT_ANNEAL_EXTRA}" \
+    --extra "${DIST_SHAPING_EXTRA}" \
+    --extra "${EARLY_TERM_EXTRA}" \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_EXTRA}" \
+    --extra "${NAGENTS_EXTRA}${N}"
+
 
 done
 

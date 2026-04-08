@@ -59,6 +59,15 @@ class PPOPolicy(AbstractPolicy):
         use_pred_flag = (alg_name == "E3T") and use_prediction and (model_type == "RNN")
         actor_only_flag = alg_name in ("MEP_S1", "MEP_S2", "GAMMA_S1", "GAMMA_S2", "HSP_S1", "HSP_S2",
                                        "MEP", "GAMMA", "HSP")
+        # MAPPO_MODE 로 학습된 ckpt 는 critic 이 centralized 라 critic_global_* 만 존재하고
+        # 기존 IPPO critic Dense 파라미터(Dense_2/Dense_3)가 없음 → 일반 critic 호출 시 ScopeParamNotFoundError.
+        # Eval 경로는 value 가 필요 없으므로 actor_only=True 로 우회.
+        try:
+            _params_root = params["params"] if "params" in params else params
+            if any(str(k).startswith("critic_global") for k in _params_root.keys()):
+                actor_only_flag = True
+        except Exception:
+            pass
 
         if use_pred_flag:
             outputs = self.network.apply(

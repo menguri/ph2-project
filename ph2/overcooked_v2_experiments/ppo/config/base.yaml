@@ -7,6 +7,8 @@ SEED: 42
 NUM_SEEDS: 10
 TUNE: False
 NUM_CHECKPOINTS: 3
+# Eval ckpt 기본값: 1M env step cadence 로 eval/run_X/ 에 저장. baseline 과 동일.
+PH1_EVAL_EVERY_ENV_STEPS: 1000000
 VISUALIZE: False
 OLD_OVERCOOKED: False
 DISABLE_OLD_OVERCOOKED_AUTO: False

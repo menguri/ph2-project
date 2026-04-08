@@ -11,6 +11,7 @@ NUM_SEEDS=10
 SEED=1
 ALL_CKPT=false
 CROSS=false
+PER_CKPT_CROSS=false
 ALL=false
 NO_VIZ=false
 NO_RESET=false
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --seed)           SEED="$2";             shift 2 ;;
         --all_ckpt)       ALL_CKPT=true;         shift ;;
         --cross)          CROSS=true;            shift ;;
+        --per_ckpt_cross) PER_CKPT_CROSS=true;   shift ;;
         --all)            ALL=true;              shift ;;
         --no_viz)         NO_VIZ=true;           shift ;;
         --no_reset)       NO_RESET=true;         shift ;;
@@ -94,6 +96,7 @@ ARGS=( --d "$DIRECTORY" --seed "$SEED" --num_seeds "$NUM_SEEDS" )
 
 [ "$ALL_CKPT" = true ] && ARGS+=( --all_ckpt )
 [ "$CROSS" = true ] && ARGS+=( --cross )
+[ "$PER_CKPT_CROSS" = true ] && ARGS+=( --per_ckpt_cross )
 [ "$ALL" = true ] && ARGS+=( --all )
 [ "$NO_VIZ" = true ] && ARGS+=( --no_viz )
 [ "$NO_RESET" = true ] && ARGS+=( --no_reset )
