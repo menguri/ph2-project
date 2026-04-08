@@ -85,6 +85,12 @@ class ActorCriticRNN(ActorCriticBase):
 
         obs, dones = x
 
+        # NORMALIZE_OBS_DIVISOR: GridSpread 등 bounded coord obs를 [0,1] 근처로 normalize.
+        # ref MAPPO 의 use_feature_normalization 대체 (running stats 대신 환경 known bound 사용).
+        _norm_div = self.config.get("NORMALIZE_OBS_DIVISOR", 0.0)
+        if _norm_div and _norm_div > 0:
+            obs = obs.astype(jnp.float32) / jnp.float32(_norm_div)
+
         act_name = self.config.get("ACTIVATION", "relu")
         if act_name == "leaky_relu":
             activation = nn.leaky_relu
@@ -123,8 +129,10 @@ class ActorCriticRNN(ActorCriticBase):
         embedding = jax.vmap(embed_model)(obs)
         embedding = nn.LayerNorm()(embedding)
 
-        rnn_in = (embedding, dones)
-        rnn_state, embedding = ScannedRNN()(rnn_state, rnn_in)
+        # USE_RNN=False (예: GridSpread) → GRU 우회. fully-observable 환경에서 MLP-only 학습.
+        if self.config.get("USE_RNN", True):
+            rnn_in = (embedding, dones)
+            rnn_state, embedding = ScannedRNN()(rnn_state, rnn_in)
 
         # encode_only: GRU embedding만 반환 (GAMMA VAE obs_feat용)
         if encode_only:
@@ -186,15 +194,23 @@ class ActorCriticRNN(ActorCriticBase):
             # embedding leading dims 에 맞춰 reshape (마지막 축은 1 → squeeze 후 매칭)
             critic = critic.reshape(embedding.shape[:-1] + (1,))
         else:
+            # SPLIT_OPTIMIZER (GS 전용) 에서만 critic Dense 에 명시적 name 부여 →
+            # multi_transform label_fn 이 path 에서 "critic" 검출 가능.
+            # 다른 환경은 기존 자동명 (Dense_X) 유지 → 기존 ckpt 호환 보존.
+            _split_opt = bool(self.config.get("SPLIT_OPTIMIZER", False))
             critic = nn.Dense(
                 self.config["FC_DIM_SIZE"],
                 kernel_init=orthogonal(jnp.sqrt(2)),
                 bias_init=constant(0.0),
+                name=("critic_dense" if _split_opt else None),
             )(embedding)
             critic = activation(critic)
-            critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
-                critic
-            )
+            critic = nn.Dense(
+                1,
+                kernel_init=orthogonal(1.0),
+                bias_init=constant(0.0),
+                name=("critic_out" if _split_opt else None),
+            )(critic)
 
         return rnn_state, pi, jnp.squeeze(critic, axis=-1), pred_logits
 

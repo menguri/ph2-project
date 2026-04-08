@@ -55,9 +55,10 @@ def visualize_ppo_policy(
     eval_reward="sparse",
     old_overcooked_override=None,
     disable_old_overcooked_auto_override=None,
+    ckpt_filter=None,
 ):
-    # cross-play인데 모든 ckpt를 쓰려고 하면 모순 → 방어 코드
-    if cross and not final_only:
+    # cross-play인데 모든 ckpt를 쓰려고 하면 모순 → 방어 코드 (ckpt_filter 지정 시 허용)
+    if cross and not final_only and ckpt_filter is None:
         raise ValueError("Cannot run cross play with all checkpoints")
 
     if value_analysis and cross:
@@ -68,6 +69,7 @@ def visualize_ppo_policy(
         run_base_dir,
         final_only=final_only,
         policy_source=policy_source,
+        ckpt_filter=ckpt_filter,
     )
 
     # 2) 환경 생성
@@ -95,6 +97,9 @@ def visualize_ppo_policy(
     else:
         _env_name = "overcooked_v2"
     _env_name_override = _env_name if (_env_name in ("ToyCoop", "GridSpread") or _env_name.startswith("MPE_")) else None
+    # GridSpread eval은 항상 all_covered 즉시 종료. config 누락된 ckpt 대비 강제 주입.
+    if _env_name_override == "GridSpread":
+        env_kwargs_no_layout["early_terminate"] = True
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,
@@ -223,9 +228,10 @@ def visualize_ppo_policy(
 
         print("Run combinations: ", run_combinations)
 
-        # 각 run의 ckpt_final만 모아놓기
+        # 각 run의 지정된 ckpt(기본 ckpt_final)만 모아놓기
+        _ckpt_key = ckpt_filter if ckpt_filter is not None else "ckpt_final"
         policy_pairings = [
-            all_params[run_keys[i]]["ckpt_final"] for i in range(num_runs)
+            all_params[run_keys[i]][_ckpt_key] for i in range(num_runs)
         ]
 
         cross_combinations = {}
@@ -557,8 +563,9 @@ def visualize_ppo_policy(
         for i in range(num_actors):
             fieldnames.append(f"pred_acc_agent_{i}")
 
+        _suffix = f"__{ckpt_filter}" if ckpt_filter is not None else ""
         # sparse CSV (항상 저장)
-        summery_name = f"reward_summary_cross.csv" if cross else f"reward_summary_sp.csv"
+        summery_name = f"reward_summary_cross{_suffix}.csv" if cross else f"reward_summary_sp{_suffix}.csv"
         summery_file = run_base_dir / summery_name
         with open(summery_file, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
@@ -569,7 +576,7 @@ def visualize_ppo_policy(
 
         # combined CSV (GridSpread 등 combined_reward가 있을 때만)
         if has_combined:
-            summery_name_c = f"reward_summary_cross_combined.csv" if cross else f"reward_summary_sp_combined.csv"
+            summery_name_c = f"reward_summary_cross_combined{_suffix}.csv" if cross else f"reward_summary_sp_combined{_suffix}.csv"
             summery_file_c = run_base_dir / summery_name_c
             with open(summery_file_c, "w", newline="") as csvfile:
                 writer = csv.writer(csvfile)
@@ -691,6 +698,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_seeds", type=int)
     parser.add_argument("--all_ckpt", action="store_true")
     parser.add_argument("--cross", action="store_true")
+    parser.add_argument("--per_ckpt_cross", action="store_true",
+                        help="Run cross-play once per ckpt index found under eval/ subdir.")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--no_viz", action="store_true")
     parser.add_argument("--no_reset", action="store_true")
@@ -750,6 +759,51 @@ if __name__ == "__main__":
         extra_env_kwargs["op_ingredient_permutations"] = False
     if args.max_steps is not None:
         extra_env_kwargs["max_steps"] = int(args.max_steps)
+
+    if args.per_ckpt_cross:
+        # eval/ 또는 top-level run_*/ 안에서 ckpt 이름들을 모아 각 ckpt 마다 cross-play 실행
+        run_root = Path(directory)
+        eval_sub = run_root / "eval"
+        if eval_sub.is_dir() and any(p.is_dir() and "run_" in p.name for p in eval_sub.iterdir()):
+            scan_root = eval_sub
+        else:
+            scan_root = run_root
+        ckpt_names = set()
+        for run_dir_p in scan_root.iterdir():
+            if not run_dir_p.is_dir() or "run_" not in run_dir_p.name:
+                continue
+            for c in run_dir_p.iterdir():
+                if c.is_dir() and c.name.startswith("ckpt_"):
+                    ckpt_names.add(c.name)
+        def _ckpt_sort_key(name):
+            tail = name.split("_", 1)[1]
+            try:
+                return (0, int(tail))
+            except ValueError:
+                return (1, tail)
+        sorted_ckpts = sorted(ckpt_names, key=_ckpt_sort_key)
+        print(f"[per_ckpt_cross] Found {len(sorted_ckpts)} ckpts: {sorted_ckpts}")
+        for ckpt_name in sorted_ckpts:
+            print(f"\n========== per_ckpt_cross: {ckpt_name} ==========")
+            visualize_ppo_policy(
+                run_root,
+                key_cross,
+                num_seeds=num_seeds,
+                final_only=False,
+                cross=True,
+                cross_mode=args.cross_mode,
+                eval_reward=args.eval_reward,
+                no_viz=args.no_viz,
+                extra_env_kwargs=extra_env_kwargs,
+                pairing_policy=args.pairing_policy,
+                latent_analysis=args.latent_analysis,
+                value_analysis=args.value_analysis,
+                policy_source=policy_source,
+                old_overcooked_override=args.old_overcooked,
+                disable_old_overcooked_auto_override=args.disable_old_overcooked_auto,
+                ckpt_filter=ckpt_name,
+            )
+        sys.exit(0)
 
     for mode in modes:
         fo = final_only or (mode == "cross")

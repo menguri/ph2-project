@@ -522,10 +522,13 @@ if __name__ == "__main__":
     if args.per_ckpt_cross:
         # 첫 번째 run_X dir 에서 ckpt 이름 목록 추출
         run_root = Path(directory)
-        # SAVE_TO_EVAL_DIR=true 대응: top-level 에 run_* 없으면 eval/ 사용
+        # per_ckpt_cross 는 모든 ckpt 순회가 목적이므로 eval/ 가 있으면 무조건 그쪽을 scan.
+        # top-level run_*/ 에는 보통 ckpt_final 하나만 복사돼 있어서 거기를 scan 하면 ckpt_final 만 잡힘.
         eval_sub = run_root / "eval"
-        top_has_runs = any(p.is_dir() and "run_" in p.name for p in run_root.iterdir())
-        scan_root = eval_sub if (not top_has_runs and eval_sub.is_dir()) else run_root
+        if eval_sub.is_dir() and any(p.is_dir() and "run_" in p.name for p in eval_sub.iterdir()):
+            scan_root = eval_sub
+        else:
+            scan_root = run_root
         first_run_dir = sorted(
             [p for p in scan_root.iterdir() if p.is_dir() and "run_" in p.name]
         )[0]

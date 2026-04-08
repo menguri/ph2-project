@@ -129,10 +129,15 @@ def load_all_checkpoints(run_dir, final_only=True, skip_initial=False, ckpt_filt
     top_has_runs = any(
         p.is_dir() and "run_" in p.name for p in run_dir.iterdir()
     )
-    if not top_has_runs and eval_subdir.is_dir():
+    eval_has_runs = eval_subdir.is_dir() and any(
+        p.is_dir() and "run_" in p.name for p in eval_subdir.iterdir()
+    )
+    # ckpt_filter 가 주어지고 final 이 아니면 (= 중간 ckpt 요청) → eval/ 우선 (top 에는 보통 ckpt_final 만 있음).
+    _need_intermediate = ckpt_filter is not None and "final" not in ckpt_filter
+    if (_need_intermediate or not top_has_runs) and eval_has_runs:
         scan_root = eval_subdir
         use_eval_dir = True
-        print(f"[DEBUG] Top-level has no run_* dirs — scanning eval/ subdir: {eval_subdir}")
+        print(f"[DEBUG] Scanning eval/ subdir: {eval_subdir}")
     else:
         scan_root = run_dir
         use_eval_dir = False

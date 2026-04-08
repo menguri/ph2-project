@@ -32,33 +32,8 @@ AUTO_PH2_CROSS_NUM_SEEDS=5
 # Optional manual fallback commands (used only when AUTO_DISCOVER_PRESETS=false).
 PRESET_FACTORY_COMMANDS=(
   # GridSpread PH2 level-one cross-play — combined (step_cost 미포함)
-  "./run_visualize.sh --gpu 0 --dir runs/20260405-232618_19txnntb_GridSpread_e3t_ph2_e0p2_o10_s4_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  "./run_visualize.sh --gpu 1 --dir runs/20260405-233047_7zcw24pt_GridSpread_e3t_ph2_e0p2_o100_s9_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  "./run_visualize.sh --gpu 0 --dir runs/20260406-023152_lbs4bmxc_GridSpread_e3t_ph2_e0p2_o10_s5_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  "./run_visualize.sh --gpu 1 --dir runs/20260406-023903_qctf1fu9_GridSpread_e3t_ph2_e0p2_o100_s10_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 2 --dir runs/20260404-023150_26ovxiad_GridSpread_e3t_ph2_e0p2_o10_s4_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 3 --dir runs/20260404-053923_zrkhhd7a_GridSpread_e3t_ph2_e0p2_o10_s5_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 1 --dir runs/20260404-084359_51axl95r_GridSpread_e3t_ph2_e0p2_o10_s6_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 2 --dir runs/20260404-115011_abqyh3uz_GridSpread_e3t_ph2_e0p2_o5_s1_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 6 --dir runs/20260404-145608_2js6sroa_GridSpread_e3t_ph2_e0p2_o5_s2_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 7 --dir runs/20260404-180247_h96q7qgh_GridSpread_e3t_ph2_e0p2_o5_s3_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 0 --dir runs/20260404-210822_jmhaqxog_GridSpread_e3t_ph2_e0p2_o5_s4_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 3 --dir runs/20260405-001518_xv9gr73e_GridSpread_e3t_ph2_e0p2_o5_s5_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 2 --dir runs/20260405-032028_polhduhi_GridSpread_e3t_ph2_e0p2_o5_s6_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
-  # combined (shaped 포함)
-  # "./run_visualize.sh --gpu 3 --dir runs/20260403-075943_rzg31683_GridSpread_e3t_ph2_e0p2_o10_s2_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 4 --dir runs/20260403-171522_hgtagaea_GridSpread_e3t_ph2_e0p2_o10_s1_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 5 --dir runs/20260403-201927_ery9ligb_GridSpread_e3t_ph2_e0p2_o10_s2_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 6 --dir runs/20260403-232544_1utp0ev4_GridSpread_e3t_ph2_e0p2_o10_s3_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 7 --dir runs/20260404-023150_26ovxiad_GridSpread_e3t_ph2_e0p2_o10_s4_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 0 --dir runs/20260404-053923_zrkhhd7a_GridSpread_e3t_ph2_e0p2_o10_s5_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 1 --dir runs/20260404-084359_51axl95r_GridSpread_e3t_ph2_e0p2_o10_s6_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 2 --dir runs/20260404-115011_abqyh3uz_GridSpread_e3t_ph2_e0p2_o5_s1_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 3 --dir runs/20260404-145608_2js6sroa_GridSpread_e3t_ph2_e0p2_o5_s2_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 4 --dir runs/20260404-180247_h96q7qgh_GridSpread_e3t_ph2_e0p2_o5_s3_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 5 --dir runs/20260404-210822_jmhaqxog_GridSpread_e3t_ph2_e0p2_o5_s4_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 6 --dir runs/20260405-001518_xv9gr73e_GridSpread_e3t_ph2_e0p2_o5_s5_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
-  # "./run_visualize.sh --gpu 7 --dir runs/20260405-032028_polhduhi_GridSpread_e3t_ph2_e0p2_o5_s6_k1_ct0 --cross --cross_mode level_one --eval_reward combined --num_seeds 5 --no_viz --max_steps 100"
+  "./run_visualize.sh --gpu 4 --dir runs/20260408-084208_z242q0c0_GridSpread_e3t_ph2_e0p2_o10_s2_k1_ct0 --cross --num_seeds 5 --no_viz --max_steps 100"
+  # "./run_visualize.sh --gpu 5 --dir runs/20260408-045726_h1dnj6yz_GridSpread_e3t_ph2_e0p2_o5_s7_k1_ct0 --cross --num_seeds 5 --no_viz --max_steps 100"
 )
 
 usage() {

@@ -9,14 +9,12 @@ cd "$(dirname "$0")" || exit 1
 
 EXP="rnn-ph2"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
-GPUS="${GPUS:-2,3,6,7}"
-NENVS="${NENVS:-128}"
-NSTEPS="${NSTEPS:-512}"
-NUM_SEEDS="${NUM_SEEDS:-12}"
+GPUS="${GPUS:-2,3,4,5,6}"
+NUM_SEEDS="${NUM_SEEDS:-10}"
 FIXED_SEED="${FIXED_SEED:-42}"
-TOTAL_TS="${TOTAL_TS:-2e7}"     # 100M
+TOTAL_TS="${TOTAL_TS:-2e7}"     # 10M
 
-# PH1/PH2 파라미터 (기본값)
+# PH1/PH2 파라미터 (기본값)W
 : "${PH1_BETA:=1.0}"
 : "${PH1_BETA_SCHEDULE_ENABLED:=True}"
 : "${PH1_BETA_START:=0.0}"
@@ -57,8 +55,6 @@ run_ph2_spread() {
     --env "$env" \
     --exp "$EXP" \
     --env-device "$ENV_DEVICE" \
-    --nenvs "$NENVS" \
-    --nsteps "$NSTEPS" \
     --tags "$tags" \
     --ph1-beta $PH1_BETA \
     --ph1-beta-schedule-enabled $PH1_BETA_SCHEDULE_ENABLED \
@@ -81,11 +77,6 @@ run_ph2_spread() {
     --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
     --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
     --extra "++model.OBS_ENCODER=MLP" \
-    --extra "++model.ENT_COEF_START=0.1" \
-    --extra "++model.ENT_COEF_END=0.005" \
-    --extra "++model.ENT_COEF_ANNEAL_STEPS=1e7" \
-    --extra "++env.ENV_KWARGS.dist_shaping_coef=0.0" \
-    --extra "++env.ENV_KWARGS.early_terminate=true" \
     --extra "++env.ENV_KWARGS.n_agents=${n_agents}"
 }
 
@@ -103,9 +94,9 @@ run_ph2_spread() {
 # ===========================================================================
 # 스윕: PH1_MAX_PENALTY_COUNT × PH1_OMEGA × PH1_SIGMA
 # ===========================================================================
-PENALTY_COUNTS=(1)
-OMEGAS=(5.0) # 5.0 1.0)
-SIGMAS=(2.0 3.0 7.0) # 3.0 4.0 5.0 6.0 7.0 10.0)
+PENALTY_COUNTS=(1 2 3)
+OMEGAS=(10.0 5.0) # 5.0 1.0)
+SIGMAS=(2.0 3.0 7.0 10.0) # 3.0 4.0 5.0 6.0 7.0 10.0)
 
 for N in "${AGENT_COUNTS[@]}"; do
   ENV="gridspread"
@@ -122,8 +113,6 @@ for N in "${AGENT_COUNTS[@]}"; do
           --env "$ENV" \
           --exp "$EXP" \
           --env-device "$ENV_DEVICE" \
-          --nenvs "$NENVS" \
-          --nsteps "$NSTEPS" \
           --tags "ph2,spread,N${N},k${K},o${O},s${S}" \
           --ph1-beta $PH1_BETA \
           --ph1-beta-schedule-enabled $PH1_BETA_SCHEDULE_ENABLED \
@@ -146,11 +135,6 @@ for N in "${AGENT_COUNTS[@]}"; do
           --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
           --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
           --extra "++model.OBS_ENCODER=MLP" \
-          --extra "++model.ENT_COEF_START=0.1" \
-          --extra "++model.ENT_COEF_END=0.005" \
-          --extra "++model.ENT_COEF_ANNEAL_STEPS=1e7" \
-          --extra "++env.ENV_KWARGS.dist_shaping_coef=0.0" \
-          --extra "++env.ENV_KWARGS.early_terminate=true" \
           --extra "++env.ENV_KWARGS.n_agents=${N}"
       done
     done

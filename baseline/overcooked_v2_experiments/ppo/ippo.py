@@ -29,6 +29,9 @@ from overcooked_v2_experiments.ppo.models.abstract import ActorCriticBase
 from .models.model import get_actor_critic, initialize_carry
 from overcooked_v2_experiments.eval.policy import AbstractPolicy
 from flax import core
+from overcooked_v2_experiments.ppo.utils.valuenorm import (
+    ValueNormState, valuenorm_update, valuenorm_normalize, valuenorm_denormalize,
+)
 
 
 class Transition(NamedTuple):
@@ -80,6 +83,12 @@ def make_train(
     # MAPPO_MODE: True 이면 critic 입력을 per-actor global(full) obs 로 전환 (centralized critic).
     # 기본값 False → 기존 IPPO 경로와 완전히 동일. SP 실험에서만 활성화 권장.
     mappo_mode = bool(config.get("MAPPO_MODE", False))
+
+    # ref MAPPO 안정화 트릭들 (GridSpread 한정 자동 활성화 — main.py gs_overrides 참고).
+    _model_cfg_for_flags = config.get("model", {}) if isinstance(config.get("model"), dict) else {}
+    use_valuenorm = bool(_model_cfg_for_flags.get("USE_VALUENORM", False))
+    use_huber_loss = bool(_model_cfg_for_flags.get("USE_HUBER_LOSS", False))
+    huber_delta = float(_model_cfg_for_flags.get("HUBER_DELTA", 10.0))
 
     env_name, env_kwargs = _prepare_env_spec(config, env_config)
 
@@ -361,16 +370,68 @@ def make_train(
                 use_prediction=use_pred_flag,
             )
 
-        if model_config["ANNEAL_LR"]:
-            tx = optax.chain(
-                optax.clip_by_global_norm(model_config["MAX_GRAD_NORM"]),
-                optax.adam(create_learning_rate_fn(), eps=1e-5),
+        # ------------------------------------------------------------------
+        # Optimizer 구성
+        # - LR schedule:
+        #     LR_SCHEDULE="linear" → optax.linear_schedule(LR → 0, total_train_steps)
+        #       (sunwoo onpolicy use_linear_lr_decay=True 매칭, GridSpread 전용)
+        #     ANNEAL_LR=True → 기존 cosine + warmup
+        #     아니면 constant
+        # - SPLIT_OPTIMIZER=True (GridSpread 전용) → actor / critic params 를
+        #     optax.multi_transform 으로 분리, 각각 max_grad_norm clip + adam.
+        #     onpolicy r_mappo.py 의 두 backward+clip+step 패턴과 동일 효과.
+        #     critic 식별: param path 에 "critic" substring 포함 (GS 전용 모델 이름 부여 덕).
+        # ------------------------------------------------------------------
+        _lr_schedule_kind = str(model_config.get("LR_SCHEDULE", "")).lower()
+        if _lr_schedule_kind == "linear":
+            _total_train_steps = (
+                model_config["NUM_UPDATES"]
+                * model_config["UPDATE_EPOCHS"]
+                * model_config["NUM_MINIBATCHES"]
             )
+            _lr_fn = optax.linear_schedule(
+                init_value=model_config["LR"],
+                end_value=0.0,
+                transition_steps=_total_train_steps,
+            )
+        elif model_config["ANNEAL_LR"]:
+            _lr_fn = create_learning_rate_fn()
         else:
-            tx = optax.chain(
+            _lr_fn = model_config["LR"]
+
+        _split_optimizer = bool(model_config.get("SPLIT_OPTIMIZER", False))
+
+        def _make_single_tx(lr_):
+            return optax.chain(
                 optax.clip_by_global_norm(model_config["MAX_GRAD_NORM"]),
-                optax.adam(model_config["LR"], eps=1e-5),
+                optax.adam(lr_, eps=1e-5),
             )
+
+        if _split_optimizer:
+            def _label_params(params):
+                # Walk pytree, label each leaf path. "critic" in any key → "critic", else "actor".
+                from flax.core import FrozenDict
+                def _walk(node, path):
+                    if isinstance(node, (dict, FrozenDict)):
+                        return {k: _walk(v, path + (str(k),)) for k, v in node.items()}
+                    is_critic = any("critic" in p.lower() for p in path)
+                    return "critic" if is_critic else "actor"
+                return _walk(params, ())
+
+            tx = optax.multi_transform(
+                {
+                    "actor": _make_single_tx(_lr_fn),
+                    "critic": _make_single_tx(_lr_fn),
+                },
+                param_labels=_label_params,
+            )
+            # 디버그: 라벨 분포 출력
+            _labels_tree = _label_params(network_params)
+            _flat_labels = jax.tree_util.tree_leaves(_labels_tree)
+            from collections import Counter as _Counter
+            print(f"[SPLIT-OPT] param label dist = {_Counter(_flat_labels)}")
+        else:
+            tx = _make_single_tx(_lr_fn)
 
         train_state = TrainState.create(
             apply_fn=network.apply,
@@ -443,6 +504,7 @@ def make_train(
                 initial_fcp_pop_agent_idxs,
                 last_action,
                 is_ego,
+                vn_state,
                 rng,
             ) = runner_state
 
@@ -914,7 +976,18 @@ def make_train(
                 )
                 return advantages, advantages + traj_batch.value
 
-            advantages, targets = _calculate_gae(traj_batch, last_val)
+            # ValueNorm: 네트워크 출력은 normalized space → GAE 계산 전에 denormalize.
+            if use_valuenorm:
+                _denorm_traj = traj_batch._replace(
+                    value=valuenorm_denormalize(vn_state, traj_batch.value)
+                )
+                _denorm_last_val = valuenorm_denormalize(vn_state, last_val)
+                advantages, targets = _calculate_gae(_denorm_traj, _denorm_last_val)
+                # targets (real-scale returns) 로 vn_state 업데이트, 그 후 loss 용으로 normalize.
+                vn_state = valuenorm_update(vn_state, targets)
+                targets = valuenorm_normalize(vn_state, targets)
+            else:
+                advantages, targets = _calculate_gae(traj_batch, last_val)
 
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):
@@ -1043,14 +1116,29 @@ def make_train(
                         #     return jnp.sqrt(variance + eps)
 
                         # CALCULATE VALUE LOSS
+                        # ValueNorm 활성 시 value/targets 는 normalized space.
+                        # USE_HUBER_LOSS 시 MSE 대신 Huber (delta=huber_delta).
                         value_pred_clipped = traj_batch.value + (
                             value - traj_batch.value
                         ).clip(-model_config["CLIP_EPS"], model_config["CLIP_EPS"])
-                        value_losses = jnp.square(value - targets)
-                        value_losses_clipped = jnp.square(value_pred_clipped - targets)
-                        value_loss = 0.5 * jnp.maximum(
-                            value_losses, value_losses_clipped
-                        ).mean(where=train_mask)
+                        if use_huber_loss:
+                            def _huber_fn(x):
+                                return jnp.where(
+                                    jnp.abs(x) <= huber_delta,
+                                    0.5 * x ** 2,
+                                    huber_delta * (jnp.abs(x) - 0.5 * huber_delta),
+                                )
+                            value_losses = _huber_fn(value - targets)
+                            value_losses_clipped = _huber_fn(value_pred_clipped - targets)
+                            value_loss = jnp.maximum(
+                                value_losses, value_losses_clipped
+                            ).mean(where=train_mask)
+                        else:
+                            value_losses = jnp.square(value - targets)
+                            value_losses_clipped = jnp.square(value_pred_clipped - targets)
+                            value_loss = 0.5 * jnp.maximum(
+                                value_losses, value_losses_clipped
+                            ).mean(where=train_mask)
                         # value_loss = safe_mean(value_loss, train_mask)
 
                         # CALCULATE ACTOR LOSS
@@ -1313,6 +1401,7 @@ def make_train(
                 next_fcp_pop_agent_idxs,
                 next_last_action,
                 next_is_ego,
+                vn_state,
                 rng,
             )
             return runner_state, metric
@@ -1370,6 +1459,7 @@ def make_train(
             init_fcp_pop_idxs,
             initial_last_action,
             initial_is_ego,
+            ValueNormState.create(),
             _rng,
         )
         num_update_steps = model_config["NUM_UPDATES"]

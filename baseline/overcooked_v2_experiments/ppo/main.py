@@ -37,12 +37,57 @@ import os as _os
 jax.config.update("jax_debug_nans", _os.environ.get("JAX_DEBUG_NANS", "1") != "0")
 
 
+# ----------------------------------------------------------------------
+# GridSpread 전용 학습 파라미터 일괄 override
+# ref (https://wandb 외부 IPPO baseline) 와 동일하게 맞춰서 sh 의 --extra 없이도
+# 모든 알고리즘 (SP/E3T/FCP/MEP 등) 이 동일한 sparse-cooperative 하이퍼로 돌게 한다.
+# ENV_NAME != GridSpread 면 no-op → 다른 환경 (Overcooked/MPE/ToyCoop) 영향 없음.
+# ----------------------------------------------------------------------
+def _apply_gridspread_overrides(config):
+    env_section = config.get("env") or {}
+    if env_section.get("ENV_NAME") != "GridSpread":
+        return
+    model = config.setdefault("model", {})
+    gs_overrides = {
+        "NUM_ENVS": 64,
+        "NUM_STEPS": 100,
+        "NUM_MINIBATCHES": 4,
+        "UPDATE_EPOCHS": 10,
+        "LR": 1e-4,
+        "ANNEAL_LR": True,
+        "LR_SCHEDULE": "linear",       # ref onpolicy use_linear_lr_decay=True 매칭 (LR → 0 선형 감쇠)
+        "SPLIT_OPTIMIZER": False,      # (일시 OFF) ref onpolicy 처럼 actor/critic 분리 — 검증용으로 잠시 끔
+        "ENT_COEF": 0.03,
+        "VF_COEF": 1.0,
+        "MAX_GRAD_NORM": 1.0,
+        # ref 는 MLP-only (RNN 없음). fully-observable GridSpread 에 GRU 는 불필요 + 학습 느림.
+        "USE_RNN": False,
+        "OBS_ENCODER": "MLP",
+        "FC_DIM_SIZE": 64,
+        "GRU_HIDDEN_DIM": 64,
+        # ref MAPPO 표준 안정화 트릭들 (sunwoo wandb config 확인 결과):
+        "USE_VALUENORM": True,         # value target running mean/std normalization
+        "USE_HUBER_LOSS": True,        # value loss Huber (MSE+clip 대신)
+        "HUBER_DELTA": 1.0,
+        "NORMALIZE_OBS_DIVISOR": 6.0,  # = 2*radius (radius=3) → coord ∈ [0,1]
+        "TOTAL_TIMESTEPS": 1e8,        # ref budget
+    }
+    for k, v in gs_overrides.items():
+        model[k] = v
+    # ref 는 entropy anneal 안 씀 → 혹시 set 돼 있으면 무력화
+    for k in ("ENT_COEF_START", "ENT_COEF_END", "ENT_COEF_ANNEAL_STEPS"):
+        if k in model:
+            model.pop(k)
+    print(f"[GS-OVERRIDE] GridSpread 감지 — model 파라미터 ref 기준으로 강제 override: {gs_overrides}")
+
+
 def single_run_with_viz(config):
     # Hydra Config -> 일반 dict
     print("[RUNDBG] ===== single_run_with_viz CALLED =====")
     print(f"[RUNDBG] raw config type = {type(config)}")
     config = OmegaConf.to_container(config)
     print("[RUNDBG] OmegaConf.to_container 완료")
+    _apply_gridspread_overrides(config)
     print(f"[RUNDBG] top-level config keys = {list(config.keys())}")
 
     num_checkpoints = config.get("NUM_CHECKPOINTS", 0)

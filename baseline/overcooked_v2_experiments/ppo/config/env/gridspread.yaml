@@ -3,8 +3,7 @@
 "ENV_NAME": "GridSpread"
 "ENV_KWARGS":
   "n_agents": 4
-  "radius": 2
-  "max_steps": 150
-  "step_cost": 0.1
-  "dist_shaping_coef": 0.0   # === DIST_SHAPING_EXPERIMENT === (0이면 off)
-  "early_terminate": false   # true면 all_covered 달성 즉시 episode 종료
+  "radius": 2                # ref 기준 (격자 7x7)
+  "max_steps": 100           # ref 기준
+  "step_cost": 0.1           # ref 기준
+  "early_terminate": true    # ref 기준 — all_covered 즉시 종료

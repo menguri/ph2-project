@@ -198,6 +198,12 @@ class ActorCriticRNN(ActorCriticBase):
 
         obs, dones = x
 
+        # NORMALIZE_OBS_DIVISOR: GridSpread bounded coord obs를 [0,1] 근처로 normalize.
+        # ref MAPPO 의 use_feature_normalization 대체.
+        _norm_div = self.config.get("NORMALIZE_OBS_DIVISOR", 0.0)
+        if _norm_div and _norm_div > 0:
+            obs = obs.astype(jnp.float32) / jnp.float32(_norm_div)
+
         embedding = obs
 
         if self.config["ACTIVATION"] == "relu":
@@ -397,8 +403,10 @@ class ActorCriticRNN(ActorCriticBase):
                     blocked_emb = self.encode_blocked(blocked_single)
                     embedding = jnp.concatenate([embedding, blocked_emb], axis=-1)
 
-        rnn_in = (embedding, dones)
-        rnn_state, embedding = ScannedRNN()(rnn_state, rnn_in)
+        # USE_RNN=False (예: GridSpread) → GRU 우회. fully-observable 환경에서 MLP-only 학습.
+        if self.config.get("USE_RNN", True):
+            rnn_in = (embedding, dones)
+            rnn_state, embedding = ScannedRNN()(rnn_state, rnn_in)
 
         # Action-prediction: compute pred_logits from GRU output
         # When transformer_action=True, CycleTransformer replaces PartnerPredictor.
@@ -461,15 +469,22 @@ class ActorCriticRNN(ActorCriticBase):
 
         pi = distrax.Categorical(logits=actor_mean)
 
+        # SPLIT_OPTIMIZER (GS 전용) 시 critic Dense 명시 name 부여 → multi_transform label_fn 검출.
+        # 기존 ph2 ckpt 호환 위해 다른 환경은 자동명 (Dense_X) 유지.
+        _split_opt = bool(self.config.get("SPLIT_OPTIMIZER", False))
         critic = nn.Dense(
             self.config["FC_DIM_SIZE"],
             kernel_init=orthogonal(jnp.sqrt(2)),
             bias_init=constant(0.0),
+            name=("critic_dense" if _split_opt else None),
         )(embedding)
         critic = activation(critic)
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
-            critic
-        )
+        critic = nn.Dense(
+            1,
+            kernel_init=orthogonal(1.0),
+            bias_init=constant(0.0),
+            name=("critic_out" if _split_opt else None),
+        )(critic)
 
         # [STA-PH1] Return extras
         extras = {

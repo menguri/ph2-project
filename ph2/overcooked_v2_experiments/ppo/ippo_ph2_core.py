@@ -34,6 +34,9 @@ from overcooked_v2_experiments.ppo.models.abstract import ActorCriticBase
 from .models.model import get_actor_critic, initialize_carry
 from overcooked_v2_experiments.eval.policy import AbstractPolicy
 from flax import core
+from overcooked_v2_experiments.ppo.utils.valuenorm import (
+    ValueNormState, valuenorm_update, valuenorm_normalize, valuenorm_denormalize,
+)
 
 
 class Transition(NamedTuple):
@@ -80,6 +83,10 @@ def make_train(
 ):
     env_config = config["env"]
     model_config = config["model"]
+    # ref MAPPO 안정화 트릭 (GridSpread 한정 자동 활성화 — main.py gs_overrides).
+    use_valuenorm = bool(model_config.get("USE_VALUENORM", False))
+    use_huber_loss = bool(model_config.get("USE_HUBER_LOSS", False))
+    huber_delta = float(model_config.get("HUBER_DELTA", 10.0))
     phase_log_prefix = str(config.get("PHASE_LOG_PREFIX", "")).strip()
     phase_log_fixed_seed = config.get("PHASE_LOG_FIXED_SEED", None)
     verbose_logs = bool(config.get("PH2_CORE_VERBOSE_LOGS", False))
@@ -580,16 +587,62 @@ def make_train(
                         _np["params"][k] = v
                 network_params = freeze(_np)
 
-        if model_config["ANNEAL_LR"]:
-            tx = optax.chain(
-                optax.clip_by_global_norm(model_config["MAX_GRAD_NORM"]),
-                optax.adam(create_learning_rate_fn(), eps=1e-5),
+        # ------------------------------------------------------------------
+        # Optimizer 구성 (GridSpread SPLIT_OPTIMIZER 매칭)
+        #   - LR_SCHEDULE="linear" → linear LR decay (LR → 0)
+        #   - SPLIT_OPTIMIZER=True → actor/critic params 를 multi_transform 으로 분리,
+        #       각각 max_grad_norm clip + adam(eps=1e-5). onpolicy r_mappo 매칭.
+        #   - critic 식별: param path 에 "critic" substring (rnn.py 에서 GS 시 명시 name).
+        # 다른 환경 (Overcooked 등) 은 ANNEAL_LR + cosine 기존 경로 그대로.
+        # ------------------------------------------------------------------
+        _lr_schedule_kind = str(model_config.get("LR_SCHEDULE", "")).lower()
+        if _lr_schedule_kind == "linear":
+            _total_train_steps = (
+                model_config["NUM_UPDATES"]
+                * model_config["UPDATE_EPOCHS"]
+                * model_config["NUM_MINIBATCHES"]
             )
+            _lr_fn = optax.linear_schedule(
+                init_value=model_config["LR"],
+                end_value=0.0,
+                transition_steps=_total_train_steps,
+            )
+        elif model_config["ANNEAL_LR"]:
+            _lr_fn = create_learning_rate_fn()
         else:
-            tx = optax.chain(
+            _lr_fn = model_config["LR"]
+
+        _split_optimizer = bool(model_config.get("SPLIT_OPTIMIZER", False))
+
+        def _make_single_tx(lr_):
+            return optax.chain(
                 optax.clip_by_global_norm(model_config["MAX_GRAD_NORM"]),
-                optax.adam(model_config["LR"], eps=1e-5),
+                optax.adam(lr_, eps=1e-5),
             )
+
+        if _split_optimizer:
+            from flax.core import FrozenDict as _FD
+            def _label_params(params):
+                def _walk(node, path):
+                    if isinstance(node, (dict, _FD)):
+                        return {k: _walk(v, path + (str(k),)) for k, v in node.items()}
+                    is_critic = any("critic" in p.lower() for p in path)
+                    return "critic" if is_critic else "actor"
+                return _walk(params, ())
+
+            tx = optax.multi_transform(
+                {
+                    "actor": _make_single_tx(_lr_fn),
+                    "critic": _make_single_tx(_lr_fn),
+                },
+                param_labels=_label_params,
+            )
+            _labels_tree = _label_params(network_params)
+            _flat_labels = jax.tree_util.tree_leaves(_labels_tree)
+            from collections import Counter as _Counter
+            print(f"[SPLIT-OPT][ph2] param label dist = {_Counter(_flat_labels)}")
+        else:
+            tx = _make_single_tx(_lr_fn)
 
         train_state = TrainState.create(
             apply_fn=network.apply,
@@ -674,6 +727,7 @@ def make_train(
                 ph1_pool_ready,
                 phase2_ind_match_env_state,
                 ph2_spread_ind_ego_mask_state,  # (NUM_ACTORS,) bool — GridSpread spec-ind ego 배정
+                vn_state,
                 rng,
             ) = runner_state
 
@@ -1873,7 +1927,17 @@ def make_train(
                 )
                 return advantages, advantages + traj_batch.value
 
-            advantages, targets = _calculate_gae(traj_batch, last_val)
+            # ValueNorm: 네트워크 출력은 normalized space → GAE 전 denormalize, 후 normalize.
+            if use_valuenorm:
+                _denorm_traj = traj_batch._replace(
+                    value=valuenorm_denormalize(vn_state, traj_batch.value)
+                )
+                _denorm_last_val = valuenorm_denormalize(vn_state, last_val)
+                advantages, targets = _calculate_gae(_denorm_traj, _denorm_last_val)
+                vn_state = valuenorm_update(vn_state, targets)
+                targets = valuenorm_normalize(vn_state, targets)
+            else:
+                advantages, targets = _calculate_gae(traj_batch, last_val)
 
             # UPDATE NETWORK
             def _update_epoch(update_state, unused):
@@ -2210,14 +2274,29 @@ def make_train(
                         #     return jnp.sqrt(variance + eps)
 
                         # CALCULATE VALUE LOSS
+                        # ValueNorm 활성 시 value/targets 는 normalized space.
+                        # USE_HUBER_LOSS 시 MSE 대신 Huber.
                         value_pred_clipped = traj_batch.value + (
                             value - traj_batch.value
                         ).clip(-model_config["CLIP_EPS"], model_config["CLIP_EPS"])
-                        value_losses = jnp.square(value - targets)
-                        value_losses_clipped = jnp.square(value_pred_clipped - targets)
-                        value_loss = 0.5 * jnp.maximum(
-                            value_losses, value_losses_clipped
-                        ).mean(where=train_mask)
+                        if use_huber_loss:
+                            def _huber_fn(x):
+                                return jnp.where(
+                                    jnp.abs(x) <= huber_delta,
+                                    0.5 * x ** 2,
+                                    huber_delta * (jnp.abs(x) - 0.5 * huber_delta),
+                                )
+                            value_losses = _huber_fn(value - targets)
+                            value_losses_clipped = _huber_fn(value_pred_clipped - targets)
+                            value_loss = jnp.maximum(
+                                value_losses, value_losses_clipped
+                            ).mean(where=train_mask)
+                        else:
+                            value_losses = jnp.square(value - targets)
+                            value_losses_clipped = jnp.square(value_pred_clipped - targets)
+                            value_loss = 0.5 * jnp.maximum(
+                                value_losses, value_losses_clipped
+                            ).mean(where=train_mask)
                         # value_loss = safe_mean(value_loss, train_mask)
 
                         # CALCULATE ACTOR LOSS
@@ -2881,6 +2960,7 @@ def make_train(
                 ph1_pool_ready,
                 next_phase2_ind_match_env_state,
                 next_ph2_spread_ind_ego_mask_state,  # (NUM_ACTORS,) bool
+                vn_state,
                 rng,
             )
             return runner_state, metric
@@ -3007,10 +3087,19 @@ def make_train(
                 initial_ph1_pool_ready,
                 initial_phase2_ind_match_env,
                 jnp.zeros((model_config["NUM_ACTORS"],), dtype=jnp.bool_),  # ph2_spread_ind_ego_mask
+                ValueNormState.create(),
                 _rng,
             )
         else:
             runner_state = initial_runner_state
+            # Backward compat: 이전 단계에서 vn_state 없이 저장된 runner_state (24 elements)면
+            # 마지막 _rng 앞에 ValueNormState.create() 삽입 → 새 코드 25 elements 와 일치.
+            if len(runner_state) == 24:
+                _rs_list = list(runner_state)
+                _trailing_rng = _rs_list.pop()
+                _rs_list.append(ValueNormState.create())
+                _rs_list.append(_trailing_rng)
+                runner_state = tuple(_rs_list)
             if population is not None:
                 runner_list = list(runner_state)
                 if runner_list[7] is None:
