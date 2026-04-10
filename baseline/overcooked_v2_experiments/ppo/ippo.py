@@ -123,36 +123,9 @@ def make_train(
         // model_config["NUM_MINIBATCHES"]
     )
 
-    # EVAL_CKPT_EVERY_ENV_STEPS 가 주어지면 env step cadence 로 ckpt 스케줄을 만든다 (ph2 의 PH1_EVAL_EVERY_ENV_STEPS 와 동일 의미).
-    # 주어지지 않으면 기존대로 NUM_CHECKPOINTS 를 linspace 분할.
-    _ckpt_every_env = int(config.get("EVAL_CKPT_EVERY_ENV_STEPS", 0) or 0)
-    if _ckpt_every_env > 0:
-        _steps_per_update = int(model_config["NUM_STEPS"]) * int(model_config["NUM_ENVS"])
-        _total_ts = int(model_config["TOTAL_TIMESTEPS"])
-        _target_env_steps = list(range(0, _total_ts + _ckpt_every_env, _ckpt_every_env))
-        if _target_env_steps[-1] != _total_ts:
-            _target_env_steps.append(_total_ts)
-        _ckpt_update_idxs = sorted({
-            min(model_config["NUM_UPDATES"], (s + _steps_per_update - 1) // _steps_per_update)
-            for s in _target_env_steps
-        })
-        checkpoint_steps = jnp.asarray(_ckpt_update_idxs, dtype=jnp.int32)
-        num_checkpoints = int(checkpoint_steps.shape[0])
-        config["NUM_CHECKPOINTS"] = num_checkpoints  # downstream save 루프가 이 값을 본다
-    else:
-        num_checkpoints = config["NUM_CHECKPOINTS"]
-        checkpoint_steps = jnp.linspace(
-            0,
-            model_config["NUM_UPDATES"],
-            num_checkpoints,
-            endpoint=True,
-            dtype=jnp.int32,
-        )
-        if num_checkpoints > 0:
-            # make sure the last checkpoint is the last update step
-            checkpoint_steps = checkpoint_steps.at[-1].set(model_config["NUM_UPDATES"])
-
-    print("Checkpoint steps: ", checkpoint_steps)
+    # Checkpoint 스케줄: EVAL_CKPT_EVERY_ENV_STEPS 또는 NUM_CHECKPOINTS linspace
+    from overcooked_v2_experiments.ppo.utils.store import build_checkpoint_steps
+    checkpoint_steps, num_checkpoints = build_checkpoint_steps(config, model_config["NUM_UPDATES"])
 
     def _update_checkpoint(checkpoint_states, params, i):
         jax.debug.print("Saving checkpointing {i}", i=i)

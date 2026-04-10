@@ -62,7 +62,8 @@ def make_train_mep_s1(config):
     model_config["NUM_UPDATES"] = NUM_UPDATES
     model_config["ACTION_DIM"] = ACTION_DIM
 
-    num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
+    from overcooked_v2_experiments.ppo.utils.store import build_checkpoint_steps
+    _ckpt_steps_arr, num_checkpoints = build_checkpoint_steps(config, NUM_UPDATES)
 
     network = ActorCriticRNN(action_dim=ACTION_DIM, config=model_config)
 
@@ -154,12 +155,7 @@ def make_train_mep_s1(config):
             ])
 
         # Checkpoint buffer: leaf shape (N, num_checkpoints, ...member_param_shape...)
-        checkpoint_steps = jnp.linspace(
-            0, NUM_UPDATES, max(num_checkpoints, 1),
-            endpoint=True, dtype=jnp.int32,
-        )
-        if num_checkpoints > 0:
-            checkpoint_steps = checkpoint_steps.at[-1].set(NUM_UPDATES)
+        checkpoint_steps = _ckpt_steps_arr
         ck_buf = jax.tree_util.tree_map(
             lambda p: jnp.zeros((N, max(num_checkpoints, 1)) + p.shape[1:], p.dtype),
             pop_states.params,

@@ -1,12 +1,47 @@
+import math
 import os
 import pickle
 from pathlib import Path
+import jax.numpy as jnp
 import orbax.checkpoint as ocp
 from flax.training import orbax_utils
 import chex
 from flax.core.frozen_dict import FrozenDict
 
 from overcooked_v2_experiments.ppo.policy import PPOPolicy, PPOParams
+
+
+def build_checkpoint_steps(config, num_updates):
+    """EVAL_CKPT_EVERY_ENV_STEPS 설정에 따라 checkpoint_steps 배열과 num_checkpoints 를 반환.
+
+    env-step cadence 가 0 이하이면 NUM_CHECKPOINTS 기반 linspace 를 사용한다.
+    반환: (checkpoint_steps: jnp.int32 array, num_checkpoints: int)
+    """
+    model_config = config.get("model", config)
+    _ckpt_every_env = int(config.get("EVAL_CKPT_EVERY_ENV_STEPS", 0) or 0)
+    if _ckpt_every_env > 0:
+        _steps_per_update = int(model_config["NUM_STEPS"]) * int(model_config["NUM_ENVS"])
+        _total_ts = int(model_config["TOTAL_TIMESTEPS"])
+        _target_env_steps = list(range(0, _total_ts + _ckpt_every_env, _ckpt_every_env))
+        if _target_env_steps[-1] != _total_ts:
+            _target_env_steps.append(_total_ts)
+        _ckpt_update_idxs = sorted({
+            min(num_updates, math.ceil(s / max(1, _steps_per_update)))
+            for s in _target_env_steps
+        })
+        checkpoint_steps = jnp.asarray(_ckpt_update_idxs, dtype=jnp.int32)
+        num_checkpoints = int(checkpoint_steps.shape[0])
+        config["NUM_CHECKPOINTS"] = num_checkpoints
+    else:
+        num_checkpoints = int(config.get("NUM_CHECKPOINTS", 3))
+        checkpoint_steps = jnp.linspace(
+            0, num_updates, max(num_checkpoints, 1),
+            endpoint=True, dtype=jnp.int32,
+        )
+        if num_checkpoints > 0:
+            checkpoint_steps = checkpoint_steps.at[-1].set(num_updates)
+    print(f"[CKPT-SCHEDULE] checkpoint_steps ({num_checkpoints} points): {checkpoint_steps}")
+    return checkpoint_steps, num_checkpoints
 
 
 def _stored_filenames(filename_base):

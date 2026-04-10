@@ -5,6 +5,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import wandb
 import jax
+import math
 import os
 import pickle
 from datetime import datetime
@@ -405,7 +406,39 @@ def _make_s2_config(config):
     return s2
 
 
+def _resolve_ckpt_schedule(config):
+    """EVAL_CKPT_EVERY_ENV_STEPS 가 설정돼 있으면 NUM_CHECKPOINTS 를 env-step cadence 로 재계산.
+
+    single_run() 진입 직후 한 번만 호출하면 이후 모든 경로(SP, MEP, GAMMA, HSP 등)에서
+    올바른 NUM_CHECKPOINTS 를 사용할 수 있다.
+    """
+    _ckpt_every_env = int(config.get("EVAL_CKPT_EVERY_ENV_STEPS", 0) or 0)
+    if _ckpt_every_env <= 0:
+        return
+    model_config = config.get("model", config)
+    _steps_per_update = int(model_config["NUM_STEPS"]) * int(model_config["NUM_ENVS"])
+    _total_ts = int(model_config["TOTAL_TIMESTEPS"])
+    _num_updates = _total_ts // max(1, _steps_per_update)
+    # env step 단위 target 목록 생성
+    _target_env_steps = list(range(0, _total_ts + _ckpt_every_env, _ckpt_every_env))
+    if _target_env_steps[-1] != _total_ts:
+        _target_env_steps.append(_total_ts)
+    _ckpt_update_idxs = sorted({
+        min(_num_updates, math.ceil(s / max(1, _steps_per_update)))
+        for s in _target_env_steps
+    })
+    new_num_ckpts = len(_ckpt_update_idxs)
+    old_num_ckpts = config.get("NUM_CHECKPOINTS", 3)
+    if new_num_ckpts != old_num_ckpts:
+        print(
+            f"[CKPT-SCHEDULE] EVAL_CKPT_EVERY_ENV_STEPS={_ckpt_every_env} → "
+            f"NUM_CHECKPOINTS {old_num_ckpts} → {new_num_ckpts}"
+        )
+        config["NUM_CHECKPOINTS"] = new_num_ckpts
+
+
 def single_run(config):
+    _resolve_ckpt_schedule(config)
     alg_name = config.get("ALG_NAME", "SP")
 
     # ================================================================

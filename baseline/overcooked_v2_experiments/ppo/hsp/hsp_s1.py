@@ -73,7 +73,8 @@ def make_train_hsp_s1(config):
     model_config["NUM_UPDATES"] = NUM_UPDATES
     model_config["ACTION_DIM"] = ACTION_DIM
 
-    num_checkpoints = config.get("NUM_CHECKPOINTS", 3)
+    from overcooked_v2_experiments.ppo.utils.store import build_checkpoint_steps
+    _ckpt_steps_arr, num_checkpoints = build_checkpoint_steps(config, NUM_UPDATES)
     use_valuenorm = model_config.get("USE_VALUENORM", False)
 
     network = ActorCriticRNN(action_dim=ACTION_DIM, config=model_config)
@@ -181,12 +182,7 @@ def make_train_hsp_s1(config):
             hstate_1 = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
 
             # ---- Checkpoint buffer ----
-            checkpoint_steps = jnp.linspace(
-                0, NUM_UPDATES, max(num_checkpoints, 1),
-                endpoint=True, dtype=jnp.int32,
-            )
-            if num_checkpoints > 0:
-                checkpoint_steps = checkpoint_steps.at[-1].set(NUM_UPDATES)
+            checkpoint_steps = _ckpt_steps_arr
             ck_buf = jax.tree_util.tree_map(
                 lambda p: jnp.zeros((max(num_checkpoints, 1),) + p.shape, p.dtype),
                 actor_state.params,
