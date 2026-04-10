@@ -67,7 +67,6 @@ def _apply_gridspread_overrides(config):
         "USE_HUBER_LOSS": True,
         "HUBER_DELTA": 1.0,
         "NORMALIZE_OBS_DIVISOR": 6.0,  # = 2*radius (radius=3)
-        "TOTAL_TIMESTEPS": 1e8,
     }
     for k, v in gs_overrides.items():
         model[k] = v

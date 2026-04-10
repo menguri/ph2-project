@@ -11,8 +11,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
-GPUS="0,2,3,4,5"
+GPUS="0,2"
 ALL_LAYOUTS=(counter_circuit forced_coord asymm_advantages coord_ring cramped_room)
+
+# Eval 체크포인트: eval/ 서브폴더에 1M step 단위로 저장 (TOTAL_TS=1e8 → 101 ckpts: 0M..100M)
+EVAL_CKPT_DIR_EXTRA="++SAVE_TO_EVAL_DIR=true"
+# ph2 의 PH1_EVAL_EVERY_ENV_STEPS=1000000 과 동일 cadence (1M env step 마다 저장).
+EVAL_NUM_CKPT_EXTRA="++EVAL_CKPT_EVERY_ENV_STEPS=50000000"
 
 # =============================================================================
 # 1. E3T — counter_circuit, forced_coord, asymm_advantages (누락분)
@@ -35,23 +40,23 @@ ALL_LAYOUTS=(counter_circuit forced_coord asymm_advantages coord_ring cramped_ro
 # 2. MEP — 전 레이아웃
 #    S1=10M, S2=100M, nenvs=32, S2 12 seeds
 # =============================================================================
-echo "============================================================"
-echo "  MEP (S1=10M, S2=30M, nenvs=32, 12 seeds) — 전 레이아웃"
-echo "============================================================"
+# echo "============================================================"
+# echo "  MEP (S1=10M, S2=30M, nenvs=32, 12 seeds) — 전 레이아웃"
+# echo "============================================================"
 
-for layout in "${ALL_LAYOUTS[@]}"; do
-  echo "[MEP] ${layout}"
-  ./run_user_wandb.sh \
-    --exp rnn-mep \
-    --env "${layout}" \
-    --gpus "${GPUS}" \
-    --seeds 1 \
-    --nenvs 32 \
-    --tags mep,final \
-    --extra "model.TOTAL_TIMESTEPS=1.5e7" \
-    --extra "model.S2_TOTAL_TIMESTEPS=3e7" \
-    --extra "S2_NUM_SEEDS=10"
-done
+# for layout in "${ALL_LAYOUTS[@]}"; do
+#   echo "[MEP] ${layout}"
+#   ./run_user_wandb.sh \
+#     --exp rnn-mep \
+#     --env "${layout}" \
+#     --gpus "${GPUS}" \
+#     --seeds 1 \
+#     --nenvs 32 \
+#     --tags mep,final \
+#     --extra "model.TOTAL_TIMESTEPS=1.5e7" \
+#     --extra "model.S2_TOTAL_TIMESTEPS=3e7" \
+#     --extra "S2_NUM_SEEDS=10"
+# done
 
 # =============================================================================
 # 4. Gamma — 전 레이아웃
@@ -73,7 +78,10 @@ for layout in "${ALL_LAYOUTS[@]}"; do
     --extra "++GAMMA_S2_METHOD=vae" \
     --extra "model.TOTAL_TIMESTEPS=1e7" \
     --extra "model.S2_TOTAL_TIMESTEPS=1e8" \
-    --extra "S2_NUM_SEEDS=10"
+    --extra "S2_NUM_SEEDS=10" \
+    --extra "${EVAL_CKPT_DIR_EXTRA}" \
+    --extra "${EVAL_NUM_CKPT_EXTRA}" \
+
 done
 
 echo "============================================================"

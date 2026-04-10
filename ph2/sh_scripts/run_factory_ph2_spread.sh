@@ -9,7 +9,7 @@ cd "$(dirname "$0")" || exit 1
 
 EXP="rnn-ph2"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
-GPUS="${GPUS:-0,3,4,6}"
+GPUS="${GPUS:-1,3,4,5}"
 NUM_SEEDS="${NUM_SEEDS:-12}"
 FIXED_SEED="${FIXED_SEED:-42}"
 TOTAL_TS="${TOTAL_TS:-3e7}"     # 10M
@@ -18,7 +18,7 @@ TOTAL_TS="${TOTAL_TS:-3e7}"     # 10M
 : "${PH1_BETA:=1.0}"
 : "${PH1_BETA_SCHEDULE_ENABLED:=True}"
 : "${PH1_BETA_START:=0.0}"
-: "${PH1_BETA_END:=1.0}"
+: "${PH1_BETA_END:=0.0}"
 : "${PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS:=-1}"
 : "${PH1_OMEGA:=10.0}"
 : "${PH1_SIGMA:=2.0}"
@@ -33,6 +33,7 @@ TOTAL_TS="${TOTAL_TS:-3e7}"     # 10M
 : "${ACTION_PREDICTION:=True}"
 : "${SAVE_EVAL_CHECKPOINTS:=True}"
 : "${PH2_FIXED_IND_PROB:=0.5}"
+: "${PH1_AGENTWISE_PENALTY:=True}"
 
 # 에이전트 수: CLI 인자 또는 기본값 4
 if [ $# -eq 0 ]; then
@@ -75,6 +76,7 @@ run_ph2_spread() {
     --ph2-epsilon "$PH2_EPSILON" \
     --action-prediction "$ACTION_PREDICTION" \
     --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
+    --ph1-agentwise-penalty "$PH1_AGENTWISE_PENALTY" \
     --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
     --extra "++model.OBS_ENCODER=MLP" \
     --extra "++env.ENV_KWARGS.n_agents=${n_agents}"
@@ -92,7 +94,7 @@ run_ph2_spread() {
 # done
 
 # ===========================================================================
-# 스윕: PH1_MAX_PENALTY_COUNT × PH1_OMEGA × PH1_SIGMA
+# (스윕1 비활성화 — 기존 ω×σ×k 스윕 완료)
 # ===========================================================================
 PENALTY_COUNTS=(2)
 OMEGAS=(10.0 100.0 50.0 20.0) # 5.0 1.0)
@@ -100,43 +102,42 @@ SIGMAS=(2.0 3.0 7.0 10.0) # 3.0 4.0 5.0 6.0 7.0 10.0)
 
 for N in "${AGENT_COUNTS[@]}"; do
   ENV="gridspread"
-  for K in "${PENALTY_COUNTS[@]}"; do
-    for O in "${OMEGAS[@]}"; do
-      for S in "${SIGMAS[@]}"; do
-        echo "================================================================"
-        echo "  PH2 GridSpread SWEEP  N=${N}  k=${K}  omega=${O}  sigma=${S}"
-        echo "================================================================"
-        ./run_user_wandb.sh \
-          --gpus "$GPUS" \
-          --seeds "$NUM_SEEDS" \
-          --seed "$FIXED_SEED" \
-          --env "$ENV" \
-          --exp "$EXP" \
-          --env-device "$ENV_DEVICE" \
-          --tags "ph2,spread,N${N},k${K},o${O},s${S}" \
-          --ph1-beta $PH1_BETA \
-          --ph1-beta-schedule-enabled $PH1_BETA_SCHEDULE_ENABLED \
-          --ph1-beta-start $PH1_BETA_START \
-          --ph1-beta-end $PH1_BETA_END \
-          --ph1-beta-schedule-horizon-env-steps $PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS \
-          --ph1-omega "$O" \
-          --ph1-sigma "$S" \
-          --ph1-pool-size $PH1_POOL_SIZE \
-          --ph1-normal-prob $PH1_NORMAL_PROB \
-          --ph1-multi-penalty-enabled $PH1_MULTI_PENALTY_ENABLED \
-          --ph1-max-penalty-count "$K" \
-          --ph1-multi-penalty-single-weight $PH1_MULTI_PENALTY_SINGLE_WEIGHT \
-          --ph1-multi-penalty-other-weight $PH1_MULTI_PENALTY_OTHER_WEIGHT \
-          --ph1-epsilon $PH1_EPSILON \
-          --ph1-warmup-steps $PH1_WARMUP_STEPS \
-          --ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB" \
-          --ph2-epsilon "$PH2_EPSILON" \
-          --action-prediction "$ACTION_PREDICTION" \
-          --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
-          --extra "++model.TOTAL_TIMESTEPS=${TOTAL_TS}" \
-          --extra "++model.OBS_ENCODER=MLP" \
-          --extra "++env.ENV_KWARGS.n_agents=${N}"
-      done
+  for BETA_END in "${SWEEP2_BETA_ENDS[@]}"; do
+    for K in "${SWEEP2_PENALTY_COUNTS[@]}"; do
+      echo "================================================================"
+      echo "  PH2 GridSpread SWEEP2  N=${N}  β_end=${BETA_END}  k=${K}  (ω=${SWEEP2_OMEGA} σ=${SWEEP2_SIGMA} ts=${SWEEP2_TOTAL_TS})"
+      echo "================================================================"
+      ./run_user_wandb.sh \
+        --gpus "$GPUS" \
+        --seeds "$NUM_SEEDS" \
+        --seed "$FIXED_SEED" \
+        --env "$ENV" \
+        --exp "$EXP" \
+        --env-device "$ENV_DEVICE" \
+        --tags "ph2,spread,N${N},k${K},o${SWEEP2_OMEGA},s${SWEEP2_SIGMA},beta${BETA_END}" \
+        --ph1-beta $PH1_BETA \
+        --ph1-beta-schedule-enabled $PH1_BETA_SCHEDULE_ENABLED \
+        --ph1-beta-start $PH1_BETA_START \
+        --ph1-beta-end "$BETA_END" \
+        --ph1-beta-schedule-horizon-env-steps $PH1_BETA_SCHEDULE_HORIZON_ENV_STEPS \
+        --ph1-omega $SWEEP2_OMEGA \
+        --ph1-sigma $SWEEP2_SIGMA \
+        --ph1-pool-size $PH1_POOL_SIZE \
+        --ph1-normal-prob $PH1_NORMAL_PROB \
+        --ph1-multi-penalty-enabled $PH1_MULTI_PENALTY_ENABLED \
+        --ph1-max-penalty-count "$K" \
+        --ph1-multi-penalty-single-weight $PH1_MULTI_PENALTY_SINGLE_WEIGHT \
+        --ph1-multi-penalty-other-weight $PH1_MULTI_PENALTY_OTHER_WEIGHT \
+        --ph1-epsilon $PH1_EPSILON \
+        --ph1-warmup-steps $PH1_WARMUP_STEPS \
+        --ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB" \
+        --ph2-epsilon "$PH2_EPSILON" \
+        --action-prediction "$ACTION_PREDICTION" \
+        --save-eval-checkpoints "$SAVE_EVAL_CHECKPOINTS" \
+        --ph1-agentwise-penalty "$PH1_AGENTWISE_PENALTY" \
+        --extra "++model.TOTAL_TIMESTEPS=${SWEEP2_TOTAL_TS}" \
+        --extra "++model.OBS_ENCODER=MLP" \
+        --extra "++env.ENV_KWARGS.n_agents=${N}"
     done
   done
 done

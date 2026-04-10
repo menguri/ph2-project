@@ -5,5 +5,5 @@
   "n_agents": 4
   "radius": 2                # ref 기준 (격자 7x7)
   "max_steps": 100           # ref 기준
-  "step_cost": 0.1           # ref 기준
+  "step_cost": 1           # ref 기준
   "early_terminate": true    # ref 기준 — all_covered 즉시 종료

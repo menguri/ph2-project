@@ -53,7 +53,7 @@ def _apply_gridspread_overrides(config):
         "NUM_STEPS": 100,
         "NUM_MINIBATCHES": 4,
         "UPDATE_EPOCHS": 10,
-        "LR": 1e-4,
+        "LR": 3e-5,
         "ANNEAL_LR": True,
         "LR_SCHEDULE": "linear",       # ref onpolicy use_linear_lr_decay=True 매칭 (LR → 0 선형 감쇠)
         "SPLIT_OPTIMIZER": False,      # (일시 OFF) ref onpolicy 처럼 actor/critic 분리 — 검증용으로 잠시 끔

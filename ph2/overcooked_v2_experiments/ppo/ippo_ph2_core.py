@@ -118,6 +118,8 @@ def make_train(
     if ph1_pair_mode:
         ph1_penalty_slots = ph1_penalty_slots * 2
     ph1_raw_distance = bool(config.get("PH1_RAW_DISTANCE", False))
+    # GridSpread 전용: agent별 위치 기반 개별 penalty (True 시 전체 obs L2 대신 2D position distance 사용)
+    ph1_agentwise_penalty = bool(config.get("PH1_AGENTWISE_PENALTY", False))
     ph1_multi_penalty_single_weight = float(
         config.get("PH1_MULTI_PENALTY_SINGLE_WEIGHT", 2.0)
     )
@@ -1420,18 +1422,17 @@ def make_train(
                         new_pool = jnp.roll(ph1_pool_states, shift=-1, axis=1)
                         new_pool = new_pool.at[:, -1].set(global_full_next_env0)
                         # GridSpread: all_covered=True 상태를 pool에서 제외하려면 아래 블록 주석 해제.
-                        # if is_spread:
-                        #     # info["shaped_reward_events"]["agent_0"]: (NUM_ENVS, 2)
-                        #     # index 0 = all_covered float, index 1 = coverage_ratio
-                        #     all_covered_env = info["shaped_reward_events"]["agent_0"][:, 0].astype(jnp.bool_)
-                        #     ph1_pool_states = jnp.where(
-                        #         (~all_covered_env)[:, jnp.newaxis, jnp.newaxis],  # (E,1,1) broadcast
-                        #         new_pool,
-                        #         ph1_pool_states,
-                        #     )
-                        # else:
-                        #     ph1_pool_states = new_pool
-                        ph1_pool_states = new_pool
+                        if is_spread:
+                            # info["shaped_reward_events"]["agent_0"]: (NUM_ENVS, 2)
+                            # index 0 = all_covered float, index 1 = coverage_ratio
+                            all_covered_env = info["shaped_reward_events"]["agent_0"][:, 0].astype(jnp.bool_)
+                            ph1_pool_states = jnp.where(
+                                (~all_covered_env)[:, jnp.newaxis, jnp.newaxis],  # (E,1,1) broadcast
+                                new_pool,
+                                ph1_pool_states,
+                            )
+                        else:
+                            ph1_pool_states = new_pool
                 
                 # [STA-PH1] Apply Latent Distance Penalty
                 # Calculate Distance: || z(next_obs) - z(blocked) ||
@@ -1444,6 +1445,118 @@ def make_train(
                     and ("blocked_emb" in ph1_extras)
                     and (ph1_extras["blocked_emb"] is not None)
                 ):
+                  if is_spread and ph1_agentwise_penalty:
+                    # ===== GridSpread Agent-wise Penalty =====
+                    # 전체 obs L2 대신 각 agent의 2D position만으로 거리 계산 → 개별 penalty
+                    # obs 레이아웃: [one_hot(N), ax0,ay0,...,ax(N-1),ay(N-1), gx0,gy0,...]
+                    # agent i position: obs[N + 2*i : N + 2*i + 2]
+                    _n = env.num_agents
+                    _NUM_ENVS = model_config["NUM_ENVS"]
+
+                    # 현재 state에서 전체 agent 위치 추출: (NUM_ENVS, N, 2)
+                    _curr_all_pos = global_full_next_env0[:, _n:3 * _n].reshape(
+                        _NUM_ENVS, _n, 2
+                    ).astype(jnp.float32)
+
+                    # blocked state에서 전체 agent 위치 추출
+                    if blocked_states_env.ndim == 2:
+                        # single target: (NUM_ENVS, 5N) → (NUM_ENVS, 1, N, 2)
+                        _blk_all_pos = blocked_states_env[:, _n:3 * _n].reshape(
+                            _NUM_ENVS, 1, _n, 2
+                        ).astype(jnp.float32)
+                    else:
+                        # multi target: (NUM_ENVS, K, 5N) → (NUM_ENVS, K, N, 2)
+                        _blk_all_pos = blocked_states_env[:, :, _n:3 * _n].reshape(
+                            _NUM_ENVS, blocked_states_env.shape[1], _n, 2
+                        ).astype(jnp.float32)
+                    # -1.0 sentinel → 0.0 (미생성 state 보호)
+                    _blk_all_pos = jnp.where(_blk_all_pos == -1.0, 0.0, _blk_all_pos)
+
+                    # per-agent L2 distance: (NUM_ENVS, K, N)
+                    # curr: (NUM_ENVS, 1, N, 2) vs blocked: (NUM_ENVS, K, N, 2)
+                    _aw_dist = jnp.sqrt(
+                        jnp.sum(
+                            (_curr_all_pos[:, None, :, :] - _blk_all_pos) ** 2,
+                            axis=-1,
+                        )
+                    )  # (NUM_ENVS, K, N)
+
+                    # valid slot 마스크: blocked state 전체가 -1이면 invalid (env-level, agent 무관)
+                    if blocked_states_env.ndim >= 3:
+                        _flat_blk = blocked_states_env.reshape(
+                            _NUM_ENVS, blocked_states_env.shape[1], -1
+                        )
+                        _aw_valid = ~jnp.all(_flat_blk == -1, axis=-1)  # (NUM_ENVS, K)
+                    else:
+                        _flat_blk = blocked_states_env.reshape(_NUM_ENVS, -1)
+                        _aw_valid = ~jnp.all(_flat_blk == -1, axis=-1)[:, None]  # (NUM_ENVS, 1)
+
+                    _aw_num_slots = _aw_dist.shape[1]
+
+                    # pair_mode: 2개씩 묶어서 min distance → agent 순서 무관 penalty
+                    if ph1_pair_mode and _aw_num_slots >= 2:
+                        _n_pairs = _aw_num_slots // 2
+                        # dist: (E, K, N) → (E, n_pairs, 2, N) → min over pair dim → (E, n_pairs, N)
+                        _aw_dist = jnp.min(
+                            _aw_dist[:, :_n_pairs * 2].reshape(
+                                _NUM_ENVS, _n_pairs, 2, _n
+                            ),
+                            axis=2,
+                        )
+                        # valid: (E, K) → (E, n_pairs, 2) → any → (E, n_pairs)
+                        _aw_valid = jnp.any(
+                            _aw_valid[:, :_n_pairs * 2].reshape(
+                                _NUM_ENVS, _n_pairs, 2
+                            ),
+                            axis=-1,
+                        )
+                        _aw_num_slots = _n_pairs
+
+                    if _aw_valid.shape[1] == 1 and _aw_num_slots > 1:
+                        _aw_valid = jnp.tile(_aw_valid, (1, _aw_num_slots))
+                    _aw_valid = _aw_valid[:, :_aw_num_slots]
+
+                    # valid mask 적용 (broadcast: valid (E,K) → (E,K,1) over N)
+                    _aw_dist = jnp.where(_aw_valid[:, :, None], _aw_dist, 0.0)
+
+                    # penalty 계산: omega * exp(-sigma * dist) — (NUM_ENVS, K, N)
+                    ph1_omega = config.get("PH1_OMEGA", 1.0)
+                    ph1_sigma = config.get("PH1_SIGMA", 1.0)
+                    _aw_penalty = ph1_omega * jnp.exp(-ph1_sigma * _aw_dist)
+                    _aw_penalty = jnp.where(_aw_valid[:, :, None], _aw_penalty, 0.0)
+
+                    # [Warmup] Disable penalty if warming up
+                    current_global_step = update_step * model_config["NUM_STEPS"] * model_config["NUM_ENVS"]
+                    is_ph1_warmup = current_global_step < ph1_warmup_steps
+                    _aw_penalty = jnp.where(is_ph1_warmup, 0.0, _aw_penalty)
+
+                    # slot 합산 → per-agent penalty: (NUM_ENVS, N)
+                    _aw_penalty_per_agent = jnp.sum(_aw_penalty, axis=1)  # (NUM_ENVS, N)
+                    _aw_dist_per_agent = jnp.sum(_aw_dist, axis=1)        # (NUM_ENVS, N)
+
+                    # reward에 agent별 개별 penalty 적용
+                    for i, agent_name in enumerate(env.agents):
+                        reward[agent_name] = reward[agent_name] - _aw_penalty_per_agent[:, i]
+
+                    # 로깅: env-level 평균 (기존 메트릭 호환) + per-agent 개별 메트릭
+                    dist_penalty_env = _aw_penalty_per_agent.mean(axis=1)  # (NUM_ENVS,)
+                    lat_dist_env = _aw_dist_per_agent.mean(axis=1)
+                    info["ph1_penalty_env"] = dist_penalty_env
+                    info["ph1_dist_env"] = lat_dist_env
+                    # per-agent 메트릭
+                    for i in range(_n):
+                        info[f"ph1_penalty_agent{i}"] = _aw_penalty_per_agent[:, i]
+                        info[f"ph1_dist_agent{i}"] = _aw_dist_per_agent[:, i]
+                    # slots 메트릭: agent 평균 → (NUM_ENVS, K)
+                    info["ph1_penalty_env_slots"] = _aw_penalty.mean(axis=2)  # (E, K)
+                    info["ph1_dist_env_slots"] = _aw_dist.mean(axis=2)
+
+                    # dist_penalty: downstream Transition 호환 (NUM_ACTORS,)
+                    # actor 순서: [agent0_env0..envN, agent1_env0..envN, ...]
+                    dist_penalty = _aw_penalty_per_agent.T.reshape(-1)  # (N, E) → (N*E,)
+
+                  else:
+                    # ===== 기존 Global Penalty (Overcooked, ToyCoop, MPE 등) =====
                     # N-agent 일반화: env-level global obs를 모든 agent에 복제
                     global_full_next_actor = jnp.tile(
                         global_full_next_env0,
@@ -2529,6 +2642,15 @@ def make_train(
                         metric[f"ph1_dist_env_slot{slot_idx + 1}_mean"] = (
                             metric["ph1_dist_env_slots"][..., slot_idx].mean()
                         )
+
+                # per-agent penalty 메트릭 (agent-wise 모드에서만 존재)
+                for _ai in range(env.num_agents):
+                    _pk = f"ph1_penalty_agent{_ai}"
+                    _dk = f"ph1_dist_agent{_ai}"
+                    if _pk in metric:
+                        metric[f"{_pk}_mean"] = metric[_pk].mean()
+                    if _dk in metric:
+                        metric[f"{_dk}_mean"] = metric[_dk].mean()
 
                 rew0, rew1 = _get_agent_means("combined_reward")
                 metric["reward_agent0_penalized"] = rew0

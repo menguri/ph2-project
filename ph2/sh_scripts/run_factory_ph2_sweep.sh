@@ -8,7 +8,7 @@
 cd "$(dirname "$0")" || exit 1
 
 # GPU 할당
-SWEEP_GPUS="1,2,3,4,5"
+SWEEP_GPUS="0,1,4,6"
 
 # 공통 파라미터
 NUM_SEEDS=5

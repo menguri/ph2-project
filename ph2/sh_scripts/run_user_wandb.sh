@@ -74,6 +74,7 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${Z_PRED_LOSS_COEF:=}"
 : "${PH1_PAIR_MODE:=}"
 : "${PH1_RAW_DISTANCE:=}"
+: "${PH1_AGENTWISE_PENALTY:=}"
 : "${LATENT_MODE:=}"
 : "${SHARED_PREDICTION:=}"
 : "${SAVE_EVAL_CHECKPOINTS:=}"
@@ -280,6 +281,7 @@ while [[ $# -gt 0 ]]; do
     --cycle-loss-coef) CYCLE_LOSS_COEF="$2"; shift 2;;
     --pair-mode) PH1_PAIR_MODE="$2"; shift 2;;
     --ph1-raw-distance) PH1_RAW_DISTANCE="$2"; shift 2;;
+    --ph1-agentwise-penalty) PH1_AGENTWISE_PENALTY="$2"; shift 2;;
     --z-prediction-enabled) Z_PREDICTION_ENABLED="$2"; shift 2;;
     --z-pred-loss-coef) Z_PRED_LOSS_COEF="$2"; shift 2;;
     --latent-mode) LATENT_MODE="$2"; shift 2;;
@@ -641,6 +643,9 @@ if [[ -n "$PH1_PAIR_MODE" ]]; then
 fi
 if [[ -n "$PH1_RAW_DISTANCE" ]]; then
   PY_ARGS+=("PH1_RAW_DISTANCE=$PH1_RAW_DISTANCE")
+fi
+if [[ -n "$PH1_AGENTWISE_PENALTY" ]]; then
+  PY_ARGS+=("PH1_AGENTWISE_PENALTY=$PH1_AGENTWISE_PENALTY")
 fi
 if [[ -n "$LATENT_MODE" ]]; then
   PY_ARGS+=("LATENT_MODE=$LATENT_MODE")

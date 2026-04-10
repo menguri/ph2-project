@@ -32,7 +32,9 @@ AUTO_PH2_CROSS_NUM_SEEDS=5
 # Optional manual fallback commands (used only when AUTO_DISCOVER_PRESETS=false).
 PRESET_FACTORY_COMMANDS=(
   # GridSpread PH2 level-one cross-play — combined (step_cost 미포함)
-  "./run_visualize.sh --gpu 4 --dir runs/20260408-084208_z242q0c0_GridSpread_e3t_ph2_e0p2_o10_s2_k1_ct0 --cross --num_seeds 5 --no_viz --max_steps 100"
+  "./run_visualize.sh --gpu 5 --dir runs/20260408-142640_jzzly5re_GridSpread_e3t_ph2_e0p2_o50_s2_k1_ct0 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
+  # "./run_visualize.sh --gpu 1 --dir runs/20260408-051510_rdpeorut_forced_coord_e3t_ph2_e0p2_o4_s8_k1_ct0 --cross --num_seeds 5 --no_viz --max_steps 100"
+  # "./run_visualize.sh --gpu 2 --dir runs/20260408-082216_zyh91nba_forced_coord_e3t_ph2_e0p2_o4_s8_k1_ct0 --cross --num_seeds 5 --no_viz --max_steps 100"
   # "./run_visualize.sh --gpu 5 --dir runs/20260408-045726_h1dnj6yz_GridSpread_e3t_ph2_e0p2_o5_s7_k1_ct0 --cross --num_seeds 5 --no_viz --max_steps 100"
 )
 

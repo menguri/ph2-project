@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
 # 5,6
-GPUS="${GPUS:-4,5}"
+GPUS="${GPUS:-0,6}"
 ENV_DEVICE="${ENV_DEVICE:-cpu}"
 TOTAL_TS="3e7"                # 30M timesteps (S2에도 적용)
 
@@ -127,41 +127,41 @@ for N in "${AGENT_COUNTS[@]}"; do
   #   echo "[FCP] SKIP N=${N} — population 없음: ${FCP_DIR_BASH}"
   # fi
 
-  # # # ===========================================================================
-  # # # 2. E3T — 기존 rnn-e3t + epsilon 0.2 + prediction OFF + 100M
-  # # # ===========================================================================
-  echo "[E3T] N=${N}"
-  ./run_user_wandb.sh \
-    --exp rnn-e3t \
-    --env "${ENV}" \
-    --gpus "${GPUS}" \
-    --env-device "${ENV_DEVICE}" \
-    --e3t-epsilon 0.2 \
-    --tags "e3t,spread,N${N}" \
-    --extra "${TS_EXTRA}" \
-    --extra "${MLP_ENCODER_EXTRA}" \
-    --extra "++USE_PREDICTION=False" \
-    --extra "${EVAL_CKPT_DIR_EXTRA}" \
-    --extra "${EVAL_NUM_CKPT_EXTRA}" \
-    --extra "${NAGENTS_EXTRA}${N}"
+  # # # # ===========================================================================
+  # # # # 2. E3T — 기존 rnn-e3t + epsilon 0.2 + prediction OFF + 100M
+  # # # # ===========================================================================
+  # echo "[E3T] N=${N}"
+  # ./run_user_wandb.sh \
+  #   --exp rnn-e3t \
+  #   --env "${ENV}" \
+  #   --gpus "${GPUS}" \
+  #   --env-device "${ENV_DEVICE}" \
+  #   --e3t-epsilon 0.2 \
+  #   --tags "e3t,spread,N${N}" \
+  #   --extra "${TS_EXTRA}" \
+  #   --extra "${MLP_ENCODER_EXTRA}" \
+  #   --extra "++USE_PREDICTION=False" \
+  #   --extra "${EVAL_CKPT_DIR_EXTRA}" \
+  #   --extra "${EVAL_NUM_CKPT_EXTRA}" \
+  #   --extra "${NAGENTS_EXTRA}${N}"
 
 
-  # # # ===========================================================================
-  # # # 4. MEP — 기존 rnn-mep + S2 100M
-  # # # ===========================================================================
-  echo "[MEP] N=${N}"
-  ./run_user_wandb.sh \
-    --exp rnn-mep \
-    --env "${ENV}" \
-    --gpus "${GPUS}" \
-    --seeds 1 \
-    --tags "mep,spread,N${N}" \
-    --extra "++model.TOTAL_TIMESTEPS=5e6" \
-    --extra "${S2_TS_EXTRA}" \
-    --extra "${MLP_ENCODER_EXTRA}" \
-    --extra "${EVAL_CKPT_DIR_EXTRA}" \
-    --extra "${EVAL_NUM_CKPT_EXTRA}" \
-    --extra "${NAGENTS_EXTRA}${N}"
+  # # # # ===========================================================================
+  # # # # 4. MEP — 기존 rnn-mep + S2 100M
+  # # # # ===========================================================================
+  # echo "[MEP] N=${N}"
+  # ./run_user_wandb.sh \
+  #   --exp rnn-mep \
+  #   --env "${ENV}" \
+  #   --gpus "${GPUS}" \
+  #   --seeds 1 \
+  #   --tags "mep,spread,N${N}" \
+  #   --extra "++model.TOTAL_TIMESTEPS=5e6" \
+  #   --extra "${S2_TS_EXTRA}" \
+  #   --extra "${MLP_ENCODER_EXTRA}" \
+  #   --extra "${EVAL_CKPT_DIR_EXTRA}" \
+  #   --extra "${EVAL_NUM_CKPT_EXTRA}" \
+  #   --extra "${NAGENTS_EXTRA}${N}"
 
 
 done
