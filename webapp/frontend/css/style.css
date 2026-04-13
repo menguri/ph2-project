@@ -88,6 +88,11 @@ button.secondary:hover { background: #777; }
     font-weight: bold;
 }
 
+#hud-timer {
+    color: #FFD700;
+    font-size: 1.2rem;
+}
+
 #game-canvas {
     border: 2px solid #e94560;
     border-radius: 8px;

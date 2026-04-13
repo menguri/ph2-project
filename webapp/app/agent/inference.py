@@ -12,6 +12,18 @@ import numpy as np
 
 from .loader import load_checkpoint_cpu, detect_model_source, select_params
 
+# CEC 통합: obs 변환 + 추론 (lazy import — CEC 모델이 없으면 에러 안 남)
+_cec_runtime_cls = None
+_cec_obs_adapter = None
+
+def _ensure_cec_imports():
+    global _cec_runtime_cls, _cec_obs_adapter
+    if _cec_runtime_cls is None:
+        from cec_integration.cec_runtime import CECRuntime
+        from cec_integration.obs_adapter_v2 import ov2_obs_to_cec
+        _cec_runtime_cls = CECRuntime
+        _cec_obs_adapter = ov2_obs_to_cec
+
 # ph2 모델 (venv에 editable install)
 from overcooked_v2_experiments.ppo.models.model import (
     get_actor_critic as ph2_get_actor_critic,
@@ -73,6 +85,44 @@ def _load_baseline_module(name: str):
     return mod
 
 
+def _patch_e3t_predictor():
+    """E3T 체크포인트의 3층 PartnerPredictor에 맞게 baseline 모듈을 패치.
+
+    학습 코드(baseline)의 PartnerPredictor는 5층이지만, E3T 체크포인트는
+    3층(Dense 128→64, 64→64, 64→6)으로 학습됨.
+    baseline rnn.py가 참조하는 PartnerPredictor 클래스를 교체하여
+    use_prediction=True 호출 시 체크포인트 params와 일치시킨다.
+    """
+    import flax.linen as nn
+    from flax.linen.initializers import orthogonal, constant
+
+    class PartnerPredictor3L(nn.Module):
+        """체크포인트 호환 3층 PartnerPredictor."""
+        action_dim: int = 6
+        num_partners: int = 1
+
+        @nn.compact
+        def __call__(self, embedding):
+            output_dim = self.action_dim * self.num_partners
+            x = embedding
+            x = nn.Dense(64, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+            x = nn.leaky_relu(x)
+            x = nn.Dense(64, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+            x = nn.leaky_relu(x)
+            x = nn.Dense(output_dim, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+            norm = jnp.sqrt(jnp.sum(x**2, axis=-1, keepdims=True) + 1e-10)
+            x = x / norm
+            return x
+
+    # baseline rnn.py가 참조하는 PartnerPredictor를 교체
+    rnn_mod = _load_baseline_module("rnn")
+    rnn_mod.PartnerPredictor = PartnerPredictor3L
+
+    # e3t 모듈도 교체 (rnn.py가 from .e3t import PartnerPredictor 했을 수 있으므로)
+    e3t_mod = _load_baseline_module("e3t")
+    e3t_mod.PartnerPredictor = PartnerPredictor3L
+
+
 class ModelManager:
     """AI agent 추론 관리자. checkpoint 로드 → get_action() API."""
 
@@ -87,6 +137,7 @@ class ModelManager:
         self.stochastic = True
         self._rng = jax.random.PRNGKey(0)
         self._apply_fn = None
+        self._use_prediction = False  # E3T용: use_prediction 플래그
 
     def load(
         self,
@@ -100,6 +151,11 @@ class ModelManager:
         self.stochastic = stochastic
         self.algo_name = algo_name
         self.seed_id = seed_id
+
+        # CEC 모델: 별도 경로 (Orbax가 아닌 CEC 자체 체크포인트 형식)
+        if algo_name.upper() == "CEC":
+            self._load_cec(ckpt_path)
+            return
 
         ckpt = load_checkpoint_cpu(ckpt_path)
         self.config = ckpt["config"]
@@ -141,6 +197,10 @@ class ModelManager:
 
     def _build_baseline_network_native(self):
         """baseline ActorCriticRNN을 직접 로드하여 원본 params 그대로 사용."""
+        # E3T: 체크포인트 predictor(3층)와 baseline 코드(5층) 불일치 패치
+        if "predictor" in self.params:
+            _patch_e3t_predictor()
+            self._use_prediction = True
         baseline_model_mod = _load_baseline_module("model")
         network = baseline_model_mod.get_actor_critic(self.config)
         # baseline initialize_carry도 baseline 모듈에서 가져옴
@@ -153,6 +213,7 @@ class ModelManager:
         # ph2 params: shared_encoder, shared_encoder_ln, ScannedRNN_0, Dense_0~3, (predictor)
         remap = {
             "CNN_0": "shared_encoder",
+            "CNNGamma_0": "shared_encoder",
             "LayerNorm_0": "shared_encoder_ln",
         }
         remapped = {}
@@ -178,7 +239,11 @@ class ModelManager:
         return ph2_get_actor_critic(ph2_config)
 
     def reset_hidden(self):
-        """에피소드 시작 시 GRU hidden state 리셋."""
+        """에피소드 시작 시 hidden state 리셋."""
+        if self.source == "cec":
+            self.reset_cec_hidden()
+            self._rng = jax.random.PRNGKey(np.random.randint(0, 2**31))
+            return
         if self.config is None:
             return
         if self.source == "baseline_native":
@@ -193,11 +258,14 @@ class ModelManager:
 
         if self.source == "baseline_native":
             # baseline ActorCriticRNN: actor_only=True로 value head 스킵
+            use_pred = self._use_prediction  # E3T: True, 나머지: False
             @jax.jit
             def _forward(params, hidden, obs, done):
                 x = (obs, done)
                 new_hidden, pi, _value, _pred = network.apply(
-                    {"params": params}, hidden, x, actor_only=True,
+                    {"params": params}, hidden, x,
+                    actor_only=True,
+                    use_prediction=use_pred,
                 )
                 return new_hidden, pi.logits
             self._apply_fn = _forward
@@ -231,11 +299,39 @@ class ModelManager:
 
         self._apply_fn = _forward
 
-    def get_action(self, obs: np.ndarray) -> int:
+    # ------------------------------------------------------------------
+    # CEC 전용 로드/추론
+    # ------------------------------------------------------------------
+    def _load_cec(self, ckpt_path: str):
+        """CEC checkpoint 로드. CECRuntime으로 추론."""
+        _ensure_cec_imports()
+        self._cec_runtime = _cec_runtime_cls(ckpt_path)
+        self._cec_hidden = self._cec_runtime.init_hidden(2)
+        self._cec_done = jnp.zeros((2,), dtype=jnp.bool_)
+        self._cec_step = 0
+        self.source = "cec"
+        self.config = {}
+        print(f"[CEC] Loaded from {ckpt_path}")
+
+    def reset_cec_hidden(self):
+        """CEC 에피소드 리셋."""
+        if self.source == "cec":
+            self._cec_hidden = self._cec_runtime.init_hidden(2)
+            self._cec_done = jnp.zeros((2,), dtype=jnp.bool_)
+            self._cec_step = 0
+
+    # ------------------------------------------------------------------
+    # get_action: 기존 모델 + CEC 통합
+    # ------------------------------------------------------------------
+    def get_action(self, obs: np.ndarray, layout_name: str = "") -> int:
         """
         obs: (H, W, C) numpy array → action: int (0-5)
+        layout_name: CEC 모델일 때 obs 변환에 필요 (기존 모델은 무시)
         """
-        # (H,W,C) → (1, 1, H, W, C) for (T=1, B=1)
+        if self.source == "cec":
+            return self._get_action_cec(obs, layout_name)
+
+        # 기존 경로 (ph2 / baseline)
         obs_jax = jnp.array(obs, dtype=jnp.float32)[None, None, ...]
         done_jax = jnp.zeros((1, 1), dtype=jnp.bool_)
 
@@ -244,8 +340,7 @@ class ModelManager:
         )
         self.hidden = new_hidden
 
-        # logits: (1, 1, 6)
-        logits_2d = logits[0, 0]  # (6,)
+        logits_2d = logits[0, 0]
 
         if self.stochastic:
             self._rng, subkey = jax.random.split(self._rng)
@@ -254,3 +349,25 @@ class ModelManager:
             action = jnp.argmax(logits_2d).item()
 
         return int(action)
+
+    def _get_action_cec(self, obs: np.ndarray, layout_name: str) -> int:
+        """CEC: OV2 obs (H,W,C) → (9,9,26) 변환 → CECRuntime 추론."""
+        _ensure_cec_imports()
+        # obs adapter: OV2 (H,W,30) → CEC (9,9,26)
+        cec_obs = _cec_obs_adapter(
+            jnp.array(obs, dtype=jnp.float32),
+            layout_name,
+            self._cec_step,
+            400,
+        )
+        # CECRuntime은 (num_agents, 9, 9, 26)을 받지만
+        # webapp에서는 AI agent 1명만 추론하므로 dummy agent 1명 추가
+        obs_arr = jnp.stack([cec_obs, jnp.zeros_like(cec_obs)])
+
+        self._rng, subkey = jax.random.split(self._rng)
+        actions, self._cec_hidden, probs = self._cec_runtime.step(
+            obs_arr, self._cec_hidden, self._cec_done, subkey
+        )
+        self._cec_step += 1
+
+        return int(actions[0])

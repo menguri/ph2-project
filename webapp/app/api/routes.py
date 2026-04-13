@@ -1,6 +1,7 @@
 """
 Phase 5-6: FastAPI endpoints — WebSocket game loop + REST APIs.
 """
+import asyncio
 import csv
 import io
 import json
@@ -27,11 +28,13 @@ router = APIRouter()
 _config = None
 _models_by_layout = {}  # {layout: [{algo_name, seed_id, ckpt_path}, ...]}
 _model_cache = {}
+_layout_order = []      # 레이아웃 순서 (모델이 있는 것만)
+_algos_per_layout = {}  # {layout: [algo_name, ...]} 고유 알고리즘 목록
 
 
 def init_routes(config: dict):
     """앱 시작 시 설정 로드 + 모델 목록 스캔."""
-    global _config, _models_by_layout
+    global _config, _models_by_layout, _layout_order, _algos_per_layout
     _config = config
 
     init_db(config["database"]["path"])
@@ -58,6 +61,15 @@ def init_routes(config: dict):
         for m in models:
             print(f"  - {layout}/{m['algo_name']}/{m['seed_id']}")
 
+    # 레이아웃 순서 및 알고리즘 목록 구축
+    _layout_order = sorted(_models_by_layout.keys())
+    _algos_per_layout = {}
+    for layout, models in _models_by_layout.items():
+        _algos_per_layout[layout] = sorted(set(m["algo_name"] for m in models))
+    print(f"[init] Layouts: {_layout_order}")
+    for layout, algos in _algos_per_layout.items():
+        print(f"  {layout}: {len(algos)} algos — {algos}")
+
 
 def _get_or_load_model(ckpt_path: str, algo_name: str, seed_id: str) -> ModelManager:
     """모델 캐시 (같은 checkpoint 재로드 방지)."""
@@ -74,6 +86,83 @@ def _get_or_load_model(ckpt_path: str, algo_name: str, seed_id: str) -> ModelMan
         _model_cache[cache_key] = mm
         print(f"[model] Loaded {algo_name}/{seed_id} from {ckpt_path}")
     return _model_cache[cache_key]
+
+
+def _get_study_progress(participant_id: str) -> dict:
+    """참가자의 스터디 진행 상황 조회."""
+    db = get_session_sync()
+    episodes = db.query(Episode).filter_by(participant_id=participant_id).all()
+    db.close()
+
+    # 레이아웃별 플레이한 알고리즘 집계
+    played = {}  # {layout: [algo_name, ...]}
+    for ep in episodes:
+        played.setdefault(ep.layout, []).append(ep.algo_name)
+
+    # 레이아웃 순서 (participant_id 기반 시드로 셔플)
+    rng = random.Random(participant_id)
+    layouts = list(_layout_order)
+    rng.shuffle(layouts)
+
+    progress = {}
+    for layout in layouts:
+        algos_needed = _algos_per_layout.get(layout, [])
+        games_per_layout = len(algos_needed)
+        played_algos = played.get(layout, [])
+        progress[layout] = {
+            "played": len(played_algos),
+            "total": games_per_layout,
+            "played_algos": played_algos,
+            "all_algos": algos_needed,
+        }
+
+    total_played = sum(p["played"] for p in progress.values())
+    total_needed = sum(p["total"] for p in progress.values())
+
+    return {
+        "layout_order": layouts,
+        "progress": progress,
+        "total_played": total_played,
+        "total_needed": total_needed,
+        "completed": total_played >= total_needed,
+    }
+
+
+def _get_next_game(participant_id: str) -> dict | None:
+    """다음 게임의 layout + algo 결정. 모두 완료 시 None 반환."""
+    info = _get_study_progress(participant_id)
+    if info["completed"]:
+        return None
+
+    rng = random.Random()  # 매번 다른 시드
+
+    # 레이아웃 순서대로 미완료된 첫 번째 레이아웃 선택
+    for layout in info["layout_order"]:
+        p = info["progress"][layout]
+        if p["played"] >= p["total"]:
+            continue
+
+        # 아직 플레이하지 않은 알고리즘 중 랜덤 선택
+        remaining_algos = [a for a in p["all_algos"] if a not in p["played_algos"]]
+        if not remaining_algos:
+            continue
+
+        chosen_algo = rng.choice(remaining_algos)
+
+        # 해당 algo의 모델 중 랜덤 시드 선택
+        algo_models = [m for m in _models_by_layout[layout] if m["algo_name"] == chosen_algo]
+        model_info = rng.choice(algo_models)
+
+        return {
+            "layout": layout,
+            "model_info": model_info,
+            "current_game": p["played"] + 1,
+            "games_per_layout": p["total"],
+            "total_played": info["total_played"],
+            "total_needed": info["total_needed"],
+        }
+
+    return None
 
 
 # ========== WebSocket Game Loop ==========
@@ -99,16 +188,14 @@ async def game_websocket(websocket: WebSocket, participant_id: str):
                 await websocket.send_json({"error": "Expected start_game message"})
                 continue
 
-            # layout 결정 (클라이언트가 보내거나 config 기본값)
-            layout = start_msg.get("layout", _config["game"].get("default_layout", "cramped_room"))
+            # 다음 게임 자동 배정 (레이아웃 + 알고리즘)
+            next_game = _get_next_game(participant_id)
+            if next_game is None:
+                await websocket.send_json({"type": "study_complete"})
+                break
 
-            # 해당 layout의 모델 중 랜덤 선택
-            layout_models = _models_by_layout.get(layout, [])
-            if not layout_models:
-                await websocket.send_json({"error": f"No models for layout '{layout}'"})
-                continue
-
-            model_info = random.choice(layout_models)
+            layout = next_game["layout"]
+            model_info = next_game["model_info"]
             model = _get_or_load_model(
                 model_info["ckpt_path"],
                 model_info["algo_name"],
@@ -131,56 +218,110 @@ async def game_websocket(websocket: WebSocket, participant_id: str):
                 episode_length=_config["game"].get("episode_length", 400),
             )
 
-            # 초기 상태 전송
+            # 실시간 틱 설정
+            tick_interval = _config["game"].get("tick_interval_ms", 250) / 1000.0
+            episode_length = _config["game"].get("episode_length", 400)
+
+            # 초기 상태 전송 (진행 상황 포함)
             init_info = session.get_init_info()
             init_info["algo_name"] = model_info["algo_name"]
             init_info["seed_id"] = model_info["seed_id"]
+            init_info["tick_interval_ms"] = int(tick_interval * 1000)
+            init_info["layout_name"] = layout
+            init_info["current_game"] = next_game["current_game"]
+            init_info["games_per_layout"] = next_game["games_per_layout"]
+            init_info["total_played"] = next_game["total_played"]
+            init_info["total_needed"] = next_game["total_needed"]
             await websocket.send_json({"type": "game_start", **init_info})
 
-            # 게임 루프
-            while not session.done:
+            # 실시간 게임 루프: 서버가 틱을 주도하고, 인간 액션은 비동기 수신
+            latest_action = None
+            disconnected = False
+
+            async def action_listener():
+                """틱 사이에 WebSocket으로 도착하는 인간 액션을 버퍼링."""
+                nonlocal latest_action, disconnected
                 try:
-                    msg = await websocket.receive_json()
+                    while not session.done and not disconnected:
+                        msg = await websocket.receive_json()
+                        action_key = msg.get("action", msg.get("key", ""))
+                        if isinstance(action_key, int):
+                            latest_action = action_key
+                        else:
+                            latest_action = keyboard_to_action(str(action_key))
                 except WebSocketDisconnect:
+                    disconnected = True
                     session.force_end()
-                    raise
 
-                action_key = msg.get("action", msg.get("key", ""))
-                if isinstance(action_key, int):
-                    human_action = action_key
-                else:
-                    human_action = keyboard_to_action(str(action_key))
+            listener_task = asyncio.create_task(action_listener())
 
-                result = session.step(human_action)
-                await websocket.send_json({"type": "state_update", **result})
+            try:
+                loop = asyncio.get_event_loop()
+                next_tick = loop.time() + tick_interval
 
-                if result["done"]:
-                    # DB에 에피소드 기록
-                    db = get_session_sync()
-                    ep = Episode(
-                        id=session.episode_id,
-                        participant_id=participant_id,
-                        algo_name=model_info["algo_name"],
-                        seed_id=model_info["seed_id"],
-                        layout=layout,
-                        human_player_index=session.human_idx,
-                        final_score=session.score,
-                        episode_length=session.timestep,
-                        collisions=session.collisions,
-                        deliveries=session.deliveries,
-                    )
-                    db.add(ep)
-                    db.commit()
-                    db.close()
+                while not session.done and not disconnected:
+                    # 다음 틱까지 대기 (drift 방지)
+                    now = loop.time()
+                    sleep_time = max(0, next_tick - now)
+                    await asyncio.sleep(sleep_time)
+                    next_tick += tick_interval
 
-                    await websocket.send_json({
-                        "type": "episode_end",
-                        "episode_id": session.episode_id,
-                        "final_score": session.score,
-                        "algo_name": model_info["algo_name"],
-                        "collisions": session.collisions,
-                        "deliveries": session.deliveries,
-                    })
+                    if disconnected:
+                        break
+
+                    # 이번 틱의 액션 결정 (없으면 stay=4)
+                    human_action = latest_action if latest_action is not None else 4
+                    latest_action = None
+
+                    result = session.step(human_action)
+
+                    # 남은 시간 정보 추가
+                    remaining_steps = episode_length - session.timestep
+                    result["time_remaining_ms"] = int(remaining_steps * tick_interval * 1000)
+                    result["tick_interval_ms"] = int(tick_interval * 1000)
+
+                    try:
+                        await websocket.send_json({"type": "state_update", **result})
+                    except (WebSocketDisconnect, RuntimeError):
+                        session.force_end()
+                        break
+
+                    if result["done"]:
+                        # DB에 에피소드 기록
+                        db = get_session_sync()
+                        ep = Episode(
+                            id=session.episode_id,
+                            participant_id=participant_id,
+                            algo_name=model_info["algo_name"],
+                            seed_id=model_info["seed_id"],
+                            layout=layout,
+                            human_player_index=session.human_idx,
+                            final_score=session.score,
+                            episode_length=session.timestep,
+                            collisions=session.collisions,
+                            deliveries=session.deliveries,
+                        )
+                        db.add(ep)
+                        db.commit()
+                        db.close()
+
+                        try:
+                            await websocket.send_json({
+                                "type": "episode_end",
+                                "episode_id": session.episode_id,
+                                "final_score": session.score,
+                                "algo_name": model_info["algo_name"],
+                                "collisions": session.collisions,
+                                "deliveries": session.deliveries,
+                            })
+                        except (WebSocketDisconnect, RuntimeError):
+                            pass
+            finally:
+                listener_task.cancel()
+                try:
+                    await listener_task
+                except asyncio.CancelledError:
+                    pass
 
             # 루프 끝 — 클라이언트가 play_again 보내면 다시 시작
 
@@ -233,6 +374,12 @@ async def submit_post_survey(data: PostSurveySubmit):
     db.commit()
     db.close()
     return {"status": "ok"}
+
+
+@router.get("/api/study-progress/{participant_id}")
+async def get_study_progress(participant_id: str):
+    """참가자의 스터디 진행 상황 반환."""
+    return _get_study_progress(participant_id)
 
 
 @router.get("/api/layouts")

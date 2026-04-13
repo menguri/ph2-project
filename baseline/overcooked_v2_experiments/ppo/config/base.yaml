@@ -10,7 +10,7 @@ NUM_CHECKPOINTS: 3
 # Eval ckpt 기본값: 모든 학습이 1M env step cadence 로 eval/run_X/ 에 저장하도록 디폴트 ON.
 # 개별 실험에서 끄려면 ++SAVE_TO_EVAL_DIR=false 또는 ++EVAL_CKPT_EVERY_ENV_STEPS=0 으로 override.
 SAVE_TO_EVAL_DIR: True
-EVAL_CKPT_EVERY_ENV_STEPS: 1000000
+EVAL_CKPT_EVERY_ENV_STEPS: 500000
 VISUALIZE: False
 OLD_OVERCOOKED: False
 DISABLE_OLD_OVERCOOKED_AUTO: False

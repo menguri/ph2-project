@@ -144,7 +144,7 @@ class GameSession:
         ai_obs = overcooked_state_to_jaxmarl_obs(
             self.state, self.mdp, agent_idx=self.ai_idx
         )
-        ai_action_idx = self.model.get_action(ai_obs)
+        ai_action_idx = self.model.get_action(ai_obs, layout_name=self.layout)
 
         # human obs (BC 데이터용)
         human_obs = overcooked_state_to_jaxmarl_obs(

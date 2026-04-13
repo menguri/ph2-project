@@ -28,12 +28,30 @@ def _build_cpu_restore_args(tree):
 
 
 def _load_checkpoint_sync(ckpt_path: Path) -> Dict[str, Any]:
-    """동기 checkpoint 로드 (별도 스레드에서 호출)."""
+    """동기 checkpoint 로드 (별도 스레드에서 호출).
+    PH2 체크포인트는 ckpt_final/model_ckpt/ 하위에 orbax 데이터가 있으므로 자동 감지."""
+    # PH2 구조: ckpt_final/model_ckpt/_METADATA 가 있으면 model_ckpt/ 를 로드
+    model_ckpt_sub = ckpt_path / "model_ckpt"
+    if model_ckpt_sub.is_dir() and (model_ckpt_sub / "_METADATA").exists():
+        actual_path = model_ckpt_sub
+    else:
+        actual_path = ckpt_path
+
     handler = ocp.PyTreeCheckpointHandler()
-    meta = handler.metadata(ckpt_path)
+    meta = handler.metadata(actual_path)
     restore_args = _build_cpu_restore_args(meta.tree)
     checkpointer = ocp.PyTreeCheckpointer()
-    return checkpointer.restore(str(ckpt_path), restore_args=restore_args)
+    result = checkpointer.restore(str(actual_path), restore_args=restore_args)
+
+    # PH2 구조: metadata.json에서 config가 없으면 mode_tildes.npz에서 로드
+    if "config" not in result:
+        import json, numpy as np
+        meta_json = ckpt_path / "metadata.json"
+        tildes = ckpt_path / "mode_tildes.npz"
+        if meta_json.exists():
+            with open(meta_json) as f:
+                result["_run_metadata"] = json.load(f)
+    return result
 
 
 def load_checkpoint_cpu(ckpt_dir: str) -> Dict[str, Any]:
@@ -51,8 +69,8 @@ def detect_model_source(config: dict) -> str:
 
     Returns:
         "ph2": PH2 계열 (PH2, PH2-E3T 등)
-        "baseline_native": baseline 중 value head가 빠진 모델 (MEP 등) → baseline 코드 직접 사용
-        "baseline": baseline 중 param 리매핑으로 ph2 코드에서 로드 가능한 모델 (SP, E3T, FCP)
+        "baseline_native": baseline 코드 직접 사용 (MEP, E3T 등 인코더 구조가 ph2와 다른 모델)
+        "baseline": baseline 중 param 리매핑으로 ph2 코드에서 로드 가능한 모델 (SP, FCP)
     """
     alg = str(config.get("ALG_NAME", ""))
     if "PH2" in alg.upper() or config.get("TRANSFORMER_ACTION", False):
@@ -60,6 +78,11 @@ def detect_model_source(config: dict) -> str:
     # MEP/HSP/Gamma: CNNGamma 인코더 사용 → ph2의 shared_encoder(CNN)와 구조 불일치
     # baseline ActorCriticRNN을 직접 로드하여 actor_only=True로 추론
     if alg.upper() in ("MEP", "HSP", "GAMMA"):
+        return "baseline_native"
+    # E3T 등 CNNSimple 인코더 사용 모델: ph2 리매핑 불가 (Conv 구조가 다름)
+    # config["model"]["OBS_ENCODER"]에 인코더 타입이 저장됨
+    obs_encoder = config.get("model", {}).get("OBS_ENCODER", "CNN")
+    if str(obs_encoder).upper() != "CNN":
         return "baseline_native"
     return "baseline"
 

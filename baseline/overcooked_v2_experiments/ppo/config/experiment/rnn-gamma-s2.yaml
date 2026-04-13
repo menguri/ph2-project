@@ -30,3 +30,7 @@ model:
   "NUM_STEPS": 400
   "TOTAL_TIMESTEPS": 3e7        # 30M 유지
   "REW_SHAPING_HORIZON": 3e7    # 전체 기간
+  "USE_VALUENORM": True
+  "HUBER_DELTA": 10.0
+
+MAPPO_MODE: True

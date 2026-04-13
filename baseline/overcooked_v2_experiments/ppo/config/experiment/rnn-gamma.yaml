@@ -58,3 +58,8 @@ model:
   "S2_TOTAL_TIMESTEPS": 3e7        # S2 (30M 유지)
   "REW_SHAPING_HORIZON": 1e7       # S1: 전체 기간
   "S2_REW_SHAPING_HORIZON": 3e7    # S2: 전체 기간 (논문: shaping=전체)
+  "USE_VALUENORM": True            # 원본 GAMMA: ValueNorm β=0.99999 (use_valuenorm=True)
+  "HUBER_DELTA": 10.0              # 원본 GAMMA: use_huber_loss=True, huber_delta=10.0
+
+# MAPPO centralized critic (원본 GAMMA: use_centralized_V=True)
+MAPPO_MODE: True

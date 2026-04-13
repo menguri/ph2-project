@@ -32,9 +32,17 @@ let gameState = null;
 let terrain = null;
 let humanPlayerIndex = 0;
 let episodeId = null;
-let episodeLength = 400;
+let episodeLength = 200;
 let currentAlgo = "";
-let selectedLayout = "cramped_room";
+let currentLayout = "";
+
+// 스터디 진행 상황
+let studyProgress = {
+    currentGame: 0,
+    gamesPerLayout: 0,
+    totalPlayed: 0,
+    totalNeeded: 0,
+};
 
 // ===== Page Navigation =====
 function showPage(pageId) {
@@ -175,7 +183,7 @@ function updateTutPage() {
     // button text
     const btn = document.getElementById("tut-next-btn");
     if (tutPage >= TUT_TOTAL) {
-        btn.innerHTML = t("tut_start") || "Start!";
+        btn.innerHTML = t("tut_start") || "Start Game!";
     } else {
         btn.innerHTML = t("tut_next") || "Next";
     }
@@ -183,7 +191,7 @@ function updateTutPage() {
 
 function tutNext() {
     if (tutPage >= TUT_TOTAL) {
-        showLayoutSelection();
+        startNewGame();  // 튜토리얼 끝 → 바로 게임 시작 (서버가 레이아웃/알고 자동 배정)
     } else {
         tutPage++;
         updateTutPage();
@@ -199,46 +207,14 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
-// ===== Layout Selection =====
-async function showLayoutSelection() {
-    showPage("page-layout");
-    const container = document.getElementById("layout-buttons");
-    container.innerHTML = "";
-    document.getElementById("layout-loading").style.display = "block";
-
-    try {
-        const resp = await fetch("/api/layouts");
-        const data = await resp.json();
-        document.getElementById("layout-loading").style.display = "none";
-
-        const layoutNames = {
-            "cramped_room": "Cramped Room",
-            "asymmetric_advantages": "Asymmetric Advantages",
-            "counter_circuit": "Counter Circuit",
-            "coordination_ring": "Coordination Ring",
-            "forced_coordination": "Forced Coordination",
-        };
-
-        for (const [layout, info] of Object.entries(data.layouts)) {
-            const btn = document.createElement("button");
-            btn.className = "layout-btn";
-            btn.innerHTML = `<strong>${layoutNames[layout] || layout}</strong><br>
-                <small>${info.algos.join(", ")} — ${info.count} model(s)</small>`;
-            btn.onclick = () => {
-                selectedLayout = layout;
-                startNewGame();
-            };
-            container.appendChild(btn);
-        }
-
-        if (Object.keys(data.layouts).length === 0) {
-            container.innerHTML = "<p>No models available. Please add models to the models/ directory.</p>";
-        }
-    } catch (e) {
-        document.getElementById("layout-loading").style.display = "none";
-        container.innerHTML = "<p>Failed to load layouts.</p>";
-    }
-}
+// ===== 레이아웃 표시명 =====
+const LAYOUT_NAMES = {
+    "cramped_room": "Cramped Room",
+    "asymm_advantages": "Asymm. Advantages",
+    "counter_circuit": "Counter Circuit",
+    "coord_ring": "Coord. Ring",
+    "forced_coord": "Forced Coord.",
+};
 
 // ===== Game =====
 function startNewGame() {
@@ -246,12 +222,29 @@ function startNewGame() {
     connectWebSocket();
 }
 
+function continueStudy() {
+    startNewGame();
+}
+
+function tryQuit() {
+    // 모두 완료 시 바로 종료, 미완료 시 확인 페이지
+    if (studyProgress.totalPlayed >= studyProgress.totalNeeded) {
+        showPage("page-thanks");
+    } else {
+        showPage("page-quit-confirm");
+    }
+}
+
+function confirmQuit() {
+    showPage("page-thanks");
+}
+
 function connectWebSocket() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(`${protocol}//${location.host}/ws/${participantId}`);
 
     ws.onopen = () => {
-        ws.send(JSON.stringify({type: "start_game", layout: selectedLayout}));
+        ws.send(JSON.stringify({type: "start_game"}));
         document.getElementById("game-status").textContent = "Connecting...";
     };
 
@@ -263,60 +256,136 @@ function connectWebSocket() {
             episodeId = msg.episode_id;
             episodeLength = msg.episode_length;
             currentAlgo = msg.algo_name || "";
+            currentLayout = msg.layout_name || "";
             gameState = msg.state;
+
+            // 진행 상황 업데이트
+            studyProgress.currentGame = msg.current_game || 0;
+            studyProgress.gamesPerLayout = msg.games_per_layout || 0;
+            studyProgress.totalPlayed = msg.total_played || 0;
+            studyProgress.totalNeeded = msg.total_needed || 0;
+
             resizeCanvas();
             render();
-            // human은 항상 파란색(playerYou=#2196F3)으로 렌더링됨
+            startActionLoop();
+
+            // HUD 업데이트
+            const layoutDisplay = LAYOUT_NAMES[currentLayout] || currentLayout;
+            document.getElementById("hud-progress").textContent =
+                `${layoutDisplay} (${studyProgress.currentGame}/${studyProgress.gamesPerLayout})`;
+            document.getElementById("hud-score").textContent = `${t("hud_score")}: 0`;
+
+            // 타이머 초기화
+            if (msg.tick_interval_ms) {
+                const totalSecs = Math.ceil(episodeLength * msg.tick_interval_ms / 1000);
+                const min = Math.floor(totalSecs / 60);
+                const sec = totalSecs % 60;
+                document.getElementById("hud-timer").textContent =
+                    `${min}:${sec.toString().padStart(2, '0')}`;
+            }
+
+            // 상태 표시
             const colorName = currentLang === "ko" ? "파란색" : "BLUE";
             document.getElementById("game-status").textContent = t("game_status_you").replace("{color}", colorName);
-            document.getElementById("hud-score").textContent = `${t("hud_score")}: 0`;
-            document.getElementById("hud-step").textContent = `${t("hud_step")}: 0 / ${episodeLength}`;
+
         } else if (msg.type === "state_update") {
             gameState = msg.state;
             render();
             document.getElementById("hud-score").textContent = `${t("hud_score")}: ${msg.score}`;
-            document.getElementById("hud-step").textContent = `${t("hud_step")}: ${msg.timestep} / ${episodeLength}`;
+            // 타이머 업데이트
+            if (msg.time_remaining_ms !== undefined) {
+                const secs = Math.max(0, Math.ceil(msg.time_remaining_ms / 1000));
+                const min = Math.floor(secs / 60);
+                const sec = secs % 60;
+                document.getElementById("hud-timer").textContent =
+                    `${min}:${sec.toString().padStart(2, '0')}`;
+            }
         } else if (msg.type === "episode_end") {
+            stopActionLoop();
+            // 진행 상황 갱신
+            studyProgress.totalPlayed++;
             document.getElementById("post-score-display").textContent =
                 currentLang === "ko" ? `최종 점수: ${msg.final_score}` : `Final Score: ${msg.final_score}`;
             episodeId = msg.episode_id;
             showPage("page-post-survey");
+
+        } else if (msg.type === "study_complete") {
+            // 모든 게임 완료
+            stopActionLoop();
+            document.getElementById("thanks-message").innerHTML = t("thanks_complete");
+            showPage("page-thanks");
+
         } else if (msg.error) {
             document.getElementById("game-status").textContent = `Error: ${msg.error}`;
         }
     };
 
     ws.onclose = () => {
+        stopActionLoop();
         document.getElementById("game-status").textContent =
-            currentLang === "ko" ? "연결이 끊어졌습니다." : "Disconnected.";
+            currentLang === "ko"
+                ? "연결이 끊어졌습니다. mingukang@unist.ac.kr로 문의해 주세요."
+                : "Disconnected. Please contact mingukang@unist.ac.kr.";
     };
 }
 
-// ===== Input handling (keyboard + mobile) =====
-let lastActionTime = 0;
-const MIN_ACTION_INTERVAL = 80; // ms — 입력 쓰로틀 (너무 빠른 연타 방지)
+// ===== Input handling — 실시간 모드 (키 버퍼링 + 주기적 전송) =====
+let pendingAction = null;
+let actionSendInterval = null;
+const activeKeys = new Set();
 
-function sendAction(action) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    const page = document.querySelector(".page.active");
-    if (!page || page.id !== "page-game") return;
-    const now = Date.now();
-    if (now - lastActionTime < MIN_ACTION_INTERVAL) return;
-    lastActionTime = now;
-    ws.send(JSON.stringify({action}));
+const ACTION_KEY_MAP = {
+    "ArrowRight": 0, "ArrowDown": 1, "ArrowLeft": 2, "ArrowUp": 3,
+    "d": 0, "s": 1, "a": 2, "w": 3,
+    " ": 5, "e": 5, "Enter": 5,
+};
+
+function startActionLoop() {
+    pendingAction = null;
+    activeKeys.clear();
+    // 서버 틱(250ms)보다 짧은 주기로 최신 action 전송
+    actionSendInterval = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const page = document.querySelector(".page.active");
+        if (!page || page.id !== "page-game") return;
+        if (pendingAction !== null) {
+            ws.send(JSON.stringify({action: pendingAction}));
+            // interact(5)는 1회성 — 전송 후 해제
+            if (pendingAction === 5) pendingAction = null;
+        }
+    }, 50);
 }
 
-// Keyboard input
+function stopActionLoop() {
+    if (actionSendInterval) {
+        clearInterval(actionSendInterval);
+        actionSendInterval = null;
+    }
+    pendingAction = null;
+    activeKeys.clear();
+}
+
+// Keyboard input: keydown → 버퍼에 설정, keyup → 해제
 document.addEventListener("keydown", (e) => {
-    const keyMap = {
-        "ArrowRight": 0, "ArrowDown": 1, "ArrowLeft": 2, "ArrowUp": 3,
-        "d": 0, "s": 1, "a": 2, "w": 3,
-        " ": 5, "e": 5, "Enter": 5,
-    };
-    const action = keyMap[e.key];
+    const action = ACTION_KEY_MAP[e.key];
     if (action !== undefined) {
         e.preventDefault();
-        sendAction(action);
+        activeKeys.add(e.key);
+        pendingAction = action;
+    }
+});
+
+document.addEventListener("keyup", (e) => {
+    if (ACTION_KEY_MAP[e.key] !== undefined) {
+        activeKeys.delete(e.key);
+        if (activeKeys.size === 0) {
+            pendingAction = null;
+        } else {
+            // 아직 누르고 있는 키 중 마지막 것 사용
+            const remaining = [...activeKeys];
+            const lastAction = ACTION_KEY_MAP[remaining[remaining.length - 1]];
+            pendingAction = lastAction !== undefined ? lastAction : null;
+        }
     }
 });
 
@@ -739,7 +808,21 @@ document.getElementById("post-survey-form").addEventListener("submit", async e =
     document.querySelectorAll(".likert-val").forEach(el => el.textContent = "4");
     document.getElementById("post-open-text").value = "";
     applyI18n();
-    showPage("page-again");
+
+    // 진행 상황 표시
+    const layoutDisplay = LAYOUT_NAMES[currentLayout] || currentLayout;
+    const progressText = currentLang === "ko"
+        ? `전체 진행: ${studyProgress.totalPlayed} / ${studyProgress.totalNeeded} 게임 완료`
+        : `Overall: ${studyProgress.totalPlayed} / ${studyProgress.totalNeeded} games completed`;
+    document.getElementById("again-progress").textContent = progressText;
+
+    // 모든 게임 완료 시 자동으로 완료 페이지
+    if (studyProgress.totalPlayed >= studyProgress.totalNeeded) {
+        document.getElementById("thanks-message").innerHTML = t("thanks_complete");
+        showPage("page-thanks");
+    } else {
+        showPage("page-again");
+    }
 });
 
 // ===== Responsive resize =====
@@ -747,23 +830,22 @@ window.addEventListener("resize", () => {
     if (terrain) { resizeCanvas(); render(); }
 });
 
-// ===== Mobile touch controls =====
+// ===== Mobile touch controls — 실시간 모드 =====
 document.querySelectorAll(".mobile-btn").forEach(btn => {
     const action = parseInt(btn.getAttribute("data-action"));
     if (isNaN(action)) return;
     btn.addEventListener("touchstart", (e) => {
         e.preventDefault();
-        sendAction(action);
+        pendingAction = action;
     });
-    // 길게 누르면 연속 입력 (방향키)
-    let holdInterval = null;
-    if (action < 4) {
-        btn.addEventListener("touchstart", () => {
-            holdInterval = setInterval(() => sendAction(action), 120);
-        });
-        btn.addEventListener("touchend", () => clearInterval(holdInterval));
-        btn.addEventListener("touchcancel", () => clearInterval(holdInterval));
-    }
+    btn.addEventListener("touchend", (e) => {
+        e.preventDefault();
+        // 방향키는 떼면 해제, interact는 startActionLoop에서 1회성 처리
+        if (action < 5) pendingAction = null;
+    });
+    btn.addEventListener("touchcancel", () => {
+        pendingAction = null;
+    });
 });
 
 console.log("PH2 Human-AI Study webapp loaded. Participant:", participantId);

@@ -27,12 +27,16 @@
                 <h2 data-i18n="consent_title">Welcome</h2>
                 <p data-i18n="consent_desc">You will play the cooperative cooking game <strong>Overcooked</strong> with an AI partner.</p>
                 <p data-i18n="consent_task">Your task is to work together to prepare and deliver soup orders as efficiently as possible.</p>
+                <h3 data-i18n="consent_study_info_title">Study Overview</h3>
+                <p data-i18n="consent_study_info">You will play across <strong>5 different kitchen layouts</strong>, with <strong>7 games per layout</strong> (each game is 60 seconds). Total: <strong>35 games, approximately 40 minutes</strong>.</p>
+                <p data-i18n="consent_incentive">A gift card will be provided upon completion of all games.</p>
                 <h3 data-i18n="consent_controls_title">Controls</h3>
                 <ul>
                     <li data-i18n="consent_controls_move"><strong>Arrow keys</strong> or <strong>WASD</strong> — Move</li>
                     <li data-i18n="consent_controls_interact"><strong>Space</strong> or <strong>E</strong> — Interact (pick up / place / deliver)</li>
                 </ul>
                 <p data-i18n="consent_survey_note">After each game, you'll be asked to fill out a short survey about your experience.</p>
+                <p data-i18n="consent_disconnect_note" style="color:#FF9800;">If you experience a disconnection, please contact <strong>mingukang@unist.ac.kr</strong>.</p>
                 <button onclick="showPage('page-pre-survey')" data-i18n="consent_agree">I Agree &amp; Continue</button>
             </div>
         </div>
@@ -127,21 +131,15 @@
             </div>
         </div>
 
-        <!-- Page: Layout Selection -->
-        <div id="page-layout" class="page">
-            <div class="card">
-                <h2 data-i18n="layout_title">Select Layout</h2>
-                <p data-i18n="layout_desc">Choose a kitchen layout to play on:</p>
-                <div id="layout-buttons"></div>
-                <p id="layout-loading" style="display:none;" data-i18n="layout_loading">Loading layouts...</p>
-            </div>
-        </div>
+        <!-- Page: Layout Selection (레거시, 자동 배정으로 대체됨) -->
+        <div id="page-layout" class="page" style="display:none;"></div>
 
         <!-- Page: Game -->
         <div id="page-game" class="page">
             <div id="game-hud">
+                <span id="hud-progress"></span>
                 <span id="hud-score">Score: 0</span>
-                <span id="hud-step">Step: 0 / 400</span>
+                <span id="hud-timer">Time: 0:00</span>
             </div>
             <canvas id="game-canvas" width="500" height="400"></canvas>
             <div id="game-status"></div>
@@ -203,21 +201,33 @@
             </div>
         </div>
 
-        <!-- Page: Play Again -->
+        <!-- Page: Play Again (진행 상황 표시) -->
         <div id="page-again" class="page">
             <div class="card">
                 <h2 data-i18n="again_title">Thank You!</h2>
                 <p data-i18n="again_desc">Your response has been recorded.</p>
-                <button onclick="showLayoutSelection()" data-i18n="again_play">Play Again (New AI Partner)</button>
-                <button onclick="showPage('page-thanks')" class="secondary" data-i18n="again_done">Done</button>
+                <p id="again-progress"></p>
+                <button onclick="continueStudy()" data-i18n="again_play">Continue to Next Game</button>
+                <button onclick="tryQuit()" class="secondary" data-i18n="again_done">End Study</button>
             </div>
         </div>
 
-        <!-- Page: Thanks -->
+        <!-- Page: Quit Confirm (미완료 시) -->
+        <div id="page-quit-confirm" class="page">
+            <div class="card">
+                <h2 data-i18n="quit_title">Are you sure?</h2>
+                <p id="quit-message" data-i18n="quit_desc">You have not completed all games. Gift card will only be provided upon full completion.</p>
+                <p data-i18n="quit_contact">If you experienced issues, please contact <strong>mingukang@unist.ac.kr</strong>.</p>
+                <button onclick="continueStudy()" data-i18n="quit_continue">Continue Playing</button>
+                <button onclick="confirmQuit()" class="secondary" data-i18n="quit_confirm">Confirm End</button>
+            </div>
+        </div>
+
+        <!-- Page: Thanks (완료 또는 중도 종료) -->
         <div id="page-thanks" class="page">
             <div class="card">
                 <h2 data-i18n="thanks_title">Thank you for participating!</h2>
-                <p data-i18n="thanks_desc">You may close this window.</p>
+                <p id="thanks-message" data-i18n="thanks_desc">You may close this window.</p>
             </div>
         </div>
     </div>

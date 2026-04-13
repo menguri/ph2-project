@@ -259,3 +259,65 @@ def load_ppo_policies_from_run_dir(run_dir, stochastic=True):
                 except Exception as e:
                     print(f"  경고: {ckpt_final} 로드 실패: {e}")
     return policies
+
+
+# ──────────────────────────────────────────────
+# CEC Policy (cec_integration 사용)
+# ──────────────────────────────────────────────
+
+class CECPolicy:
+    """CEC checkpoint를 AbstractPolicy 인터페이스로 래핑.
+
+    compute_action(obs, done, hstate, key) → (action, new_hstate, extras)
+    obs는 OV2 (H,W,C) 형식이며, 내부에서 CEC (9,9,26)으로 변환.
+    """
+
+    def __init__(self, ckpt_path: str, layout: str, stochastic: bool = True):
+        cec_root = _PROJECT_ROOT / "cec_integration"
+        if str(cec_root) not in sys.path:
+            sys.path.insert(0, str(cec_root))
+        from cec_integration.cec_runtime import CECRuntime
+        from cec_integration.obs_adapter_v2 import ov2_obs_to_cec
+
+        self._runtime = CECRuntime(ckpt_path)
+        self._obs_adapter = ov2_obs_to_cec
+        self._layout = layout
+        self._stochastic = stochastic
+        self._step = 0
+
+    def compute_action(self, obs, done, hstate, key, **kwargs):
+        """obs: (H, W, C) OV2 obs. hstate: CEC LSTM hidden. done: scalar bool."""
+        cec_obs = self._obs_adapter(obs, self._layout, self._step, 400)
+        # CECRuntime은 (num_agents, 9, 9, 26)을 받으므로 dummy agent 추가
+        obs_arr = jnp.stack([cec_obs, jnp.zeros_like(cec_obs)])
+        done_arr = jnp.array([done, done])
+
+        actions, new_hstate, probs = self._runtime.step(obs_arr, hstate, done_arr, key)
+        self._step += 1
+
+        action = int(actions[0])
+        extras = {"value": jnp.float32(0.0)}
+        return action, new_hstate, extras
+
+    def init_hstate(self, batch_size=1, key=None):
+        self._step = 0
+        return self._runtime.init_hidden(2)  # 항상 2 agents (1 real + 1 dummy)
+
+
+def load_cec_policies(ckpt_dir: str, layout: str, stochastic: bool = True):
+    """CEC 체크포인트 디렉토리에서 policy 리스트 로드.
+
+    ckpt_dir: cec_integration/ckpts/forced_coord_9/ 같은 경로.
+    ckpt2_improved 서브디렉토리만 로드.
+    """
+    ckpt_dir = Path(ckpt_dir).resolve()
+    policies = []
+    for d in sorted(ckpt_dir.iterdir()):
+        if d.is_dir() and d.name.endswith("ckpt2_improved"):
+            try:
+                policy = CECPolicy(str(d), layout, stochastic)
+                policies.append(policy)
+                print(f"  CEC 로드: {d.name}")
+            except Exception as e:
+                print(f"  경고: {d} 로드 실패: {e}")
+    return policies

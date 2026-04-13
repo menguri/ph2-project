@@ -290,34 +290,26 @@ def _run_unified_gamma(config):
         print("=" * 60)
         out_s1 = None
     else:
-        # ---- S1: Population training (MEP S1과 동일) ----
-        from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
+        # ---- S1: Population training (GAMMA MAPPO) ----
+        from overcooked_v2_experiments.ppo.gamma.gamma_s1_mappo import make_train_gamma_s1
         print("=" * 60)
-        print("[GAMMA] Stage 1: Population training")
+        print("[GAMMA] Stage 1: Population training (MAPPO)")
         print("=" * 60)
-        train_fn = make_train_mep_s1(config)
+        train_fn = make_train_gamma_s1(config)
         rng = jax.random.PRNGKey(config["SEED"])
         with jax.disable_jit(False):
             out_s1 = jax.jit(train_fn)(rng)
         pop_dir = run_base_dir / "gamma_population"
         _save_population(out_s1["pop_actor_ckpts"], pop_dir, "GAMMA S1")
 
-    # ---- S2 ----
-    if method == "vae":
-        print("=" * 60)
-        print("[GAMMA] Stage 2: VAE training + z-conditioned RL")
-        print("=" * 60)
-        from overcooked_v2_experiments.ppo.gamma.gamma_s2_vae import run_gamma_s2_vae
-        pop_params = load_mep_population(pop_dir)
-        s2_config = _make_s2_config(config)
-        out_s2 = run_gamma_s2_vae(s2_config, pop_params, pop_dir)
-    else:
-        print("=" * 60)
-        print("[GAMMA] Stage 2: Adaptive agent training (standard RL)")
-        print("=" * 60)
-        pop_params = load_mep_population(pop_dir)
-        s2_config = _make_s2_config(config)
-        out_s2 = _run_s2_multi_seed(s2_config, pop_params, "GAMMA S2")
+    # ---- S2: VAE only (원본 GAMMA 논문 방식) ----
+    print("=" * 60)
+    print("[GAMMA] Stage 2: VAE training + z-conditioned RL (MAPPO)")
+    print("=" * 60)
+    from overcooked_v2_experiments.ppo.gamma.gamma_s2_vae import run_gamma_s2_vae
+    pop_params = load_mep_population(pop_dir)
+    s2_config = _make_s2_config(config)
+    out_s2 = run_gamma_s2_vae(s2_config, pop_params, pop_dir)
 
     return {"s1": out_s1, "s2": out_s2}
 
@@ -564,8 +556,8 @@ def single_run(config):
     # GAMMA_S1: MEP S1과 동일 알고리즘, population dir만 gamma_population으로 변경
     # ----------------------------------------------------------------
     if alg_name == "GAMMA_S1":
-        from overcooked_v2_experiments.ppo.mep.mep_s1 import make_train_mep_s1
-        train_fn = make_train_mep_s1(config)
+        from overcooked_v2_experiments.ppo.gamma.gamma_s1_mappo import make_train_gamma_s1
+        train_fn = make_train_gamma_s1(config)
         rng = jax.random.PRNGKey(config["SEED"])
         with jax.disable_jit(False):
             out = jax.jit(train_fn)(rng)
@@ -587,10 +579,10 @@ def single_run(config):
         return out
 
     # ----------------------------------------------------------------
-    # GAMMA_S2: MEP S2와 동일, GAMMA_POPULATION_DIR에서 population 로드
+    # GAMMA_S2: VAE S2 only (원본 GAMMA 논문 방식)
     # ----------------------------------------------------------------
     if alg_name == "GAMMA_S2":
-        from overcooked_v2_experiments.ppo.mep.mep_s2 import make_train_mep_s2
+        from overcooked_v2_experiments.ppo.gamma.gamma_s2_vae import run_gamma_s2_vae
         pop_dir = Path(config.get("GAMMA_POPULATION_DIR", config.get("MEP_POPULATION_DIR", "")))
         if not pop_dir.exists():
             raise ValueError(
@@ -598,62 +590,7 @@ def single_run(config):
                 "Run GAMMA Stage 1 first or provide +GAMMA_POPULATION_DIR."
             )
         pop_params = load_mep_population(pop_dir)
-        train_fn = make_train_mep_s2(config)
-
-        num_seeds = config["NUM_SEEDS"]
-        with jax.disable_jit(False):
-            rng = jax.random.PRNGKey(config["SEED"])
-            rngs = jax.random.split(rng, num_seeds)
-            rngs = jax.device_put(rngs, jax.devices("cpu")[0])
-
-            num_devices = get_num_devices()
-            print(f"[GAMMA S2] num_seeds={num_seeds}, num_devices={num_devices}")
-
-            def _train_gamma_s2(rng_s):
-                return train_fn(rng_s, population=pop_params)
-
-            if num_devices <= 1:
-                train_jit = jax.jit(_train_gamma_s2)
-                if num_seeds == 1:
-                    out = train_jit(rngs[0])
-                else:
-                    out = jax.vmap(train_jit)(rngs)
-            else:
-                if num_seeds == num_devices:
-                    out = jax.pmap(_train_gamma_s2)(rngs)
-                elif num_seeds % num_devices == 0:
-                    seeds_per_device = num_seeds // num_devices
-                    rngs_2d = rngs.reshape((num_devices, seeds_per_device, *rngs.shape[1:]))
-                    out = jax.pmap(jax.vmap(_train_gamma_s2))(rngs_2d)
-                    out = jax.tree_util.tree_map(
-                        lambda x: x.reshape((num_seeds, *x.shape[2:])), out
-                    )
-                else:
-                    print(f"[warn] num_seeds({num_seeds}) % num_devices({num_devices}) != 0; fallback to vmap")
-                    train_jit = jax.jit(_train_gamma_s2)
-                    out = jax.vmap(train_jit)(rngs)
-
-        # 체크포인트 저장 (MEP S2와 동일)
-        num_checkpoints = config.get("NUM_CHECKPOINTS", 0)
-        if num_checkpoints > 0:
-            actor_ckpts = out["actor_ckpts"]
-            sample_leaf = jax.tree_util.tree_leaves(actor_ckpts)[0]
-            has_seed_axis = sample_leaf.shape[0] == num_seeds and num_seeds > 1
-
-            for s in range(num_seeds):
-                if has_seed_axis:
-                    seed_ckpts = jax.tree_util.tree_map(lambda x: x[s], actor_ckpts)
-                else:
-                    seed_ckpts = actor_ckpts
-                for slot in range(num_checkpoints - 1):
-                    params = jax.tree_util.tree_map(lambda x: x[slot], seed_ckpts)
-                    store_checkpoint(config, params, s, slot, final=False)
-                params_final = jax.tree_util.tree_map(
-                    lambda x: x[num_checkpoints - 1], seed_ckpts
-                )
-                store_checkpoint(config, params_final, s, num_checkpoints - 1, final=True)
-            print(f"[GAMMA S2] Saved {num_seeds} seeds × {num_checkpoints} ckpts to {config['RUN_BASE_DIR']}")
-
+        out = run_gamma_s2_vae(config, pop_params, pop_dir)
         return out
 
     # ----------------------------------------------------------------

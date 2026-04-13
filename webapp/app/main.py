@@ -11,12 +11,15 @@ from fastapi.responses import FileResponse
 from .config import load_config
 from .api.routes import router, init_routes
 
-# baseline 모델 코드 접근을 위해 sys.path에 추가
+# baseline 모델 코드 + cec_integration 접근을 위해 sys.path에 추가
 # webapp 프로세스에서만 적용 — 기존 훈련 코드에 영향 없음
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BASELINE_PATH = PROJECT_ROOT / "baseline"
 if str(BASELINE_PATH) not in sys.path:
     sys.path.insert(0, str(BASELINE_PATH))
+# cec_integration 패키지 접근 (PROJECT_ROOT/cec_integration/)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 app = FastAPI(title="PH2 Human-AI Study")
 

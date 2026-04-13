@@ -29,6 +29,9 @@ from overcooked_v2_experiments.ppo.models.rnn import ActorCriticRNN
 from overcooked_v2_experiments.ppo.gamma.vae_model import GAMMAVAE
 from overcooked_v2_experiments.ppo.utils.store import store_checkpoint
 from overcooked_v2_experiments.ppo.utils.utils import get_num_devices
+from overcooked_v2_experiments.ppo.utils.valuenorm import (
+    ValueNormState, valuenorm_update, valuenorm_normalize, valuenorm_denormalize,
+)
 
 
 class S2Transition(NamedTuple):
@@ -39,6 +42,7 @@ class S2Transition(NamedTuple):
     critic_value: jnp.ndarray
     reward: jnp.ndarray
     info: dict
+    global_obs: jnp.ndarray  # MAPPO centralized critic 용
 
 
 # =====================================================================
@@ -83,7 +87,7 @@ def _collect_population_rollouts(pop_params, config, env, network, n_episodes, r
             for i in range(num_env_agents):
                 obs_i = obs[env.agents[i]][jnp.newaxis, jnp.newaxis]  # (1,1,*obs)
                 h_i = hstates[i]
-                h_new, pi_i, _, _ = network.apply(member_params, h_i, (obs_i, done[jnp.newaxis]))
+                h_new, pi_i, _, _ = network.apply(member_params, h_i, (obs_i, done[jnp.newaxis]), actor_only=True)
                 a_i = pi_i.sample(seed=agent_keys[i]).squeeze(0)
                 new_hstates.append(h_new)
                 actions_list.append(a_i.squeeze())
@@ -302,6 +306,9 @@ def _build_s2_vae_train(config, vae, vae_params):
     z_dim = config.get("GAMMA_VAE_Z_DIM", 16)
     vae_hidden_dim = config.get("GAMMA_VAE_HIDDEN_DIM", 64)
 
+    mappo_mode = bool(config.get("MAPPO_MODE", False))
+    use_valuenorm = bool(model_config.get("USE_VALUENORM", False))
+
     network = ActorCriticRNN(action_dim=ACTION_DIM, config=model_config)
 
     rew_shaping_anneal = optax.linear_schedule(
@@ -323,16 +330,33 @@ def _build_s2_vae_train(config, vae, vae_params):
     lr_fn = _make_lr_fn()
     tx = optax.chain(optax.clip_by_global_norm(model_config["MAX_GRAD_NORM"]), optax.adam(lr_fn, eps=1e-5))
 
+    # MAPPO: global obs shape 추출 (train() 밖에서 concrete 값으로 계산 — pmap/vmap 호환)
+    _pre_rng = jax.random.PRNGKey(0)
+    _pre_obs, _pre_state = jax.vmap(env.reset)(jax.random.split(_pre_rng, NUM_ENVS))
+    obs_shape = _pre_obs[env.agents[0]].shape[1:]  # (H, W, C)
+    if mappo_mode:
+        _full = jax.vmap(env._env.get_obs_default)(_pre_state.env_state)
+        _global_sample = _full[:, 0].astype(jnp.float32)
+        global_obs_dim = 1
+        for d in _global_sample.shape[1:]:
+            global_obs_dim *= d
+        print(f"[GAMMA-S2-VAE] MAPPO global_obs_dim={global_obs_dim}")
+    else:
+        global_obs_dim = 0
+
+    def _extract_global_obs(env_state):
+        _full = jax.vmap(env._env.get_obs_default)(env_state.env_state)
+        _g = _full[:, 0].astype(jnp.float32)
+        return _g.reshape(NUM_ENVS, -1)
+
     def train(rng):
-        rng, _rng = jax.random.split(rng)
-        sample_obs, _ = jax.vmap(env.reset)(jax.random.split(_rng, NUM_ENVS))
-        obs_shape = sample_obs[env.agents[0]].shape[1:]
 
         # Ego network init
         init_h = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
         init_x = (jnp.zeros((1, NUM_ENVS, *obs_shape)), jnp.zeros((1, NUM_ENVS)))
+        init_gobs = jnp.zeros((1, NUM_ENVS, global_obs_dim)) if mappo_mode else None
         rng, _rng = jax.random.split(rng)
-        ego_params = network.init(_rng, init_h, init_x)
+        ego_params = network.init(_rng, init_h, init_x, global_obs=init_gobs)
         ego_state = TrainState.create(apply_fn=network.apply, params=ego_params, tx=tx)
 
         # Env init
@@ -353,11 +377,12 @@ def _build_s2_vae_train(config, vae, vae_params):
             lambda p: jnp.zeros((max(num_checkpoints, 1),) + p.shape, p.dtype), ego_state.params,
         )
         ck_buf = jax.tree_util.tree_map(lambda b, p: b.at[0].set(p), ck_buf, ego_state.params)
+        vn_state = ValueNormState.create()
 
         def _update_step(runner_state, unused):
             (ego_state, env_state, last_obs, last_done,
              ego_hstate, dec_carry, z_per_env,
-             ck_buf, update_step, rng) = runner_state
+             ck_buf, vn_state, update_step, rng) = runner_state
 
             # ---- ROLLOUT: 순수 VAE 파트너 ----
             def _env_step(step_state, _):
@@ -374,11 +399,20 @@ def _build_s2_vae_train(config, vae, vae_params):
                 z_env = jnp.where(done_t[:, jnp.newaxis], new_z, z_env)
                 dec_c = jnp.where(done_t[:, jnp.newaxis], jnp.zeros_like(dec_c), dec_c)
 
+                # Global obs for MAPPO critic
+                if mappo_mode:
+                    _gobs = _extract_global_obs(env_state)
+                    _gobs_in = _gobs[jnp.newaxis]
+                else:
+                    _gobs = jnp.zeros((NUM_ENVS, 1), dtype=jnp.float32)
+                    _gobs_in = None
+
                 # Ego agent
                 rng, k_ego = jax.random.split(rng)
                 ego_hs, ego_pi, crit_val, _ = network.apply(
                     ego_state.params, ego_hs,
                     (ego_obs[jnp.newaxis], done_t[jnp.newaxis]),
+                    global_obs=_gobs_in,
                 )
                 ego_action = ego_pi.sample(seed=k_ego).squeeze(0)
                 ego_log_prob = ego_pi.log_prob(ego_action[jnp.newaxis]).squeeze(0)
@@ -415,7 +449,7 @@ def _build_s2_vae_train(config, vae, vae_params):
                 transition = S2Transition(
                     done=done_env, ego_obs=ego_obs, ego_action=ego_action,
                     ego_log_prob=ego_log_prob, critic_value=crit_val,
-                    reward=ego_reward, info=info,
+                    reward=ego_reward, info=info, global_obs=_gobs,
                 )
                 return (env_state, obsv, done_env, ego_hs, dec_c, z_env, update_step, rng), transition
 
@@ -429,9 +463,11 @@ def _build_s2_vae_train(config, vae, vae_params):
             # ---- GAE + PPO ----
             ego_obs_last = last_obs[env.agents[0]]
             init_h_bs = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
+            _last_gobs = traj.global_obs[-1][jnp.newaxis] if mappo_mode else None
             _, _, last_val, _ = network.apply(
                 ego_state.params, init_h_bs,
                 (ego_obs_last[jnp.newaxis], last_done[jnp.newaxis]),
+                global_obs=_last_gobs,
             )
             last_val = last_val.squeeze(0)
 
@@ -442,11 +478,24 @@ def _build_s2_vae_train(config, vae, vae_params):
                 gae = delta + model_config["GAMMA"] * model_config["GAE_LAMBDA"] * (1 - done) * gae
                 return (gae, value), gae
 
+            # ValueNorm: denormalize for GAE
+            if use_valuenorm:
+                gae_values = valuenorm_denormalize(vn_state, traj.critic_value)
+                gae_last = valuenorm_denormalize(vn_state, last_val)
+            else:
+                gae_values = traj.critic_value
+                gae_last = last_val
+
             _, advantages = jax.lax.scan(
-                _get_adv, (jnp.zeros_like(last_val), last_val),
-                (traj.done, traj.critic_value, traj.reward), reverse=True, unroll=16,
+                _get_adv, (jnp.zeros_like(gae_last), gae_last),
+                (traj.done, gae_values, traj.reward), reverse=True, unroll=16,
             )
-            targets = advantages + traj.critic_value
+            targets = advantages + gae_values
+
+            # ValueNorm: update + normalize targets
+            if use_valuenorm:
+                vn_state = valuenorm_update(vn_state, targets)
+                targets = valuenorm_normalize(vn_state, targets)
 
             mb_size = NUM_ENVS // NUM_MINIBATCHES
             init_h_mb = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
@@ -457,10 +506,11 @@ def _build_s2_vae_train(config, vae, vae_params):
                 )
 
             def _update_minibatch(state, mb):
-                (mb_ah, mb_obs, mb_done, mb_act, mb_lp, mb_val, mb_adv, mb_tgt) = mb
+                (mb_ah, mb_obs, mb_done, mb_act, mb_lp, mb_val, mb_adv, mb_tgt, mb_gobs) = mb
                 mb_ah = mb_ah.squeeze(0)
                 def _loss(params):
-                    _, pi, value, _ = network.apply(params, mb_ah, (mb_obs, mb_done))
+                    _gobs_loss = mb_gobs if mappo_mode else None
+                    _, pi, value, _ = network.apply(params, mb_ah, (mb_obs, mb_done), global_obs=_gobs_loss)
                     lp = pi.log_prob(mb_act)
                     ratio = jnp.exp(lp - mb_lp)
                     adv_n = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
@@ -468,7 +518,17 @@ def _build_s2_vae_train(config, vae, vae_params):
                     l2 = jnp.clip(ratio, 1 - model_config["CLIP_EPS"], 1 + model_config["CLIP_EPS"]) * adv_n
                     actor_loss = -jnp.minimum(l1, l2).mean()
                     v_cl = mb_val + (value - mb_val).clip(-model_config["CLIP_EPS"], model_config["CLIP_EPS"])
-                    critic_loss = 0.5 * jnp.maximum(jnp.square(value - mb_tgt), jnp.square(v_cl - mb_tgt)).mean()
+                    # 원본 GAMMA: use_huber_loss=True, huber_delta=10.0
+                    _huber_delta = float(model_config.get("HUBER_DELTA", 10.0))
+                    def _huber(err):
+                        return jnp.where(
+                            jnp.abs(err) <= _huber_delta,
+                            0.5 * err ** 2,
+                            _huber_delta * (jnp.abs(err) - 0.5 * _huber_delta),
+                        )
+                    critic_loss = jnp.maximum(
+                        _huber(value - mb_tgt), _huber(v_cl - mb_tgt)
+                    ).mean()
                     entropy = pi.entropy().mean()
                     total = actor_loss + model_config.get("VF_COEF", 0.5) * critic_loss - model_config["ENT_COEF"] * entropy
                     return total, (actor_loss, critic_loss, entropy)
@@ -488,6 +548,7 @@ def _build_s2_vae_train(config, vae, vae_params):
                     jnp.take(traj.critic_value, perm, axis=1),
                     jnp.take(advantages, perm, axis=1),
                     jnp.take(targets, perm, axis=1),
+                    jnp.take(traj.global_obs, perm, axis=1),
                 )
                 mbs = jax.tree_util.tree_map(_split_mb, batch)
                 state, losses = jax.lax.scan(_update_minibatch, state, mbs)
@@ -527,11 +588,11 @@ def _build_s2_vae_train(config, vae, vae_params):
 
             return (ego_state, env_state, last_obs, last_done,
                     ego_hstate, dec_carry, z_per_env,
-                    ck_buf, update_step, rng), metric
+                    ck_buf, vn_state, update_step, rng), metric
 
         init_runner = (ego_state, env_state, last_obs, last_done,
                        ego_hstate, dec_carry, z_per_env,
-                       ck_buf, jnp.int32(0), rng)
+                       ck_buf, vn_state, jnp.int32(0), rng)
         final_runner, metrics = jax.lax.scan(_update_step, init_runner, None, NUM_UPDATES)
         return {"actor_params": final_runner[0].params, "actor_ckpts": final_runner[7]}
 

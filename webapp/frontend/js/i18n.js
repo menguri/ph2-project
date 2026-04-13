@@ -8,7 +8,11 @@ const I18N = {
         consent_controls_title: "Controls",
         consent_controls_move: "<strong>Arrow keys</strong> or <strong>WASD</strong> — Move",
         consent_controls_interact: "<strong>Space</strong> or <strong>E</strong> — Interact (pick up / place / deliver)",
+        consent_study_info_title: "Study Overview",
+        consent_study_info: 'You will play across <strong>5 different kitchen layouts</strong>, with <strong>7 games per layout</strong> (each game is 60 seconds). Total: <strong>35 games, approximately 40 minutes</strong>.',
+        consent_incentive: "A gift card will be provided upon completion of all games.",
         consent_survey_note: "After each game, you'll be asked to fill out a short survey about your experience.",
+        consent_disconnect_note: 'If you experience a disconnection, please contact <strong>mingukang@unist.ac.kr</strong>.',
         consent_agree: "I Agree & Continue",
 
         // Pre-survey
@@ -53,7 +57,7 @@ const I18N = {
         tut5_ai: "The ORANGE chef is your AI partner",
         tut5_coop: "Work together — divide tasks for better scores!",
         tut_next: "Next",
-        tut_start: "Choose Layout",
+        tut_start: "Start Game!",
 
         // Layout
         layout_title: "Select Layout",
@@ -62,6 +66,7 @@ const I18N = {
 
         // Game HUD
         hud_score: "Score",
+        hud_timer: "Time",
         hud_step: "Step",
         game_status_you: "You are the {color} chef. Arrow keys to move, Space to interact.",
 
@@ -77,13 +82,19 @@ const I18N = {
         post_open: "Describe your experience with the agent.",
         post_submit: "Submit & Continue",
 
-        // Again / Thanks
+        // Again / Quit / Thanks
         again_title: "Thank You!",
         again_desc: "Your response has been recorded.",
-        again_play: "Play Again (New AI Partner)",
-        again_done: "Done",
+        again_play: "Continue to Next Game",
+        again_done: "End Study",
+        quit_title: "Are you sure?",
+        quit_desc: "You have not completed all games. A gift card will only be provided upon full completion.",
+        quit_contact: 'If you experienced issues, please contact <strong>mingukang@unist.ac.kr</strong>.',
+        quit_continue: "Continue Playing",
+        quit_confirm: "Confirm End",
         thanks_title: "Thank you for participating!",
         thanks_desc: "You may close this window.",
+        thanks_complete: "You have completed all games! A gift card will be sent to you. You may close this window.",
     },
     ko: {
         // Consent
@@ -93,7 +104,11 @@ const I18N = {
         consent_controls_title: "조작법",
         consent_controls_move: "<strong>방향키</strong> 또는 <strong>WASD</strong> — 이동",
         consent_controls_interact: "<strong>스페이스바</strong> 또는 <strong>E</strong> — 상호작용 (줍기 / 놓기 / 배달)",
+        consent_study_info_title: "연구 개요",
+        consent_study_info: '<strong>5개의 주방 레이아웃</strong>에서 <strong>레이아웃당 7번</strong>씩 플레이합니다 (1회당 60초). 총 <strong>35게임, 약 40분</strong> 소요.',
+        consent_incentive: "모든 게임을 완료하시면 기프티콘이 지급됩니다.",
         consent_survey_note: "게임이 끝난 후 짧은 설문조사에 응답해 주세요.",
+        consent_disconnect_note: '연결이 끊어진 경우 <strong>mingukang@unist.ac.kr</strong>로 문의해 주세요.',
         consent_agree: "동의하고 계속하기",
 
         // Pre-survey
@@ -138,7 +153,7 @@ const I18N = {
         tut5_ai: "주황색 셰프가 AI 파트너입니다",
         tut5_coop: "함께 협력하세요 — 역할을 나누면 더 높은 점수를 얻을 수 있습니다!",
         tut_next: "다음",
-        tut_start: "레이아웃 선택",
+        tut_start: "게임 시작!",
 
         // Layout
         layout_title: "레이아웃 선택",
@@ -147,6 +162,7 @@ const I18N = {
 
         // Game HUD
         hud_score: "점수",
+        hud_timer: "시간",
         hud_step: "스텝",
         game_status_you: "당신은 {color} 셰프입니다. 방향키로 이동, 스페이스바로 상호작용.",
 
@@ -162,13 +178,19 @@ const I18N = {
         post_open: "AI와의 경험을 자유롭게 적어주세요.",
         post_submit: "제출하고 계속하기",
 
-        // Again / Thanks
+        // Again / Quit / Thanks
         again_title: "감사합니다!",
         again_desc: "응답이 기록되었습니다.",
-        again_play: "다시 플레이 (새 AI 파트너)",
-        again_done: "종료",
+        again_play: "다음 게임 계속하기",
+        again_done: "연구 종료",
+        quit_title: "정말 종료하시겠습니까?",
+        quit_desc: "아직 모든 게임을 완료하지 않았습니다. 기프티콘은 모든 게임을 완료해야 지급됩니다.",
+        quit_contact: '문제가 있으시면 <strong>mingukang@unist.ac.kr</strong>로 문의해 주세요.',
+        quit_continue: "계속 플레이",
+        quit_confirm: "종료 확인",
         thanks_title: "참여해 주셔서 감사합니다!",
         thanks_desc: "이 창을 닫으셔도 됩니다.",
+        thanks_complete: "모든 게임을 완료하셨습니다! 기프티콘이 지급될 예정입니다. 이 창을 닫으셔도 됩니다.",
     },
 };
 

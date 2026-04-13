@@ -5,7 +5,8 @@ server:
 
 game:
   default_layout: "cramped_room"
-  episode_length: 400
+  episode_length: 200
+  tick_interval_ms: 300   # 실시간 모드: 300ms마다 1 timestep (200 steps × 300ms = 60초)
   fps: 10
   randomize_player_index: true
 
@@ -13,7 +14,7 @@ agent:
   model_dir: "models"              # webapp/models/{layout}/{algo_name}/{run0,run1,...}/ckpt_final/
   policy_source: "params"
   stochastic: true
-  algo_filter: ["ph2", "sp", "e3t", "fcp", "mep", "hsp", "gamma"]
+  algo_filter: ["ph2", "sp", "e3t", "fcp", "mep", "gamma", "cec"]
 
 model:
   gru_hidden_dim: 128
