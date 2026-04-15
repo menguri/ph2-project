@@ -351,17 +351,19 @@ class ModelManager:
         return int(action)
 
     def _get_action_cec(self, obs: np.ndarray, layout_name: str) -> int:
-        """CEC: OV2 obs (H,W,C) → (9,9,26) 변환 → CECRuntime 추론."""
+        """CEC legacy 경로: OV2 obs (H,W,C) → (9,9,26) 변환 → CECRuntime 추론.
+
+        주: 이 경로는 overcooked-ai → OV2 → CEC 2단계 변환이라 dynamics 불일치 +
+        pot lifecycle 손실이 있어 실제 webapp 에선 `get_action_cec_from_ai` 사용 권장.
+        호환 목적으로 유지.
+        """
         _ensure_cec_imports()
-        # obs adapter: OV2 (H,W,30) → CEC (9,9,26)
         cec_obs = _cec_obs_adapter(
             jnp.array(obs, dtype=jnp.float32),
             layout_name,
             self._cec_step,
             400,
         )
-        # CECRuntime은 (num_agents, 9, 9, 26)을 받지만
-        # webapp에서는 AI agent 1명만 추론하므로 dummy agent 1명 추가
         obs_arr = jnp.stack([cec_obs, jnp.zeros_like(cec_obs)])
 
         self._rng, subkey = jax.random.split(self._rng)
@@ -370,4 +372,49 @@ class ModelManager:
         )
         self._cec_step += 1
 
+        return int(actions[0])
+
+    def _ensure_cec_ai_adapter(self, layout_name: str):
+        """레이아웃별 OvercookedAIToCECAdapter 를 lazy-load 후 캐시."""
+        if not hasattr(self, "_cec_ai_adapters"):
+            self._cec_ai_adapters = {}
+        if layout_name not in self._cec_ai_adapters:
+            # cec_integration 경로 확보
+            cec_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if cec_root not in sys.path:
+                sys.path.insert(0, cec_root)
+            from cec_integration.obs_adapter_from_ai import OvercookedAIToCECAdapter
+            self._cec_ai_adapters[layout_name] = OvercookedAIToCECAdapter(
+                target_layout=layout_name, max_steps=400,
+            )
+        return self._cec_ai_adapters[layout_name]
+
+    def get_action_cec_from_ai(self, ai_state, mdp, layout_name: str,
+                               agent_idx: int = 0) -> int:
+        """CEC 직접 경로: overcooked-ai state → V1 State → V1 get_obs → CEC 추론.
+
+        OV2 경유가 없어 CEC 훈련 분포와 byte-exact obs 를 받는다.
+        webapp/human-proxy 는 CEC 모델 추론 시 이 메서드를 써야 한다.
+
+        Args:
+            ai_state: overcooked-ai OvercookedState
+            mdp: overcooked-ai OvercookedGridworld
+            layout_name: e.g. "cramped_room"
+            agent_idx: 0 or 1 (AI agent 가 slot 0 인지 1 인지)
+
+        Returns:
+            action index (0-5)
+        """
+        _ensure_cec_imports()
+        adapter = self._ensure_cec_ai_adapter(layout_name)
+        cec_obs = adapter.get_cec_obs(ai_state, mdp,
+                                       agent_idx=agent_idx,
+                                       current_step=self._cec_step)
+        obs_arr = jnp.stack([cec_obs, jnp.zeros_like(cec_obs)])
+
+        self._rng, subkey = jax.random.split(self._rng)
+        actions, self._cec_hidden, probs = self._cec_runtime.step(
+            obs_arr, self._cec_hidden, self._cec_done, subkey
+        )
+        self._cec_step += 1
         return int(actions[0])

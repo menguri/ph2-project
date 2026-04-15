@@ -33,10 +33,10 @@ from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld, OvercookedS
 # overcooked-ai terrain 문자 → JaxMARL StaticObject 매핑
 TERRAIN_TO_STATIC = {
     "X": 1,   # WALL
-    "S": 4,   # GOAL (serving/delivery)
-    "D": 4,   # GOAL (delivery — overcooked-ai v2 uses D)
+    "S": 4,   # GOAL (serving/delivery counter)
     "P": 5,   # POT
-    "B": 9,   # PLATE_PILE
+    "D": 9,   # PLATE_PILE (overcooked-ai 의 dish/plate dispenser)
+    "B": 9,   # PLATE_PILE (JaxMARL 표기 — alias)
     "O": 10,  # ONION_PILE (INGREDIENT_PILE_BASE + 0)
     " ": 0,   # EMPTY
 }

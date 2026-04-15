@@ -44,17 +44,41 @@ import jax.numpy as jnp
 from typing import Dict
 
 
-# 각 레이아웃의 OV2 그리드 크기 → 9×9 패딩 오프셋 (y_offset, x_offset)
-# CEC 9×9 레이아웃에서 실제 게임 영역이 시작하는 위치
-# 이 값은 CEC의 make_*_9x9() 함수가 compact template을 9×9에 임베딩할 때의 오프셋과 일치해야 함
+# 각 레이아웃의 CEC 9×9 배치 크기 및 오프셋
+# (dst_h, dst_w, dst_y, dst_x) — CEC 9×9 내에서 OV2 데이터를 배치할 영역
+# 이 값은 CEC의 make_*_9x9() 함수가 compact template을 9×9에 임베딩할 때와 일치해야 함
+# 모든 CEC 템플릿은 9×9의 좌상단(0,0)에서 시작, 나머지는 wall 패딩
 LAYOUT_PADDING = {
-    # layout_name: (ov2_h, ov2_w, y_off, x_off)
-    # CEC 9×9 레이아웃은 모두 왼쪽 상단(0,0)에서 시작, 나머지는 벽으로 패딩
+    # asymm_advantages 는 CEC 템플릿이 4×9 (OV2는 5×9 — 상단 wall row 1줄 추가).
+    # dst_h=4 로 설정하고 LAYOUT_OV2_CROP 으로 OV2 row 1~4 만 사용하도록 보정.
     "cramped_room":     (4, 5, 0, 0),
     "forced_coord":     (5, 5, 0, 0),
     "counter_circuit":  (5, 8, 0, 0),
     "coord_ring":       (5, 5, 0, 0),
-    "asymm_advantages": (9, 5, 0, 0),
+    "asymm_advantages": (4, 9, 0, 0),
+}
+
+# OV2 obs 에서 읽기 시작할 (row, col) 오프셋. 지정 안 된 레이아웃은 (0, 0).
+# asymm_advantages 만 OV2 grid 상단에 wall 행이 1줄 추가돼 있어서 1-row 오프셋 필요.
+LAYOUT_OV2_CROP = {
+    "asymm_advantages": (1, 0),
+}
+
+# CEC `_9x9(ik=False)` 레이아웃과 OV2 canonical 레이아웃의 static object 배치 차이 보정.
+# - CEC 는 레이아웃마다 pot/plate/goal 을 2개씩 가짐 (CEC `_9x9` 템플릿의 쌍 객체 convention).
+# - OV2 canonical 은 1개만 가진 레이아웃이 많음 → 차이만큼 추가 객체를 주입해서
+#   CEC 훈련/eval 시 봤던 분포와 동일하게 재구성.
+# - counter_circuit 은 OV2 에서도 2 pot/2 onion 이지만 plate/goal 이 1개씩 부족.
+# - swap=True 는 과거 코드의 잘못된 보정(OV1/OV2 plate↔goal 위치가 뒤바뀌었다는 오해)
+#   이었기 때문에 전부 False 로 고정. OV2 plate/goal 위치는 CEC 와 동일하다.
+# extra_pot/extra_plate/extra_goal: CEC `_9x9` 에만 있는 추가 객체 좌표 (y, x)
+#   — OV2 에서는 wall 인 위치. 해당 셀의 wall 채널은 0 으로 해제된다.
+LAYOUT_OV1_FIX = {
+    "cramped_room":     {"swap": False, "extra_pot": [(0, 0)], "extra_plate": [(3, 0)], "extra_goal": [(3, 4)]},
+    "coord_ring":       {"swap": False, "extra_plate": [(0, 0)], "extra_goal": [(4, 4)]},
+    "forced_coord":     {"swap": False, "extra_plate": [(4, 0)], "extra_goal": [(4, 4)]},
+    "counter_circuit":  {"swap": False, "extra_plate": [(0, 0)], "extra_goal": [(0, 7)]},
+    "asymm_advantages": {"swap": False},
 }
 
 # OV2 pot_timer 인코딩:
@@ -81,23 +105,28 @@ def ov2_obs_to_cec(
     """
     h, w = LAYOUT_PADDING[layout_name][:2]
     y_off, x_off = LAYOUT_PADDING[layout_name][2:]
+    src_y, src_x = LAYOUT_OV2_CROP.get(layout_name, (0, 0))
 
     cec = jnp.zeros((9, 9, 26), dtype=jnp.float32)
 
     # --- 패딩 영역: 전체를 wall로 채움 (ch11) ---
     cec = cec.at[:, :, 11].set(1.0)
 
-    # --- OV2 영역 추출 ---
+    # --- OV2 영역 추출 (src 오프셋 적용) ---
+    # asymm_advantages 같이 OV2 grid 상단에 여분의 wall row 가 있는 레이아웃은
+    # src_y/src_x 로 크롭해서 CEC 템플릿 좌표계와 정렬한다.
+    ov2 = ov2_obs[src_y:src_y + h, src_x:src_x + w, :]
+
     # Agent pos
-    self_pos = ov2_obs[:, :, 0]        # (H, W)
-    other_pos = ov2_obs[:, :, 8]       # (H, W)
+    self_pos = ov2[:, :, 0]        # (h, w)
+    other_pos = ov2[:, :, 8]       # (h, w)
 
     # Agent dir
     # OV2: UP=0, DOWN=1, RIGHT=2, LEFT=3  (채널 순서)
     # CEC v1: RIGHT=0, DOWN=1, LEFT=2, UP=3  (agent_dir_idx 순서 = 채널 순서)
     # 따라서 리매핑 필요: OV2[0]→CEC[3], OV2[1]→CEC[1], OV2[2]→CEC[0], OV2[3]→CEC[2]
-    self_dir_ov2 = ov2_obs[:, :, 1:5]      # (H, W, 4) — OV2 순서
-    other_dir_ov2 = ov2_obs[:, :, 9:13]    # (H, W, 4) — OV2 순서
+    self_dir_ov2 = ov2[:, :, 1:5]      # (h, w, 4) — OV2 순서
+    other_dir_ov2 = ov2[:, :, 9:13]    # (h, w, 4) — OV2 순서
     # CEC 순서로 리매핑: [RIGHT, DOWN, LEFT, UP]
     self_dir = jnp.stack([self_dir_ov2[:,:,2], self_dir_ov2[:,:,1],
                           self_dir_ov2[:,:,3], self_dir_ov2[:,:,0]], axis=-1)
@@ -105,31 +134,31 @@ def ov2_obs_to_cec(
                            other_dir_ov2[:,:,3], other_dir_ov2[:,:,0]], axis=-1)
 
     # Static objects (OV2 ch16-21: WALL, GOAL, POT, RECIPE_IND, BUTTON_RECIPE_IND, PLATE_PILE)
-    ov2_wall = ov2_obs[:, :, 16]       # WALL
-    ov2_goal = ov2_obs[:, :, 17]       # GOAL
-    ov2_pot = ov2_obs[:, :, 18]        # POT
-    ov2_plate_pile = ov2_obs[:, :, 21] # PLATE_PILE
+    ov2_wall = ov2[:, :, 16]       # WALL
+    ov2_goal = ov2[:, :, 17]       # GOAL
+    ov2_pot = ov2[:, :, 18]        # POT
+    ov2_plate_pile = ov2[:, :, 21] # PLATE_PILE
 
     # Ingredient pile (onion pile)
-    ov2_onion_pile = ov2_obs[:, :, 22] # ingredient_pile ch
+    ov2_onion_pile = ov2[:, :, 22] # ingredient_pile ch
 
     # Grid ingredients (ch23-25: plate_bit, cooked_bit, ing0_count)
-    grid_plate_bit = ov2_obs[:, :, 23]
-    grid_cooked_bit = ov2_obs[:, :, 24]
-    grid_ing0_count = ov2_obs[:, :, 25]
+    grid_plate_bit = ov2[:, :, 23]
+    grid_cooked_bit = ov2[:, :, 24]
+    grid_ing0_count = ov2[:, :, 25]
 
     # Pot timer (ch29)
-    pot_timer = ov2_obs[:, :, 29]
+    pot_timer = ov2[:, :, 29]
 
     # Self inventory (ch5-7: plate_bit, cooked_bit, ing0_count)
-    self_inv_plate = ov2_obs[:, :, 5]
-    self_inv_cooked = ov2_obs[:, :, 6]
-    self_inv_ing0 = ov2_obs[:, :, 7]
+    self_inv_plate = ov2[:, :, 5]
+    self_inv_cooked = ov2[:, :, 6]
+    self_inv_ing0 = ov2[:, :, 7]
 
     # Other inventory (ch13-15)
-    other_inv_plate = ov2_obs[:, :, 13]
-    other_inv_cooked = ov2_obs[:, :, 14]
-    other_inv_ing0 = ov2_obs[:, :, 15]
+    other_inv_plate = ov2[:, :, 13]
+    other_inv_cooked = ov2[:, :, 14]
+    other_inv_ing0 = ov2[:, :, 15]
 
     # --- Pot state 변환 ---
     # CEC v1은 COOKED bit(dyn & 0x2) 기반으로 cooking/done 판단.
@@ -224,8 +253,34 @@ def ov2_obs_to_cec(
     # ch11 (wall) already set above
     cec = _place(12, ov2_onion_pile)    # onion pile
     # ch13 (tomato pile) = 0
-    cec = _place(14, ov2_plate_pile)    # plate pile
-    cec = _place(15, ov2_goal)          # goal
+    # --- CEC `_9x9` 레이아웃과의 차이 보정 ---
+    # OV2 canonical 과 CEC 훈련 분포의 plate/goal/pot 위치가 다른 경우, 누락 객체를 주입.
+    # swap 은 더 이상 사용하지 않지만 legacy 호환을 위해 분기는 유지.
+    fix = LAYOUT_OV1_FIX.get(layout_name, {})
+    if fix.get("swap", False):
+        cec_plate_pile_ch = ov2_goal
+        cec_goal_ch = ov2_plate_pile
+    else:
+        cec_plate_pile_ch = ov2_plate_pile
+        cec_goal_ch = ov2_goal
+    cec = _place(14, cec_plate_pile_ch)  # plate pile
+    cec = _place(15, cec_goal_ch)        # goal
+    # CEC `_9x9` 에만 있는 추가 객체 (pot/plate/goal 각 채널에 1.0 세팅 + wall 제거)
+    extra_pot_cells = fix.get("extra_pot", [])
+    extra_plate_cells = fix.get("extra_plate", [])
+    extra_goal_cells = fix.get("extra_goal", [])
+    for (ey, ex) in extra_pot_cells:
+        # ch10 = pot location. extra pot 은 OV2 에 대응 객체가 없으므로 항상 "빈 pot" 상태.
+        # → onions_in_pot(ch16)/onions_in_soup(ch18)/cook_time(ch20)/soup_ready(ch21)
+        #   은 모두 0 으로 두면 된다 (cec 는 0 으로 초기화됐고 _place 로 덮어쓰지 않음).
+        cec = cec.at[y_off + ey, x_off + ex, 10].set(1.0)
+    for (ey, ex) in extra_plate_cells:
+        cec = cec.at[y_off + ey, x_off + ex, 14].set(1.0)
+    for (ey, ex) in extra_goal_cells:
+        cec = cec.at[y_off + ey, x_off + ex, 15].set(1.0)
+    # 추가 객체 위치의 wall(ch11) 제거 — CEC 입장에서 pot/plate/goal 은 non-wall 셀.
+    for (ey, ex) in extra_pot_cells + extra_plate_cells + extra_goal_cells:
+        cec = cec.at[y_off + ey, x_off + ex, 11].set(0.0)
     cec = _place(16, cec_onions_in_pot)
     # ch17 (tomato in pot) = 0
     cec = _place(18, cec_onions_in_soup)

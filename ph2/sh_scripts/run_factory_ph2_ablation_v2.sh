@@ -94,7 +94,7 @@ run_cell() {
     --env "$env" \
     --exp "$EXP" \
     --env-device "$ENV_DEVICE" \
-    --nenvs "$NENVS" \
+    --nenvs "${NENVS_OVERRIDE:-$NENVS}" \
     --nsteps "$NSTEPS" \
     --tags "$tags" \
     --ph1-beta $PH1_BETA \
@@ -120,23 +120,30 @@ run_cell() {
 }
 
 # =============================================================================
-# Sweep 1: penalty_state = {0, 1, 2, 3, 4}
-#   각 레이아웃 best omega/sigma/normal_prob 유지, k만 변경
-#   penalty_state=0 → ph1 비활성화
+# Sweep 1: penalty_state — 보강 실행 (미완료 셀만)
+#   - counter_circuit: ps3, ps4 만 (ps0~ps2 완료, ps3/ps4 크래시)
+#   - coord_ring:      ps1~ps4 (ps0만 학습됨)
+#   - cramped_room, forced_coord: 전체 완료 → 스킵
 # =============================================================================
-echo "#################### Sweep 1: penalty_state ####################"
-for env in "${LAYOUTS[@]}"; do
-  local_omega=${BEST_OMEGA[$env]}
-  local_sigma=${BEST_SIGMA[$env]}
-  local_np=${BEST_NP[$env]}
+echo "#################### Sweep 1: penalty_state (보강) ####################"
 
-  # penalty_state=0 → PH1 비활성화
-  run_cell "$env" "$local_omega" "$local_sigma" 1 "$local_np" "ps0" "true"
+# --- counter_circuit: ps3, ps4 재실행 ---
+#   k≥3에서 OOM으로 silent kill 발생 → NENVS를 64 → 32로 감량.
+#   PH1 multi-penalty 버퍼가 k에 선형 증가하므로 NENVS를 절반으로 보상.
+cc_omega=${BEST_OMEGA[counter_circuit]}
+cc_sigma=${BEST_SIGMA[counter_circuit]}
+cc_np=${BEST_NP[counter_circuit]}
+for k in 3 4; do
+  NENVS_OVERRIDE=32 \
+    run_cell "counter_circuit" "$cc_omega" "$cc_sigma" "$k" "$cc_np" "ps${k}"
+done
 
-  # penalty_state=1~4
-  for k in 1 2 3 4; do
-    run_cell "$env" "$local_omega" "$local_sigma" "$k" "$local_np" "ps${k}"
-  done
+# --- coord_ring: ps1~ps4 ---
+cr_omega=${BEST_OMEGA[coord_ring]}
+cr_sigma=${BEST_SIGMA[coord_ring]}
+cr_np=${BEST_NP[coord_ring]}
+for k in 1 2 3 4; do
+  run_cell "coord_ring" "$cr_omega" "$cr_sigma" "$k" "$cr_np" "ps${k}"
 done
 
 # =============================================================================
@@ -154,20 +161,20 @@ for env in "${LAYOUTS[@]}"; do
   done
 done
 
-# =============================================================================
-# Sweep 3: omega = {0, 2, 4, 6, 8, 10}
-#   각 레이아웃 best sigma/k/normal_prob 유지, omega만 변경
-# =============================================================================
-echo "#################### Sweep 3: omega ####################"
-for env in "${LAYOUTS[@]}"; do
-  local_sigma=${BEST_SIGMA[$env]}
-  local_k=${BEST_K[$env]}
-  local_np=${BEST_NP[$env]}
+# # =============================================================================
+# # Sweep 3: omega = {0, 2, 4, 6, 8, 10}
+# #   각 레이아웃 best sigma/k/normal_prob 유지, omega만 변경
+# # =============================================================================
+# echo "#################### Sweep 3: omega ####################"
+# for env in "${LAYOUTS[@]}"; do
+#   local_sigma=${BEST_SIGMA[$env]}
+#   local_k=${BEST_K[$env]}
+#   local_np=${BEST_NP[$env]}
 
-  for omega in 0 2 4 6 8 10; do
-    run_cell "$env" "$omega" "$local_sigma" "$local_k" "$local_np" "omg${omega}"
-  done
-done
+#   for omega in 0 2 4 6 8 10; do
+#     run_cell "$env" "$omega" "$local_sigma" "$local_k" "$local_np" "omg${omega}"
+#   done
+# done
 
 echo "================================================================"
 echo "  Ablation V2 전체 완료 (68 셀)"

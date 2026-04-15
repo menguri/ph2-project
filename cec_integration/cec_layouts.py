@@ -2,38 +2,98 @@
 cec-zero-shot/jaxmarl/environments/overcooked/layouts.py via
 `make_*_9x9(jax.random.PRNGKey(0), ik=False)`).
 
-These are deterministic when `ik=False, rotate=False`, so we can ship them
-as static data and feed them to ph2-project's own v1 `Overcooked` env (which
-accepts the same layout-dict schema). Result: a (9,9,26) obs identical to
-what CEC was trained on, without depending on cec-zero-shot at runtime.
+These are deterministic when `ik=False, rotate=False`, so we can reproduce
+the exact layout dicts CEC used at eval time without depending on
+cec-zero-shot at runtime. Each compact template is embedded at top-left
+of a 9×9 grid with the remaining cells set to WALL — matching CEC's
+`make_9x9_layout(..., rotate=False)`.
 
-Note: `wall_idx` may overlap with `pot_idx`/`goal_idx`/`onion_pile_idx`/
-`plate_pile_idx` because CEC's `layout_array_to_dict` lists every non-empty
-non-agent cell as a wall too. ph2's v1 `Overcooked` masks these correctly.
+Note: `wall_idx` lists every non-empty non-agent cell (including pots,
+plates, goals, onion piles) following CEC's `layout_array_to_dict`
+convention. ph2's v1 `Overcooked` env masks these correctly.
 """
+import numpy as np
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
 
-def _make(d):
-    return FrozenDict({k: jnp.array(v) if isinstance(v, list) else v for k, v in d.items()})
+# Compact CEC templates (ik=False, rotate=False). Cell encoding follows
+# CEC's layout_array_to_dict:
+#   0=empty, 1=wall, 2=agent, 3=goal, 4=plate_pile, 5=onion_pile, 6=pot
+_TEMPLATES = {
+    "cramped_room_9": [
+        [6, 1, 6, 1, 1],
+        [5, 2, 0, 2, 5],
+        [1, 0, 0, 0, 1],
+        [4, 4, 1, 3, 3],
+    ],
+    "asymm_advantages_9": [
+        [5, 0, 1, 3, 1, 5, 1, 0, 3],
+        [1, 0, 2, 0, 6, 0, 2, 0, 1],
+        [1, 0, 0, 0, 6, 0, 0, 0, 1],
+        [1, 1, 1, 4, 1, 4, 1, 1, 1],
+    ],
+    "coord_ring_9": [
+        [4, 1, 1, 6, 1],
+        [1, 0, 2, 0, 6],
+        [4, 0, 1, 0, 1],
+        [5, 0, 2, 0, 1],
+        [1, 5, 3, 1, 3],
+    ],
+    "forced_coord_9": [
+        [1, 1, 1, 6, 1],
+        [5, 0, 1, 0, 6],
+        [5, 2, 1, 2, 1],
+        [4, 0, 1, 0, 1],
+        [4, 1, 1, 3, 3],
+    ],
+    "counter_circuit_9": [
+        [4, 1, 1, 6, 6, 1, 1, 3],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [4, 2, 1, 1, 1, 1, 2, 3],
+        [1, 0, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 5, 5, 1, 1, 1],
+    ],
+}
+
+
+def _template_to_layout_dict(template):
+    """Embed compact template at top-left of 9×9 and build CEC-style layout dict.
+
+    Cells outside the template are filled with walls. Returns FrozenDict with
+    the same schema as CEC's `layout_array_to_dict(..., num_base_walls)`.
+    """
+    template = np.array(template, dtype=np.int32)
+    th, tw = template.shape
+    grid = np.ones((9, 9), dtype=np.int32)  # start all walls
+    grid[:th, :tw] = template
+    flat = grid.flatten()
+
+    def _find(value):
+        return np.where(flat == value)[0].astype(np.int32).tolist()
+
+    agent_idx = _find(2)
+    goal_idx = _find(3)
+    plate_pile_idx = _find(4)
+    onion_pile_idx = _find(5)
+    pot_idx = _find(6)
+    explicit_walls = _find(1)
+
+    # CEC convention: wall_idx = explicit walls + goals + plates + onions + pots
+    wall_idx = explicit_walls + goal_idx + plate_pile_idx + onion_pile_idx + pot_idx
+
+    return FrozenDict({
+        "height": 9,
+        "width": 9,
+        "agent_idx": jnp.array(agent_idx, dtype=jnp.int32),
+        "goal_idx": jnp.array(goal_idx, dtype=jnp.int32),
+        "onion_pile_idx": jnp.array(onion_pile_idx, dtype=jnp.int32),
+        "plate_pile_idx": jnp.array(plate_pile_idx, dtype=jnp.int32),
+        "pot_idx": jnp.array(pot_idx, dtype=jnp.int32),
+        "wall_idx": jnp.array(wall_idx, dtype=jnp.int32),
+    })
 
 
 CEC_LAYOUTS = {
-    "forced_coord_9": _make({
-        "height": 9,
-        "width": 9,
-        "agent_idx": [19, 21],
-        "goal_idx": [39, 40],
-        "onion_pile_idx": [9, 18],
-        "plate_pile_idx": [27, 36],
-        "pot_idx": [3, 13],
-        "wall_idx": [
-            0, 1, 2, 4, 5, 6, 7, 8, 11, 14, 15, 16, 17, 20, 22, 23, 24, 25,
-            26, 29, 31, 32, 33, 34, 35, 37, 38, 41, 42, 43, 44, 45, 46, 47,
-            48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
-            64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
-            80, 39, 40, 27, 36, 9, 18, 3, 13,
-        ],
-    }),
+    name: _template_to_layout_dict(tmpl) for name, tmpl in _TEMPLATES.items()
 }

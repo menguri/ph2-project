@@ -37,14 +37,18 @@ model:
   ENT_COEF: 0.01                      # 원본은 0.5지만 너무 큼 → 유지
   VF_COEF: 0.1                        # 원본 VF_COEF=0.1
   GAE_LAMBDA: 0.98                    # 원본 LAM=0.98
-  CLIP_EPS: 0.05                      # 원본 CLIPPING=0.05 (작은 trust region)
-  MAX_GRAD_NORM: 0.1                  # 원본 MAX_GRAD_NORM=0.1
+  # CLIP_EPS: 0.05                    # 원본 CLIPPING=0.05 (작은 trust region)
+  CLIP_EPS: 0.2                       # PH2와 통일
+  # MAX_GRAD_NORM: 0.1                # 원본 MAX_GRAD_NORM=0.1
+  MAX_GRAD_NORM: 0.25                 # PH2와 통일
 
   # Rollout — 원본 sim_threads=50, episode 400, TOTAL_BATCH_SIZE=20000
   NUM_ENVS: 50
   NUM_STEPS: 400
   UPDATE_EPOCHS: 8                    # 원본 STEPS_PER_UPDATE=8
-  NUM_MINIBATCHES: 5                  # 원본 MINIBATCHES=5
+  # NUM_MINIBATCHES: 5                # 원본 MINIBATCHES=5
+  # NUM_MINIBATCHES: 64               # PH2와 통일 (실제 NUM_ENVS=32와 호환 안됨: 32//64=0)
+  NUM_MINIBATCHES: 8                  # PH2 비례 유지: envs/mb=32/8=4 (PH2: 256/64=4)
 
   # 학습 길이 — 원본 TOTAL_STEPS_PER_AGENT=1.5e7
   TOTAL_TIMESTEPS: 1.5e7

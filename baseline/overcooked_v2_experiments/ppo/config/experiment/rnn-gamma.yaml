@@ -44,10 +44,13 @@ model:
   "ENT_COEF": 0.01
   "VF_COEF": 1.0                   # 원본 코드 value_loss_coef=1.0
   "GAE_LAMBDA": 0.95
-  "CLIP_EPS": 0.2                  # 논문 clip=0.2
+  # "CLIP_EPS": 0.2                # 논문 clip=0.2
+  "CLIP_EPS": 0.2                  # PH2와 통일 (원본도 같은 값)
   "MAX_GRAD_NORM": 10.0
   "UPDATE_EPOCHS": 15              # 논문 ppo_epoch=15
-  "NUM_MINIBATCHES": 1             # 논문 full batch (num_mini_batch=1)
+  # "NUM_MINIBATCHES": 1           # 논문 full batch (num_mini_batch=1)
+  # "NUM_MINIBATCHES": 64          # PH2와 통일 (실제 NUM_ENVS=32와 호환 안됨: 32//64=0)
+  "NUM_MINIBATCHES": 8             # PH2 비례 유지: envs/mb=32/8=4 (PH2: 256/64=4)
 
   # S1 환경 — 원본 n_rollout_threads=100
   "NUM_ENVS": 100

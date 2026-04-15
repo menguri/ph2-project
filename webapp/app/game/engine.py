@@ -141,10 +141,18 @@ class GameSession:
             return {"done": True, "score": self.score, "timestep": self.timestep}
 
         # AI obs → AI action
-        ai_obs = overcooked_state_to_jaxmarl_obs(
-            self.state, self.mdp, agent_idx=self.ai_idx
-        )
-        ai_action_idx = self.model.get_action(ai_obs, layout_name=self.layout)
+        # CEC 모델은 V1 engine 으로 학습됐으므로 OV2 경유 없이 overcooked-ai state 를 직접
+        # V1 State 로 재구성하는 어댑터 사용 → byte-exact 학습 분포 obs 제공.
+        # 다른 모델(PH2/SP/FCP/MEP) 은 기존 OV2-style JaxMARL obs 경로 유지.
+        if getattr(self.model, "source", None) == "cec":
+            ai_action_idx = self.model.get_action_cec_from_ai(
+                self.state, self.mdp, self.layout, agent_idx=self.ai_idx,
+            )
+        else:
+            ai_obs = overcooked_state_to_jaxmarl_obs(
+                self.state, self.mdp, agent_idx=self.ai_idx
+            )
+            ai_action_idx = self.model.get_action(ai_obs, layout_name=self.layout)
 
         # human obs (BC 데이터용)
         human_obs = overcooked_state_to_jaxmarl_obs(
