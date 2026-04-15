@@ -97,9 +97,7 @@ def visualize_ppo_policy(
     else:
         _env_name = "overcooked_v2"
     _env_name_override = _env_name if (_env_name in ("ToyCoop", "GridSpread") or _env_name.startswith("MPE_")) else None
-    # GridSpread eval은 항상 all_covered 즉시 종료. config 누락된 ckpt 대비 강제 주입.
-    if _env_name_override == "GridSpread":
-        env_kwargs_no_layout["early_terminate"] = True
+    # GridSpread: 학습 config의 early_terminate 값을 그대로 사용 (학습/eval 정합).
     env, engine_name, _resolved_kwargs = make_eval_env(
         env_layout,
         env_kwargs_no_layout,

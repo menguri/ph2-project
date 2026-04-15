@@ -51,15 +51,15 @@ def _apply_gridspread_overrides(config):
     gs_overrides = {
         "NUM_ENVS": 64,
         "NUM_STEPS": 100,
-        "NUM_MINIBATCHES": 4,
-        "UPDATE_EPOCHS": 10,
-        "LR": 3e-5,
+        "NUM_MINIBATCHES": 1,
+        "UPDATE_EPOCHS": 60,
+        "LR": 5e-4,
         "ANNEAL_LR": True,
         "LR_SCHEDULE": "linear",       # ref onpolicy use_linear_lr_decay=True 매칭 (LR → 0 선형 감쇠)
         "SPLIT_OPTIMIZER": False,      # (일시 OFF) ref onpolicy 처럼 actor/critic 분리 — 검증용으로 잠시 끔
-        "ENT_COEF": 0.05,
-        "ENT_COEF_START": 0.03,
-        "ENT_COEF_END": 0.03,
+        # "ENT_COEF": 0.05,
+        "ENT_COEF_START": 0.01,
+        "ENT_COEF_END": 0.01,
         "ENT_COEF_ANNEAL_STEPS": 1e7,
         "VF_COEF": 1.0,
         "MAX_GRAD_NORM": 1.0,
@@ -73,7 +73,6 @@ def _apply_gridspread_overrides(config):
         "USE_HUBER_LOSS": True,        # value loss Huber (MSE+clip 대신)
         "HUBER_DELTA": 1.0,
         "NORMALIZE_OBS_DIVISOR": 6.0,  # = 2*radius (radius=3) → coord ∈ [0,1]
-        "TOTAL_TIMESTEPS": 1e8,        # ref budget
     }
     for k, v in gs_overrides.items():
         model[k] = v

@@ -71,3 +71,4 @@ Z_PRED_LOSS_COEF: 1.0
 # Pair mode: penalty state를 (원본 + Ch0↔Ch1 swap) 쌍으로 만들어 agent 순서 무관하게 penalty 적용
 # ToyCoop 전용 — OV1/OV2에서는 false
 PH1_PAIR_MODE: false
+PH1_AGENTWISE_PENALTY: false

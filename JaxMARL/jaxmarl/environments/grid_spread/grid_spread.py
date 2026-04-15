@@ -209,9 +209,11 @@ class GridSpread(MultiAgentEnv):
         dones["__all__"] = done
 
         coverage_ratio = n_single_covered / self.n_agents
-        # eval용: step_cost 미포함 (순수 성과 지표)
-        sparse_reward = jnp.where(all_covered, 20.0, 0.0)
-        combined_reward = shaped  # = 0/5/20 (step_cost 미포함)
+        # eval용 sparse_reward: all_covered step +50, 그 외 0. step_cost(1.0)는 매 step 차감.
+        # 에피소드 cumulative = 50·K − step_cost·T  (K=all_covered 유지 step 수, T=진행 step 수).
+        # early_terminate 모드 무관한 단일 공식. early_terminate=True 에서는 빠른 성공일수록 큼.
+        sparse_reward = jnp.where(all_covered, 50.0, 0.0) - self.step_cost
+        combined_reward = shaped  # = 0/0.1/0.5/1.0/50 (step_cost 미포함)
         shaped_reward_events = {
             f"agent_{i}": jnp.array([
                 all_covered.astype(jnp.float32),

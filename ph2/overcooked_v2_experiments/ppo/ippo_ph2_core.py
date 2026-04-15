@@ -198,6 +198,9 @@ def make_train(
 
     ACTION_DIM = env.action_space(env.agents[0]).n
     is_spread = (env_name == "GridSpread")
+    # success_rate 메트릭은 early_terminate=True 모드에서만 의미 있음
+    # (False 모드에서는 success_at_done 이 "마지막 step 에서 모여있는지" 라는 극히 엄격한 정의로 변질).
+    is_spread_et = is_spread and bool(getattr(env, "early_terminate", False))
     num_partners = env.num_agents - 1  # 2-agent: 1, 3-agent: 2
     policy_pred_dim = ACTION_DIM * num_partners  # pred_logits 전체 차원
 
@@ -2801,8 +2804,9 @@ def make_train(
 
             metric = jax.tree_util.tree_map(_safe_mean, metric)
 
-            # GridSpread success_rate 파생: episode 종료 중 all_covered 비율.
-            if is_spread and "success_at_done" in metric and "ep_done_flag" in metric:
+            # GridSpread success_rate 파생: early_terminate=True 모드에서만 계산
+            # (False 모드에서는 "마지막 step 에 all_covered 여부" 라는 엄격한 정의라 무의미).
+            if is_spread_et and "success_at_done" in metric and "ep_done_flag" in metric:
                 metric["success_rate"] = metric["success_at_done"] / (metric["ep_done_flag"] + 1e-8)
 
             # 업데이트 스텝 카운터 증가 및 메트릭에 기록

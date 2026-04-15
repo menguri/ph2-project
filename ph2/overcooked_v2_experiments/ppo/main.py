@@ -46,14 +46,14 @@ def _apply_gridspread_overrides(config):
         "NUM_ENVS": 64,
         "NUM_STEPS": 100,
         "NUM_MINIBATCHES": 1,
-        "UPDATE_EPOCHS": 30,
+        "UPDATE_EPOCHS": 60,
         "LR": 5e-4,
         "ANNEAL_LR": True,
         "LR_SCHEDULE": "linear",       # ref onpolicy use_linear_lr_decay=True 매칭
         "SPLIT_OPTIMIZER": False,      # (일시 OFF) actor/critic 분리 — 검증용으로 잠시 끔
         "ENT_COEF": 0.05,
-        "ENT_COEF_START": 0.05,
-        "ENT_COEF_END": 0.001,
+        "ENT_COEF_START": 0.01,
+        "ENT_COEF_END": 0.01,
         "ENT_COEF_ANNEAL_STEPS": 1e7,
         "VF_COEF": 1.0,
         "MAX_GRAD_NORM": 1.0,

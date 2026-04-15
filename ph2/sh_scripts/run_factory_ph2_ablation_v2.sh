@@ -48,7 +48,7 @@ ACTION_PREDICTION=True
 SAVE_EVAL_CHECKPOINTS=True
 
 # GPU 설정
-GPUS="${GPUS:-1,2,3,4,5}"
+GPUS="${GPUS:-1,3,4,5,6}"
 
 # =============================================================================
 # 레이아웃별 Best 파라미터
