@@ -245,6 +245,46 @@ CycleEncoder(sg(z_hat), sg(a_hat)) → C_prime (D=128)
      - runs/ 폴더 지정으로 BC × RL cross-play 평가 (ph2/baseline 자동 감지)
 - **현재 상태**: cramped_room만 BC 학습 완료 (5 seeds × 2 positions), eval 완료
 
+### forced_coord PH2 best 갱신 (2026-04-19, 2차)
+- 최종: `ph2/runs/20260419-070914_8ixp5kyd_forced_coord_e3t_ph2_e0p3_o3_s8_k1_ct0` (eps=0.3, ω=3, σ=8, k=1, SP=193±12 / XP=158±55)
+- 이전 best (pmtjfgzg, ω=4, SP=188 / XP=148) 보다 SP/XP 모두 상승
+- `final/ph2/forced_coord/20260419-070914_8ixp5kyd...` 에 top-level run_0..9 + metadata + reward_summary 복사 (91M). 이전 pmtjfgzg 디렉토리도 유지
+- `webapp/models/forced_coord/ph2/` 교체 (10 runs, 46M). 이전 pmtjfgzg 기반은 `ph2_old_pmtjfgzg/` 로 백업
+- `human-proxy/sh_scripts/eval_final_v2.sh` / `eval_final_v3.sh` 의 forced_coord PH2 경로도 새 path로 갱신
+
+### Webapp 설문·객관지표 재설계 (2026-04-19)
+- **Post-episode 설문 8항목** (1-7 Likert, `#8 workload` 만 Very Low~Very High)
+  - adaptive / consistent / human_like / enjoyed / coordination → H2
+  - in_my_way / frustrating (역채점) → H3
+  - workload (NASA-TLX) → H3
+- 기존 7항목 (fluency/contribution/trust/human_likeness/obstruction/frustration/play_again) 은 전부 교체
+- `frontend/index.html`, `frontend/js/i18n.js`, `frontend/js/main.js`, `app/api/schemas.py`, `app/db/models.py`, `app/api/routes.py`, `config.yaml` 동기 업데이트
+- **객관 지표 5종** 자동 로깅 (episode 단위):
+  1. `final_score` (기존) — team score
+  2. `deliveries` (기존) — successful deliveries
+  3. `collisions` (기존) — collision count
+  4. `role_specialization` (신규, 0~1) — per-task agent-별 count 에서 `1 - Σ 2·min(h,a) / Σ(h+a)`
+  5. `idle_time_ratio` (신규, 0~1) — AI stay + stuck timestep 비율 (interact 는 제외)
+  - 추가로 `task_events` (JSON, 5 task × 2 agent) 도 저장하여 사후 재집계 가능
+- `app/game/engine.py` GameSession 에 task-event tracker + helpers 추가
+- `app/db/session.py` 에 ALTER TABLE ADD COLUMN 마이그레이션 로직 추가 (기존 SQLite DB 호환)
+- CSV export (`/admin/export`) 헤더도 새 지표 반영
+
+### forced_coord MEP best 갱신 (2026-04-18)
+- `baseline/runs/20260416-162055_lz0c4ozg_forced_coord_mep_pop8` (sp=31, xp=34) 이 기존 plv7yajb (sp=21, xp=25) 를 능가
+- `final/baseline/forced_coord/20260416-162055_lz0c4ozg_forced_coord_mep_pop8/` 에 복사 (메타데이터 + mep_population + run_0..9/ckpt_final, 37M)
+- `webapp/models/forced_coord/mep/` 교체 (이전 _m2 기반은 `mep_old_m2/` 로 백업)
+
+### PH1 Penalty Linear Mode 추가 (2026-04-21)
+- **목적**: 기존 `ω·exp(-σ·dist)` 외에 `α/(ε+dist)` 역수형 penalty 옵션 추가 (Overcooked 실험용)
+- `config/experiment/rnn-ph2.yaml`: `PH1_PENALTY_LINEAR_MODE` (default false), `PH1_LINEAR_ALPHA` (default 0.02), `PH1_LINEAR_EPSILON` (default 0.001) 신규
+- `ippo_ph2_core.py`: penalty 계산 한 줄(line ~1659)을 if/else 분기로 교체. linear 모드면 `α/(ε+dist)`, 아니면 기존 exp. 분기 외 흐름(slot 합산, warmup, reward 차감, 로깅)은 모두 그대로
+- `run_user_wandb.sh`: `--ph1-penalty-linear-mode/--ph1-linear-alpha/--ph1-linear-epsilon` CLI 플래그 추가
+- `run_factory_ph2.sh`: 환경변수 default + `run_ph2()` 함수에 3개 플래그 패스스루 추가
+- **호환성**: default=false → 기존 모든 실험·체크포인트 동작 100% 동일
+- **α 추천값 도출 근거**: forced_coord 12개 wandb run summary 분석 → 학습 종료 시 평균 dist≈2~4, exp penalty 평균≈0.005~0.02. linear 평균 매칭값 α=0.02 기본 (sweep 권장: {0.005, 0.02, 0.05, 0.1})
+- **⚠️ dist→0 폭주 주의**: max penalty=α/0.001=1000·α. α=0.02면 cap=20 (reward scale과 동급). α≥0.1 사용 시 warmup 충분히 설정 권장
+
 ### 현재 작업 중
 - (없음)
 

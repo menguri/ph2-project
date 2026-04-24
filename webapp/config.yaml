@@ -15,6 +15,8 @@ agent:
   policy_source: "params"
   stochastic: true
   algo_filter: ["cec"]
+  # 특정 레이아웃만 활성화 (비워두면 전체). 파일럿/테스트 시 사용.
+  layout_filter: ["cramped_room", "forced_coord", "asymm_advantages"]
 
 model:
   gru_hidden_dim: 128
@@ -43,12 +45,26 @@ survey:
     - {id: "overcooked_exp", type: "select", label: "Overcooked 게임 경험",
        options: ["없음", "조금 있음", "많이 있음"], required: true}
   post_episode:
-    - {id: "fluency", type: "likert7",
-       label: "The agent and I worked together fluently."}
-    - {id: "contribution", type: "likert7",
-       label: "The agent contributed to our team performance."}
-    - {id: "trust", type: "likert7",
-       label: "I trusted the agent's actions."}
+    # 8개 주관 지표 (1-7 Likert). 지표 → 가설 매핑:
+    # adaptive, consistent, human_like, enjoyed, coordination → H2
+    # in_my_way (역채점), frustrating (역채점) → H3
+    # workload (Very Low~Very High) → H3 (NASA-TLX)
+    - {id: "adaptive", type: "likert7",
+       label: "The AI partner adapted to my actions and strategy."}
+    - {id: "consistent", type: "likert7",
+       label: "The AI partner's behavior was consistent and predictable."}
+    - {id: "human_like", type: "likert7",
+       label: "The AI partner behaved in a human-like way."}
+    - {id: "in_my_way", type: "likert7",
+       label: "The AI partner often got in my way."}
+    - {id: "frustrating", type: "likert7",
+       label: "Playing with this AI partner was frustrating."}
+    - {id: "enjoyed", type: "likert7",
+       label: "I enjoyed collaborating with this AI partner."}
+    - {id: "coordination", type: "likert7",
+       label: "The AI partner and I coordinated well as a team."}
+    - {id: "workload", type: "likert7",
+       label: "How mentally demanding was it to work with this partner? (1=Very Low, 7=Very High)"}
     - {id: "open_text", type: "textarea",
        label: "Describe your experience with the agent."}
 

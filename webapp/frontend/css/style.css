@@ -71,8 +71,89 @@ button {
     transition: background 0.2s;
 }
 button:hover { background: #c73650; }
+button:disabled {
+    background: #555;
+    color: #aaa;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+button:disabled:hover { background: #555; }
 button.secondary { background: #555; margin-top: 0.5rem; }
 button.secondary:hover { background: #777; }
+
+/* Consent page */
+.consent-bullets {
+    margin: 0.75rem 0 1.25rem 1.5rem;
+    line-height: 1.6;
+}
+.consent-bullets li { margin: 0.3rem 0; }
+
+.consent-full {
+    margin: 1rem 0 1.25rem 0;
+    background: #0f3460;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+}
+.consent-full > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: #e94560;
+    list-style: none;
+    padding: 0.25rem 0;
+}
+.consent-full > summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform 0.15s;
+}
+.consent-full[open] > summary::before {
+    content: "▾ ";
+}
+.consent-full > summary::-webkit-details-marker { display: none; }
+.consent-full-body {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #1f3a5c;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    max-height: 420px;
+    overflow-y: auto;
+}
+.consent-full-body h4 {
+    color: #e94560;
+    margin: 1rem 0 0.4rem 0;
+    font-size: 1rem;
+}
+.consent-full-body h4:first-child { margin-top: 0; }
+.consent-full-body p { margin: 0.4rem 0; }
+.consent-full-body ul, .consent-full-body ol {
+    margin: 0.4rem 0 0.6rem 1.5rem;
+}
+.consent-full-body li { margin: 0.2rem 0; }
+
+.consent-checks {
+    margin: 1.25rem 0 0.5rem 0;
+    padding: 1rem;
+    background: #0f3460;
+    border-radius: 8px;
+}
+.consent-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    margin: 0.5rem 0;
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+.consent-check input[type="checkbox"] {
+    flex: 0 0 auto;
+    width: 1.15rem;
+    height: 1.15rem;
+    margin-top: 0.15rem;
+    cursor: pointer;
+    accent-color: #e94560;
+}
 
 /* Game */
 #page-game { text-align: center; }
@@ -230,4 +311,33 @@ button.secondary:hover { background: #777; }
     h1 { font-size: 1.2rem; }
     #game-hud { font-size: 0.9rem; padding: 0.3rem 0.5rem; }
     #game-status { font-size: 0.8rem; }
+}
+
+/* ===== Start countdown (맵 아래 중앙) =====
+ * #page-game 이 text-align:center 라 inline-block 으로 두면 canvas 와 동일한 중앙 정렬됨.
+ */
+#countdown-overlay {
+    display: none;
+    margin: 0.6rem auto 0.4rem;
+    font-size: clamp(42px, 8vw, 80px);
+    font-weight: 800;
+    color: #ffd700;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6), 0 0 18px rgba(233, 69, 96, 0.55);
+    user-select: none;
+    line-height: 1;
+    min-width: 1.5em;
+    text-align: center;
+}
+#countdown-overlay.active { display: inline-block; }
+.countdown-pulse {
+    animation: countdown-pop 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes countdown-pop {
+    0%   { opacity: 0; transform: scale(0.5); }
+    25%  { opacity: 1; transform: scale(1.25); }
+    70%  { opacity: 1; transform: scale(1.0); }
+    100% { opacity: 0.85; transform: scale(0.95); }
+}
+@media (max-width: 600px) {
+    #countdown-overlay { font-size: clamp(36px, 12vw, 60px); margin: 0.4rem auto; }
 }

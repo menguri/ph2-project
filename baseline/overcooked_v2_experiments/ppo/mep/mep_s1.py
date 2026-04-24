@@ -177,11 +177,18 @@ def make_train_mep_s1(config):
                 rng,
             ) = runner_state
 
-            # -- Partner assignment (rotate by random offset != 0) --
-            # 각 partner slot에 서로 다른 population member 배정
+            # -- Partner assignment --
+            # Self-play warmup: 초기 SP_WARMUP_FRAC 비율 동안은 offset=0 (self-play).
+            # 원본 MEP 는 pure self-play (round-robin per-episode) + MEP bonus 였으므로
+            # MEP_S1_SP_WARMUP_FRAC=1.0 이면 원본 MEP 와 구조 동일 (항상 self-play).
+            sp_warmup_frac = float(config.get("MEP_S1_SP_WARMUP_FRAC", 0.0))
+            warmup_updates = int(sp_warmup_frac * NUM_UPDATES)
+            is_sp = (update_step < warmup_updates) if warmup_updates > 0 else False
+
             rng, _rng = jax.random.split(rng)
             if num_partners == 1:
                 offset = jax.random.randint(_rng, (), 1, max(N, 2))
+                offset = jnp.where(is_sp, jnp.int32(0), offset)   # SP 구간엔 offset=0
                 partner_idxs = (jnp.arange(N) + offset) % N  # (N,)
             else:
                 # num_partners개의 partner를 각각 다른 offset으로 배정
@@ -192,6 +199,7 @@ def make_train_mep_s1(config):
                 partner_idxs = jnp.stack([
                     (jnp.arange(N) + offsets[p]) % N for p in range(num_partners)
                 ])  # (num_partners, N)
+                # num_partners>1 (3+ agent) 에선 SP warmup 미지원
 
             # All actor params (N stacked) — used as closure in inner fns
             all_actor_params = pop_states.params

@@ -31,6 +31,11 @@ FIXED_SEED=42
 : "${ACTION_PREDICTION:=True}"
 : "${PH2_FIXED_IND_PROB:=0.5}"
 
+# Penalty Linear Mode (Overcooked 전용 실험; default false=원본 exp 유지)
+: "${PH1_PENALTY_LINEAR_MODE:=false}"
+: "${PH1_LINEAR_ALPHA:=0.02}"
+: "${PH1_LINEAR_EPSILON:=0.001}"
+
 run_ph2() {
   local gpus=$1
   local env=$2
@@ -67,19 +72,22 @@ run_ph2() {
     --ph1-warmup-steps $PH1_WARMUP_STEPS \
     --ph2-fixed-ind-prob "$PH2_FIXED_IND_PROB" \
     --ph2-epsilon "$PH2_EPSILON" \
-    --action-prediction "$ACTION_PREDICTION"
+    --action-prediction "$ACTION_PREDICTION" \
+    --ph1-penalty-linear-mode "$PH1_PENALTY_LINEAR_MODE" \
+    --ph1-linear-alpha "$PH1_LINEAR_ALPHA" \
+    --ph1-linear-epsilon "$PH1_LINEAR_EPSILON"
 }
 
 # =============================================================================
 # OV1 전 레이아웃 PH2 학습 — 12 seeds (seed 41×5 + seed 42×5 + seed 43×2)
 #
-# 각 레이아웃별 best 파라미터:
+# 각 레이아웃별 best 파라미터 (final/ph2 등록된 모델의 run_metadata.json 기준):
 #   cramped_room:     omega=10 sigma=2 k=1 normal_prob=0.5
 #   asymm_advantages: omega=5  sigma=3 k=1 normal_prob=0.5
-#   coord_ring:       omega=10 sigma=2 k=3 normal_prob=0.0
-#   counter_circuit:  omega=10 sigma=2 k=1 normal_prob=0.0
+#   coord_ring:       omega=10 sigma=2 k=2 normal_prob=0.0
+#   counter_circuit:  omega=10 sigma=4 k=1 normal_prob=0.0
 #   forced_coord:     omega=4  sigma=8 k=1 normal_prob=0.0
-# 공통: beta=1.0, beta_end=1.0, eps=0.2, ent=0.01, warmup=2M
+# 공통: beta=1.0, beta_end=1.0, eps=0.2, ent=0.01(default), warmup=2M
 # =============================================================================
 OV1_GPUS="1,2,4,5,6"
 
@@ -102,13 +110,13 @@ run_ov1_all() {
   PH1_NORMAL_PROB=0.5
   run_ph2 "$OV1_GPUS" "asymm_advantages" 5.0 3.0 1
 
-  # coord_ring: omega=10 sigma=2 k=3 normal_prob=0.0
+  # coord_ring: omega=10 sigma=2 k=2 normal_prob=0.0
   PH1_NORMAL_PROB=0.0
-  run_ph2 "$OV1_GPUS" "coord_ring" 10.0 2.0 3
+  run_ph2 "$OV1_GPUS" "coord_ring" 10.0 2.0 2
 
-  # counter_circuit: omega=10 sigma=2 k=1 normal_prob=0.0
+  # counter_circuit: omega=10 sigma=4 k=1 normal_prob=0.0
   PH1_NORMAL_PROB=0.0
-  run_ph2 "$OV1_GPUS" "counter_circuit" 10.0 2.0 1
+  run_ph2 "$OV1_GPUS" "counter_circuit" 10.0 4.0 1
 
   # forced_coord: omega=4 sigma=8 k=1 normal_prob=0.0
   PH1_NORMAL_PROB=0.0

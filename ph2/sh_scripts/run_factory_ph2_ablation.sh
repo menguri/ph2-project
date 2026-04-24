@@ -4,10 +4,11 @@
 #
 # 3 레이아웃 × 3 ablation = 9 셀, 각 5 seeds
 #
-# Best params (run_factory_ph2.sh 기준):
+# Best params (final/ph2 등록된 모델의 run_metadata.json 기준):
 #   cramped_room:     omega=10 sigma=2 k=1 normal_prob=0.5
-#   coord_ring:       omega=10 sigma=2 k=3 normal_prob=0.0
-#   counter_circuit:  omega=10 sigma=2 k=1 normal_prob=0.0
+#   coord_ring:       omega=10 sigma=2 k=2 normal_prob=0.0
+#   counter_circuit:  omega=10 sigma=4 k=1 normal_prob=0.0
+#   공통: ent=0.01 (default 사용)
 #
 # Ablation 조건:
 #   A1: w/o Penalty Filtering   — beta_start=0, beta_end=0 (V-gap 비활성화 → uniform sampling)
@@ -110,24 +111,24 @@ run_ablation() {
 # =============================================================================
 echo "#################### A1: w/o Penalty Filtering ####################"
 run_ablation "cramped_room"     10.0 2.0 1 0.5  "wo_filtering"  BETA_START=0.0 BETA_END=0.0
-run_ablation "coord_ring"       10.0 2.0 3 0.0  "wo_filtering"  BETA_START=0.0 BETA_END=0.0
-run_ablation "counter_circuit"  10.0 2.0 1 0.0  "wo_filtering"  BETA_START=0.0 BETA_END=0.0
+run_ablation "coord_ring"       10.0 2.0 2 0.0  "wo_filtering"  BETA_START=0.0 BETA_END=0.0
+run_ablation "counter_circuit"  10.0 4.0 1 0.0  "wo_filtering"  BETA_START=0.0 BETA_END=0.0
 
 # =============================================================================
 # A2: w/o Action Prediction (E3T partner predictor 비활성화)
 # =============================================================================
 echo "#################### A2: w/o Action Prediction ####################"
 run_ablation "cramped_room"     10.0 2.0 1 0.5  "wo_action_pred"  ACTION_PRED=False
-run_ablation "coord_ring"       10.0 2.0 3 0.0  "wo_action_pred"  ACTION_PRED=False
-run_ablation "counter_circuit"  10.0 2.0 1 0.0  "wo_action_pred"  ACTION_PRED=False
+run_ablation "coord_ring"       10.0 2.0 2 0.0  "wo_action_pred"  ACTION_PRED=False
+run_ablation "counter_circuit"  10.0 4.0 1 0.0  "wo_action_pred"  ACTION_PRED=False
 
 # =============================================================================
 # A3: w/o Spec-Ind Cooperation (spec이 ind와 매칭 시 항상 random action)
 # =============================================================================
 echo "#################### A3: w/o Spec-Ind Coop ####################"
 run_ablation "cramped_room"     10.0 2.0 1 0.5  "wo_specind"  PH2_EPS=1.0
-run_ablation "coord_ring"       10.0 2.0 3 0.0  "wo_specind"  PH2_EPS=1.0
-run_ablation "counter_circuit"  10.0 2.0 1 0.0  "wo_specind"  PH2_EPS=1.0
+run_ablation "coord_ring"       10.0 2.0 2 0.0  "wo_specind"  PH2_EPS=1.0
+run_ablation "counter_circuit"  10.0 4.0 1 0.0  "wo_specind"  PH2_EPS=1.0
 
 echo "================================================================"
 echo "  Ablation 전체 완료 (9 셀)"

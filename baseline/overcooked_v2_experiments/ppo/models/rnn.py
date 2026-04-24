@@ -144,8 +144,14 @@ class ActorCriticRNN(ActorCriticBase):
         pred_logits = None
         if use_prediction:
             num_partners = self.config.get("NUM_PARTNERS", 1)
+            # legacy 체크포인트 호환: num_hidden_layers 를 config 로 오버라이드 가능.
+            # modern default=4 (5 Dense), legacy=2 (3 Dense).
+            pred_hidden = self.config.get("PREDICTOR_HIDDEN_LAYERS", 4)
             pred_logits = PartnerPredictor(
-                action_dim=self.action_dim, num_partners=num_partners, name="predictor"
+                action_dim=self.action_dim,
+                num_partners=num_partners,
+                num_hidden_layers=pred_hidden,
+                name="predictor",
             )(embedding)
             embedding = jnp.concatenate([embedding, pred_logits], axis=-1)
 

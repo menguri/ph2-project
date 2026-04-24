@@ -1,0 +1,26 @@
+{
+  "alg_name": "MEP",
+  "layout": "cramped_room",
+  "wandb_id": "md4rvbma",
+  "timestamp": "20260408-050225",
+  "num_seeds": 1,
+  "model": {
+    "GRU_HIDDEN_DIM": 64,
+    "FC_DIM_SIZE": 64,
+    "LR": 0.0003,
+    "NUM_ENVS": 30,
+    "NUM_STEPS": 400,
+    "TOTAL_TIMESTEPS": 15000000.0,
+    "ENT_COEF": 0.01,
+    "VF_COEF": 0.1,
+    "MAX_GRAD_NORM": 0.1,
+    "GAE_LAMBDA": 0.98,
+    "CLIP_EPS": 0.05,
+    "UPDATE_EPOCHS": 8,
+    "NUM_MINIBATCHES": 5,
+    "REW_SHAPING_HORIZON": 10000000.0
+  },
+  "population_size": 4,
+  "entropy_alpha": 0.1,
+  "s2_num_seeds": 10
+}

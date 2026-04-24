@@ -225,9 +225,20 @@ def make_train_gamma_s1(config):
             ) = runner_state
 
             # -- Partner assignment --
+            # Self-play warmup: 초기 SP_WARMUP_FRAC 비율 동안은 offset=0 (self-play).
+            # 그 이후에는 cross-play (offset∈[1,N)).
+            # 원본 GAMMA S1 은 순수 self-play (모든 update round-robin single member) 였으므로
+            # warmup 으로 기본 coord 먼저 학습한 뒤 cross-play 로 다양성 추가.
+            sp_warmup_frac = float(config.get("GAMMA_S1_SP_WARMUP_FRAC", 0.0))
+            warmup_updates = int(sp_warmup_frac * NUM_UPDATES)
+            is_sp = (update_step < warmup_updates) if warmup_updates > 0 else False
+
             rng, _rng = jax.random.split(rng)
             if num_partners == 1:
+                # SP: offset=0 → partner_idx[m] = m (self-play)
+                # XP: offset∈[1,N) → partner 는 다른 member
                 offset = jax.random.randint(_rng, (), 1, max(N, 2))
+                offset = jnp.where(is_sp, jnp.int32(0), offset)
                 partner_idxs = (jnp.arange(N) + offset) % N
             else:
                 offsets = jax.random.choice(
@@ -237,6 +248,9 @@ def make_train_gamma_s1(config):
                 partner_idxs = jnp.stack([
                     (jnp.arange(N) + offsets[p]) % N for p in range(num_partners)
                 ])
+                # SP warmup 은 num_partners==1 (2-agent) 케이스만 지원
+                if num_partners > 1 and sp_warmup_frac > 0:
+                    print("[WARN] GAMMA_S1_SP_WARMUP_FRAC is only supported for 2-agent envs; ignoring.")
 
             all_actor_params = pop_states.params
 

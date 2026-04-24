@@ -3,6 +3,8 @@ Phase 2: 모델 추론 — ActorCriticRNN forward pass on CPU.
 baseline/ph2 모델 모두 지원.
 """
 import importlib.util
+import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -85,42 +87,87 @@ def _load_baseline_module(name: str):
     return mod
 
 
-def _patch_e3t_predictor():
-    """E3T 체크포인트의 3층 PartnerPredictor에 맞게 baseline 모듈을 패치.
+def _detect_predictor_depth(predictor_params: dict | None) -> int:
+    """체크포인트 params 에서 PartnerPredictor 의 hidden layer 수를 추정.
 
-    학습 코드(baseline)의 PartnerPredictor는 5층이지만, E3T 체크포인트는
-    3층(Dense 128→64, 64→64, 64→6)으로 학습됨.
-    baseline rnn.py가 참조하는 PartnerPredictor 클래스를 교체하여
-    use_prediction=True 호출 시 체크포인트 params와 일치시킨다.
+    E3T PartnerPredictor 는 N 개의 hidden Dense + 1 개의 output Dense 로 구성.
+    → params 의 Dense_* 개수 - 1 = num_hidden_layers.
+
+    실측 depth (webapp/models/*/e3t):
+      cramped_room / coord_ring / asymm_advantages: 5 Dense (4 hidden)  ← 다수
+      forced_coord / counter_circuit:               3 Dense (2 hidden)  ← 일부
+    """
+    if predictor_params is None:
+        return 4  # baseline modern default
+    n_dense = sum(1 for k in predictor_params if k.startswith("Dense_"))
+    return max(1, n_dense - 1)
+
+
+def _make_ph2_predictor_class(num_hidden_layers: int):
+    """ph2 의 PartnerPredictor (depth hardcoded=2) 를 체크포인트 depth 에 맞춰 재생성.
+
+    baseline 쪽은 `num_hidden_layers` 를 config/kwarg 로 지원하므로 패치 불필요.
+    여기서는 오로지 ph2 네트워크 경로 (ph2 / baseline-via-ph2 remap) 에서 사용할
+    동적 Predictor 클래스만 만든다.
+
+    주의: __init__ 시그니처는 baseline 쪽과 맞춰 `num_hidden_layers` 도 optional 로
+    받도록 한다. (baseline rnn 쪽이 실수로 ph2 경로에서도 해당 kwarg 를 넘기더라도
+    TypeError 를 피하기 위함.) 값이 주어지면 그 값을 우선 사용한다.
     """
     import flax.linen as nn
     from flax.linen.initializers import orthogonal, constant
 
-    class PartnerPredictor3L(nn.Module):
-        """체크포인트 호환 3층 PartnerPredictor."""
+    default_n = num_hidden_layers
+
+    class _Predictor(nn.Module):
         action_dim: int = 6
         num_partners: int = 1
+        # baseline 호환성: config-driven depth override. None 이면 closure default 사용.
+        num_hidden_layers: int | None = None
 
         @nn.compact
         def __call__(self, embedding):
             output_dim = self.action_dim * self.num_partners
+            n = default_n if self.num_hidden_layers is None else int(self.num_hidden_layers)
             x = embedding
-            x = nn.Dense(64, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
-            x = nn.leaky_relu(x)
-            x = nn.Dense(64, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
-            x = nn.leaky_relu(x)
-            x = nn.Dense(output_dim, kernel_init=orthogonal(jnp.sqrt(2)), bias_init=constant(0.0))(x)
+            for i in range(n):
+                x = nn.Dense(64, kernel_init=orthogonal(jnp.sqrt(2)),
+                             bias_init=constant(0.0))(x)
+                # 마지막 hidden 만 tanh (baseline convention 과 일치 — activation 차이는
+                # normalize 후 softmax 거치므로 inference 영향 미미하지만 가능한 한 맞춤)
+                if i == n - 1:
+                    x = nn.tanh(x)
+                else:
+                    x = nn.leaky_relu(x)
+            x = nn.Dense(output_dim, kernel_init=orthogonal(jnp.sqrt(2)),
+                         bias_init=constant(0.0))(x)
             norm = jnp.sqrt(jnp.sum(x**2, axis=-1, keepdims=True) + 1e-10)
-            x = x / norm
-            return x
+            return x / norm
 
-    # baseline rnn.py가 참조하는 PartnerPredictor를 교체
-    rnn_mod = _load_baseline_module("rnn")
-    rnn_mod.PartnerPredictor = PartnerPredictor3L
+    return _Predictor
 
-    # e3t 모듈도 교체 (rnn.py가 from .e3t import PartnerPredictor 했을 수 있으므로)
-    e3t_mod = _load_baseline_module("e3t")
-    e3t_mod.PartnerPredictor = PartnerPredictor3L
+
+def _patch_e3t_predictor(predictor_params: dict | None = None):
+    """E3T 체크포인트의 predictor depth 에 맞춰 **ph2 쪽** PartnerPredictor 만 교체.
+
+    baseline 쪽은 `num_hidden_layers` 를 config 로 제어 가능 (baseline/rnn.py 가
+    `self.config.get("PREDICTOR_HIDDEN_LAYERS", 4)` 로 읽어 PartnerPredictor 에
+    kwarg 로 넘김) → 여기서 패치하지 말고 config 수정으로 처리.
+
+    ph2 쪽은 depth 가 2 로 하드코딩 되어 있어 checkpoint 가 다른 depth 면
+    param 키 구조가 안 맞음 → 동적 재생성이 필요.
+    """
+    n = _detect_predictor_depth(predictor_params)
+    cls = _make_ph2_predictor_class(n)
+
+    try:
+        import importlib
+        ph2_e3t = importlib.import_module("overcooked_v2_experiments.ppo.models.e3t")
+        ph2_e3t.PartnerPredictor = cls
+        ph2_rnn = importlib.import_module("overcooked_v2_experiments.ppo.models.rnn")
+        ph2_rnn.PartnerPredictor = cls
+    except Exception:
+        pass
 
 
 class ModelManager:
@@ -180,6 +227,11 @@ class ModelManager:
 
     def _build_network(self):
         """config에 맞는 네트워크 구축."""
+        # predictor 가 params 에 있으면 (E3T, 또는 action_prediction 쓰는 PH2 등)
+        # checkpoint 의 predictor depth 에 맞춰 baseline + ph2 의 PartnerPredictor 를 패치.
+        # 매 load 마다 다시 해야 이전 load 의 patched 클래스가 남는 문제 방지.
+        if "predictor" in self.params:
+            _patch_e3t_predictor(self.params["predictor"])
         if self.source == "ph2":
             # ind policy용: blocked_encoder 비활성화
             cfg = dict(self.config)
@@ -197,9 +249,17 @@ class ModelManager:
 
     def _build_baseline_network_native(self):
         """baseline ActorCriticRNN을 직접 로드하여 원본 params 그대로 사용."""
-        # E3T: 체크포인트 predictor(3층)와 baseline 코드(5층) 불일치 패치
+        # E3T: checkpoint predictor depth 에 맞춰 config 수정 + ph2 module 패치.
+        # baseline 의 ActorCriticRNN 은 `config["model"]` 을 self.config 로 받아서
+        # `self.config.get("PREDICTOR_HIDDEN_LAYERS", 4)` 로 depth 를 읽는다
+        # (baseline/model.py → get_actor_critic 에서 model_config 전달).
+        # → 반드시 `config["model"]["PREDICTOR_HIDDEN_LAYERS"]` 에 넣어야 함.
         if "predictor" in self.params:
-            _patch_e3t_predictor()
+            n_hidden = _detect_predictor_depth(self.params["predictor"])
+            self.config = dict(self.config)
+            self.config["model"] = dict(self.config.get("model", {}))
+            self.config["model"]["PREDICTOR_HIDDEN_LAYERS"] = n_hidden
+            _patch_e3t_predictor(self.params["predictor"])
             self._use_prediction = True
         baseline_model_mod = _load_baseline_module("model")
         network = baseline_model_mod.get_actor_critic(self.config)
@@ -209,6 +269,10 @@ class ModelManager:
 
     def _build_baseline_network_via_ph2(self):
         """baseline param 키를 ph2 키로 리매핑 후 ph2 네트워크 사용."""
+        # E3T: ph2 코드의 PartnerPredictor (3층) 와 체크포인트 (5층) 가 다를 수 있음 → 패치
+        if "predictor" in self.params:
+            _patch_e3t_predictor(self.params["predictor"])
+            self._use_prediction = True
         # baseline params: CNN_0, LayerNorm_0, ScannedRNN_0, Dense_0~3, (predictor)
         # ph2 params: shared_encoder, shared_encoder_ln, ScannedRNN_0, Dense_0~3, (predictor)
         remap = {
@@ -393,28 +457,85 @@ class ModelManager:
                                agent_idx: int = 0) -> int:
         """CEC 직접 경로: overcooked-ai state → V1 State → V1 get_obs → CEC 추론.
 
-        OV2 경유가 없어 CEC 훈련 분포와 byte-exact obs 를 받는다.
-        webapp/human-proxy 는 CEC 모델 추론 시 이 메서드를 써야 한다.
+        slot alignment:
+          V1 훈련 시 CEC 의 agent_0 은 `CEC_LAYOUTS[layout_9]["agent_idx"][0]` 좌표
+          (예: cramped_room_9 → flat 10 = (x=1, y=1)) 에 고정.
+          webapp overcooked-ai 는 `swap_agents=True` 레이아웃 (cramped_room,
+          counter_circuit) 에서 agent_0 을 다른 좌표에 배치.
+          → AI 의 실제 위치가 V1 의 agent_0 좌표와 일치하면 CEC slot 0 을,
+            V1 의 agent_1 좌표와 일치하면 CEC slot 1 을 사용해서 훈련 convention 과 맞춤.
 
         Args:
             ai_state: overcooked-ai OvercookedState
             mdp: overcooked-ai OvercookedGridworld
             layout_name: e.g. "cramped_room"
-            agent_idx: 0 or 1 (AI agent 가 slot 0 인지 1 인지)
+            agent_idx: 0 or 1 (AI agent 가 webapp 의 slot 0 인지 1 인지)
 
         Returns:
             action index (0-5)
         """
         _ensure_cec_imports()
         adapter = self._ensure_cec_ai_adapter(layout_name)
+
+        # V1 훈련 convention 의 agent_0 / agent_1 좌표 (x, y)
+        from cec_integration.cec_layouts import CEC_LAYOUTS
+        v1_layout = CEC_LAYOUTS[f"{layout_name}_9"]
+        import numpy as np
+        v1_agent_xy = []
+        for flat in np.asarray(v1_layout["agent_idx"]):
+            v1_agent_xy.append((int(flat) % 9, int(flat) // 9))  # (x, y)
+
+        # AI 의 실제 (x, y)
+        ai_pos = tuple(ai_state.players[agent_idx].position)
+        # V1 convention 에서 이 위치가 agent_0 이면 slot 0, agent_1 이면 slot 1
+        if ai_pos == v1_agent_xy[0]:
+            cec_slot = 0
+        elif ai_pos == v1_agent_xy[1]:
+            cec_slot = 1
+        else:
+            # 이동 후라 V1 static agent_idx 와 매칭 안 됨 → 이전 slot 유지
+            cec_slot = getattr(self, "_cec_assigned_slot", 0)
+        self._cec_assigned_slot = cec_slot
+
         cec_obs = adapter.get_cec_obs(ai_state, mdp,
                                        agent_idx=agent_idx,
                                        current_step=self._cec_step)
-        obs_arr = jnp.stack([cec_obs, jnp.zeros_like(cec_obs)])
+        # CECRuntime 은 (num_agents=2, 9, 9, 26) 입력. cec_slot 에 배치, 나머지 dummy.
+        dummy = jnp.zeros_like(cec_obs)
+        if cec_slot == 0:
+            obs_arr = jnp.stack([cec_obs, dummy])
+        else:
+            obs_arr = jnp.stack([dummy, cec_obs])
 
         self._rng, subkey = jax.random.split(self._rng)
         actions, self._cec_hidden, probs = self._cec_runtime.step(
             obs_arr, self._cec_hidden, self._cec_done, subkey
         )
         self._cec_step += 1
-        return int(actions[0])
+        return int(actions[cec_slot])
+
+    def get_action_cec_v1_obs(self, v1_obs, cec_slot: int = 0) -> int:
+        """CEC V1-engine 경로: V1 Overcooked.get_obs 결과를 직접 받아 CEC runtime 호출.
+
+        webapp 에서 primary engine 을 V1 Overcooked 로 운영할 때 사용.
+        V1EngineSession.get_cec_obs_v1(agent_idx) 의 출력을 그대로 넘기면 됨.
+
+        Args:
+            v1_obs: (9, 9, 26) — V1 native obs for the AI agent
+            cec_slot: 0 or 1 — CEC runtime 내 AI 의 slot 위치 (V1 훈련 convention;
+                      보통 AI 가 webapp ai_idx 로 놓이는 V1 slot 과 동일)
+
+        Returns:
+            action index (0-5)
+        """
+        _ensure_cec_imports()
+        v1_obs = jnp.asarray(v1_obs)
+        dummy = jnp.zeros_like(v1_obs)
+        obs_arr = jnp.stack([v1_obs, dummy]) if cec_slot == 0 else jnp.stack([dummy, v1_obs])
+
+        self._rng, subkey = jax.random.split(self._rng)
+        actions, self._cec_hidden, probs = self._cec_runtime.step(
+            obs_arr, self._cec_hidden, self._cec_done, subkey
+        )
+        self._cec_step += 1
+        return int(actions[cec_slot])

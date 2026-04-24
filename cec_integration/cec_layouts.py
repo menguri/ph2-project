@@ -47,6 +47,17 @@ _TEMPLATES = {
         [4, 0, 1, 0, 1],
         [4, 1, 1, 3, 3],
     ],
+    # Pot-center variant: canonical forced_coord 에서 pot 하나를 (0,3) → (2,2)
+    # 중앙 spine 으로 이동. Spine 에 pot landmark 가 있으면 CEC 정책이 handoff
+    # 를 학습할 수 있어서 canonical (~0점) vs pot-center (~112점) 차이 큼.
+    # 기본 BC × CEC cross-eval 에 이 variant 를 사용 (evaluate_cec_final.py).
+    "forced_coord_pot_center_9": [
+        [1, 1, 1, 1, 1],
+        [5, 0, 1, 0, 6],
+        [5, 2, 6, 2, 1],
+        [4, 0, 1, 0, 1],
+        [4, 1, 1, 3, 3],
+    ],
     "counter_circuit_9": [
         [4, 1, 1, 6, 6, 1, 1, 3],
         [1, 0, 0, 0, 0, 0, 0, 1],

@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
-GPUS="0"
+GPUS="0,6"
 HARD_LAYOUTS=(counter_circuit forced_coord)
 
 # PH2 IPPO 공통 하이퍼파라미터 — ph2/config/model/rnn.yaml 기준으로 전 알고리즘 정렬
@@ -19,9 +19,9 @@ PH2_OVERRIDES=(
   --extra "model.LR=2.5e-4"
   --extra "model.ANNEAL_LR=True"
   --extra "model.LR_WARMUP=0.05"
-  --extra "model.NUM_ENVS=256"
+  --extra "model.NUM_ENVS=64"
   --extra "model.NUM_STEPS=256"
-  --extra "model.NUM_MINIBATCHES=64"
+  --extra "model.NUM_MINIBATCHES=16"
   --extra "model.UPDATE_EPOCHS=4"
   --extra "model.GAMMA=0.99"
   --extra "model.GAE_LAMBDA=0.95"
@@ -83,22 +83,22 @@ done
 # =============================================================================
 # 3. E3T — counter_circuit / forced_coord (30M, 10 seeds)
 # =============================================================================
-echo "============================================================"
-echo "  E3T (30M, 10 seeds, PH2 tuned)"
-echo "============================================================"
+# echo "============================================================"
+# echo "  E3T (30M, 10 seeds, PH2 tuned)"
+# echo "============================================================"
 
-for layout in "${HARD_LAYOUTS[@]}"; do
-  echo "[E3T] ${layout}"
-  ./run_user_wandb.sh \
-    --exp rnn-e3t \
-    --env "${layout}" \
-    --gpus "${GPUS}" \
-    --seeds 10 \
-    --tags e3t,final,ph2tuned \
-    --extra "model.TOTAL_TIMESTEPS=3e7" \
-    --extra "model.OBS_ENCODER=CNN" \
-    "${PH2_OVERRIDES[@]}"
-done
+# for layout in "${HARD_LAYOUTS[@]}"; do
+#   echo "[E3T] ${layout}"
+#   ./run_user_wandb.sh \
+#     --exp rnn-e3t \
+#     --env "${layout}" \
+#     --gpus "${GPUS}" \
+#     --seeds 10 \
+#     --tags e3t,final,ph2tuned \
+#     --extra "model.TOTAL_TIMESTEPS=3e7" \
+#     --extra "model.OBS_ENCODER=CNN" \
+#     "${PH2_OVERRIDES[@]}"
+# done
 
 echo "============================================================"
 echo "  전체 완료"

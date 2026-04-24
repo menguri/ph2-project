@@ -26,7 +26,13 @@ const COLORS = {
     hat: "#FFFFFF",
 };
 
-let participantId = crypto.randomUUID();
+// participantId persists across reloads/reconnects via localStorage
+// so dropped WS connections can resume the same session.
+let participantId = localStorage.getItem("ph2_participant_id");
+if (!participantId) {
+    participantId = crypto.randomUUID();
+    localStorage.setItem("ph2_participant_id", participantId);
+}
 let ws = null;
 let gameState = null;
 let terrain = null;
@@ -58,6 +64,28 @@ document.querySelectorAll("input[type='range']").forEach(el => {
     });
 });
 
+// ===== Consent =====
+let consentData = null;
+
+function updateConsentBtn() {
+    const c1 = document.getElementById("consent-18plus").checked;
+    const c2 = document.getElementById("consent-voluntary").checked;
+    document.getElementById("consent-agree-btn").disabled = !(c1 && c2);
+}
+document.getElementById("consent-18plus").addEventListener("change", updateConsentBtn);
+document.getElementById("consent-voluntary").addEventListener("change", updateConsentBtn);
+
+function submitConsent() {
+    consentData = {
+        consent_18plus: document.getElementById("consent-18plus").checked,
+        consent_voluntary: document.getElementById("consent-voluntary").checked,
+        consent_timestamp: new Date().toISOString(),
+    };
+    if (!consentData.consent_18plus || !consentData.consent_voluntary) return;
+    showPage("page-pre-survey");
+    applyI18n();
+}
+
 // ===== Pre-Survey =====
 document.getElementById("pre-survey-form").addEventListener("submit", async e => {
     e.preventDefault();
@@ -67,6 +95,9 @@ document.getElementById("pre-survey-form").addEventListener("submit", async e =>
         gender: document.getElementById("survey-gender").value || null,
         gaming_exp: parseInt(document.getElementById("survey-gaming").value) || null,
         overcooked_exp: document.getElementById("survey-overcooked").value || null,
+        consent_18plus: consentData?.consent_18plus ?? null,
+        consent_voluntary: consentData?.consent_voluntary ?? null,
+        consent_timestamp: consentData?.consent_timestamp ?? null,
     };
     await fetch("/survey/pre", {
         method: "POST",
@@ -200,6 +231,8 @@ function tutNext() {
 
 // PC: 스페이스바로 튜토리얼 넘기기
 document.addEventListener("keydown", (e) => {
+    // form input(textarea/input/select) focus 또는 한글 IME composition 중이면 키 가로채지 않음
+    if (_isFormInputTarget(e)) return;
     const page = document.querySelector(".page.active");
     if (page && page.id === "page-tutorial" && (e.key === " " || e.key === "ArrowRight")) {
         e.preventDefault();
@@ -239,13 +272,22 @@ function confirmQuit() {
     showPage("page-thanks");
 }
 
+let wsReconnectAttempts = 0;
+const WS_MAX_RECONNECT = 8;
+
 function connectWebSocket() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(`${protocol}//${location.host}/ws/${participantId}`);
 
     ws.onopen = () => {
+        wsReconnectAttempts = 0;
         ws.send(JSON.stringify({type: "start_game"}));
-        document.getElementById("game-status").textContent = "Connecting...";
+        const statusEl = document.getElementById("game-status");
+        if (statusEl) {
+            statusEl.textContent = currentLang === "ko"
+                ? "연결 중..."
+                : "Connecting...";
+        }
     };
 
     ws.onmessage = (event) => {
@@ -258,6 +300,11 @@ function connectWebSocket() {
             currentAlgo = msg.algo_name || "";
             currentLayout = msg.layout_name || "";
             gameState = msg.state;
+            const modelBadge = document.getElementById("hud-model");
+            if (modelBadge) {
+                const seedId = msg.seed_id || "";
+                modelBadge.textContent = `[INSPECT] ${currentLayout} · ${currentAlgo}/${seedId}`;
+            }
 
             // 진행 상황 업데이트
             studyProgress.currentGame = msg.current_game || 0;
@@ -267,12 +314,23 @@ function connectWebSocket() {
 
             resizeCanvas();
             render();
-            startActionLoop();
+            // [Countdown handshake] 서버는 game_start 이후 {type:"ready"} 를 받기 전까지
+            // step 을 진행하지 않는다. 3-2-1-시작!/Start! 오버레이를 보여준 뒤 ready 전송 +
+            // 입력 루프 시작 → agent/human 이 동시에 출발.
+            runStartCountdown().then(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({type: "ready"}));
+                }
+                startActionLoop();
+            });
 
-            // HUD 업데이트
+            // HUD 업데이트 — 현재 레이아웃 진행상황 + 전체 남은 게임 수
             const layoutDisplay = LAYOUT_NAMES[currentLayout] || currentLayout;
+            const totalRemaining = Math.max(0, studyProgress.totalNeeded - studyProgress.totalPlayed);
+            const remainLabel = currentLang === "ko" ? "남은 게임" : "remaining";
             document.getElementById("hud-progress").textContent =
-                `${layoutDisplay} (${studyProgress.currentGame}/${studyProgress.gamesPerLayout})`;
+                `${layoutDisplay} (${studyProgress.currentGame}/${studyProgress.gamesPerLayout})` +
+                `  ·  ${remainLabel} ${totalRemaining}/${studyProgress.totalNeeded}`;
             document.getElementById("hud-score").textContent = `${t("hud_score")}: 0`;
 
             // 타이머 초기화
@@ -322,11 +380,61 @@ function connectWebSocket() {
 
     ws.onclose = () => {
         stopActionLoop();
-        document.getElementById("game-status").textContent =
-            currentLang === "ko"
-                ? "연결이 끊어졌습니다. mingukang@unist.ac.kr로 문의해 주세요."
-                : "Disconnected. Please contact mingukang@unist.ac.kr.";
+
+        // 활성 페이지가 게임 중이면 자동 재접속 시도.
+        // 중간 종료/완료(thanks, quit_confirm, post_survey, again) 는 재접속 안 함.
+        const activePage = document.querySelector(".page.active")?.id;
+        const gameActive = (activePage === "page-game");
+        if (!gameActive || wsReconnectAttempts >= WS_MAX_RECONNECT) {
+            if (activePage === "page-game") {
+                document.getElementById("game-status").textContent =
+                    currentLang === "ko"
+                        ? "연결이 끊어졌습니다. 페이지를 새로고침하세요. 문제가 계속되면 mingukang@unist.ac.kr"
+                        : "Disconnected. Please refresh. If the issue persists, contact mingukang@unist.ac.kr.";
+            }
+            return;
+        }
+
+        wsReconnectAttempts += 1;
+        const delay = Math.min(1000 * Math.pow(1.5, wsReconnectAttempts - 1), 8000);
+        const statusEl = document.getElementById("game-status");
+        if (statusEl) {
+            statusEl.textContent = currentLang === "ko"
+                ? `연결 재시도 중... (${wsReconnectAttempts}/${WS_MAX_RECONNECT})`
+                : `Reconnecting... (${wsReconnectAttempts}/${WS_MAX_RECONNECT})`;
+        }
+        setTimeout(connectWebSocket, delay);
     };
+}
+
+// ===== Start countdown (3-2-1-Start!) =====
+// game-canvas 바로 아래 #countdown-overlay 요소에 표시.
+// 카운트다운이 돌아가는 동안 server 는 background 에서 JIT warmup 을 수행.
+function runStartCountdown() {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById("countdown-overlay");
+        if (!overlay) { resolve(); return; }
+        overlay.classList.add("active");
+        const startText = t("countdown_start");
+        const seq = ["3", "2", "1", startText];
+        let i = 0;
+        function tick() {
+            if (i >= seq.length) {
+                overlay.classList.remove("active", "countdown-pulse");
+                overlay.textContent = "";
+                resolve();
+                return;
+            }
+            overlay.textContent = seq[i];
+            overlay.classList.remove("countdown-pulse");
+            // reflow로 애니메이션 재시작
+            void overlay.offsetWidth;
+            overlay.classList.add("countdown-pulse");
+            i++;
+            setTimeout(tick, 800);
+        }
+        tick();
+    });
 }
 
 // ===== Input handling — 실시간 모드 (키 버퍼링 + 주기적 전송) =====
@@ -366,7 +474,20 @@ function stopActionLoop() {
 }
 
 // Keyboard input: keydown → 버퍼에 설정, keyup → 해제
+// 한글 IME composition 중에는 keydown이 e.key='Process' 또는 keyCode=229로 들어옴.
+// 이때 게임/튜토리얼 핸들러가 preventDefault하면 textarea 입력이 막혀 'ㅣ', 띄어쓰기 등이 누락됨.
+function _isFormInputTarget(e) {
+    if (e && (e.isComposing || e.keyCode === 229)) return true;
+    const t = e.target;
+    if (!t) return false;
+    const tag = t.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable;
+}
+
 document.addEventListener("keydown", (e) => {
+    if (_isFormInputTarget(e)) return;
+    const page = document.querySelector(".page.active");
+    if (!page || page.id !== "page-game") return;
     const action = ACTION_KEY_MAP[e.key];
     if (action !== undefined) {
         e.preventDefault();
@@ -376,6 +497,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("keyup", (e) => {
+    if (_isFormInputTarget(e)) return;
     if (ACTION_KEY_MAP[e.key] !== undefined) {
         activeKeys.delete(e.key);
         if (activeKeys.size === 0) {
@@ -788,13 +910,14 @@ document.getElementById("post-survey-form").addEventListener("submit", async e =
     const data = {
         participant_id: participantId,
         episode_id: episodeId,
-        fluency: parseInt(document.getElementById("post-fluency").value),
-        contribution: parseInt(document.getElementById("post-contribution").value),
-        trust: parseInt(document.getElementById("post-trust").value),
-        human_likeness: parseInt(document.getElementById("post-human-likeness").value),
-        obstruction: parseInt(document.getElementById("post-obstruction").value),
-        frustration: parseInt(document.getElementById("post-frustration").value),
-        play_again: parseInt(document.getElementById("post-play-again").value),
+        adaptive: parseInt(document.getElementById("post-adaptive").value),
+        consistent: parseInt(document.getElementById("post-consistent").value),
+        human_like: parseInt(document.getElementById("post-human-like").value),
+        in_my_way: parseInt(document.getElementById("post-in-my-way").value),
+        frustrating: parseInt(document.getElementById("post-frustrating").value),
+        enjoyed: parseInt(document.getElementById("post-enjoyed").value),
+        coordination: parseInt(document.getElementById("post-coordination").value),
+        workload: parseInt(document.getElementById("post-workload").value),
         open_text: document.getElementById("post-open-text").value || "",
     };
     await fetch("/survey/post", {
@@ -802,7 +925,7 @@ document.getElementById("post-survey-form").addEventListener("submit", async e =
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(data),
     });
-    ["post-fluency","post-contribution","post-trust","post-human-likeness","post-obstruction","post-frustration","post-play-again"].forEach(id => {
+    ["post-adaptive","post-consistent","post-human-like","post-in-my-way","post-frustrating","post-enjoyed","post-coordination","post-workload"].forEach(id => {
         document.getElementById(id).value = 4;
     });
     document.querySelectorAll(".likert-val").forEach(el => el.textContent = "4");

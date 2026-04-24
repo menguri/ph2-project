@@ -1,0 +1,1 @@
+- [final/webapp vs human-proxy 모델 분리 관리](feedback_model_management.md) — 공식 슬롯은 명시 요청 시에만 교체, 평상시 human-proxy 만 갱신

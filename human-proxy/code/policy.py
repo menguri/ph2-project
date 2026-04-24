@@ -21,6 +21,7 @@ import pickle
 import chex
 import jax
 import jax.numpy as jnp
+import numpy as np
 import orbax.checkpoint as ocp
 from flax import core
 from jax.sharding import SingleDeviceSharding
@@ -88,6 +89,10 @@ def load_ppo_checkpoint(ckpt_path: Path):
     """Orbax PPO 체크포인트를 CPU에서 로드. (config, params) 반환.
     PH2 체크포인트: params_ind 사용 (independent policy).
     Baseline 체크포인트: params 사용.
+
+    E3T PartnerPredictor 구조 자동 감지:
+      체크포인트의 /predictor/ 하위 Dense 개수로 `PREDICTOR_HIDDEN_LAYERS` 를
+      config 에 주입 (modern=4, legacy=2). 이후 모델 생성 시 이 값을 씀.
     """
     ckpt_path = Path(ckpt_path).resolve()
     handler = ocp.PyTreeCheckpointHandler()
@@ -97,9 +102,27 @@ def load_ppo_checkpoint(ckpt_path: Path):
     ckpt = checkpointer.restore(str(ckpt_path), restore_args=restore_args)
 
     # PH2 체크포인트는 params_ind (independent policy) 사용
-    if "params_ind" in ckpt:
-        return ckpt["config"], ckpt["params_ind"]
-    return ckpt["config"], ckpt["params"]
+    params = ckpt["params_ind"] if "params_ind" in ckpt else ckpt["params"]
+    config = dict(ckpt["config"]) if "config" in ckpt else {}
+
+    # E3T PartnerPredictor: 체크포인트에서 Dense 개수 감지 → config["model"] 에 주입.
+    # (ActorCriticRNN 은 config["model"] 만 받으므로 반드시 model 하위에 넣어야 반영됨.)
+    # /predictor/Dense_K 최대 K + 1 == 총 Dense 수. num_hidden_layers = 총 - 1.
+    try:
+        params_root = params["params"] if "params" in params else params
+        if "predictor" in params_root:
+            dense_keys = [k for k in params_root["predictor"].keys()
+                          if str(k).startswith("Dense_")]
+            if dense_keys:
+                num_dense = max(int(str(k).split("_")[1]) for k in dense_keys) + 1
+                num_hidden = max(0, num_dense - 1)
+                model_cfg = dict(config.get("model", {}))
+                model_cfg["PREDICTOR_HIDDEN_LAYERS"] = num_hidden
+                config["model"] = model_cfg
+    except Exception:
+        pass
+
+    return config, params
 
 
 # ──────────────────────────────────────────────
@@ -273,11 +296,13 @@ class CECPolicy:
     """
 
     def __init__(self, ckpt_path: str, layout: str, stochastic: bool = True):
-        cec_root = _PROJECT_ROOT / "cec_integration"
-        if str(cec_root) not in sys.path:
-            sys.path.insert(0, str(cec_root))
+        # `from cec_integration.xxx import ...` 가 되려면 project root 가 sys.path 에 있어야 함
+        # (cec_integration 디렉터리 자체가 아니라 그 부모)
+        if str(_PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(_PROJECT_ROOT))
         from cec_integration.cec_runtime import CECRuntime
         from cec_integration.obs_adapter_v2 import ov2_obs_to_cec
+        from cec_integration.cec_layouts import CEC_LAYOUTS
 
         self._runtime = CECRuntime(ckpt_path)
         self._obs_adapter = ov2_obs_to_cec
@@ -285,23 +310,51 @@ class CECPolicy:
         self._stochastic = stochastic
         self._step = 0
 
+        # V1 훈련 convention 의 agent_0 좌표 (x, y) — slot alignment 에 사용.
+        # CEC 는 V1 에서 학습됐으므로 slot 0 의 LSTM 은 이 좌표에서 시작한 agent 의 경험으로 훈련됨.
+        # OV2 의 swap_agents=True 레이아웃 (cramped_room, counter_circuit) 에서는 agent_0 좌표가 뒤바뀌어 있음.
+        v1_layout = CEC_LAYOUTS[f"{layout}_9"]
+        flat0 = int(np.asarray(v1_layout["agent_idx"])[0])
+        self._v1_agent0_xy = (flat0 % 9, flat0 // 9)
+
     def compute_action(self, obs, done, hstate, key, **kwargs):
-        """obs: (H, W, C) OV2 obs. hstate: CEC LSTM hidden. done: scalar bool."""
-        cec_obs = self._obs_adapter(obs, self._layout, self._step, 400)
-        # CECRuntime은 (num_agents, 9, 9, 26)을 받으므로 dummy agent 추가
-        obs_arr = jnp.stack([cec_obs, jnp.zeros_like(cec_obs)])
+        """obs: (H, W, C) OV2 obs. hstate: (cec_lstm_hidden, step_counter) tuple.
+
+        JIT-safe: Python int cast / self mutation 없음. step 은 hstate 에 flow.
+        Slot alignment: AI 시작 좌표가 V1 agent_0 좌표면 slot 0, 아니면 slot 1.
+        """
+        cec_lstm, step_counter = hstate
+        cec_obs = self._obs_adapter(obs, self._layout, step_counter, 400)
+
+        # OV2 obs ch 0 = self_pos one-hot. argmax → (x,y) → V1 agent_0 좌표와 비교.
+        H, W = obs.shape[0], obs.shape[1]
+        self_flat = jnp.argmax(obs[:, :, 0].reshape(-1))
+        self_x = self_flat % W
+        self_y = self_flat // W
+        is_slot_0 = (self_x == self._v1_agent0_xy[0]) & (self_y == self._v1_agent0_xy[1])
+
+        dummy = jnp.zeros_like(cec_obs)
+        # slot 0 경로: [cec_obs, dummy] / slot 1 경로: [dummy, cec_obs]
+        obs_arr = jnp.where(
+            is_slot_0,
+            jnp.stack([cec_obs, dummy]),
+            jnp.stack([dummy, cec_obs]),
+        )
         done_arr = jnp.array([done, done])
 
-        actions, new_hstate, probs = self._runtime.step(obs_arr, hstate, done_arr, key)
-        self._step += 1
+        actions, new_cec_lstm, probs = self._runtime.step(obs_arr, cec_lstm, done_arr, key)
 
-        action = int(actions[0])
+        # 배정된 slot 의 action 선택. JIT-safe scalar int32.
+        slot_idx = jnp.where(is_slot_0, jnp.int32(0), jnp.int32(1))
+        action = actions[slot_idx].astype(jnp.int32)
+        new_step = jnp.where(done, jnp.int32(0), step_counter + jnp.int32(1))
+        new_hstate = (new_cec_lstm, new_step)
         extras = {"value": jnp.float32(0.0)}
         return action, new_hstate, extras
 
     def init_hstate(self, batch_size=1, key=None):
-        self._step = 0
-        return self._runtime.init_hidden(2)  # 항상 2 agents (1 real + 1 dummy)
+        # (LSTM hidden, step_counter) tuple
+        return (self._runtime.init_hidden(2), jnp.int32(0))
 
 
 def load_cec_policies(ckpt_dir: str, layout: str, stochastic: bool = True):

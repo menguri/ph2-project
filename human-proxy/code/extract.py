@@ -102,10 +102,18 @@ def _load_mdp_for_layout(layout: str, OvercookedGridworld):
 
 
 def export_by_position(traj_dir: str, out_dir: str, layout_filter: str = None,
-                       recompute_obs: bool = False):
-    """trajectory pickle → 레이아웃/포지션별 numpy arrays."""
+                       recompute_obs: bool = False,
+                       algo_exclude=None):
+    """trajectory pickle → 레이아웃/포지션별 numpy arrays.
+
+    algo_exclude: 제외할 algo_name 리스트 (예: ["cec"]).
+    """
     episodes = load_all_trajectories(traj_dir)
     print(f"총 {len(episodes)}개 에피소드 로드")
+    if algo_exclude:
+        before = len(episodes)
+        episodes = [ep for ep in episodes if ep.get("algo_name") not in set(algo_exclude)]
+        print(f"  [algo-exclude {algo_exclude}] {before - len(episodes)}개 제외 → {len(episodes)}개")
 
     # recompute 모드 설정
     if recompute_obs:
@@ -220,5 +228,8 @@ if __name__ == "__main__":
                         help="특정 레이아웃만 필터링")
     parser.add_argument("--recompute-obs", action="store_true",
                         help="state dict에서 obs를 재계산 (obs_adapter 버그 수정 후 사용)")
+    parser.add_argument("--algo-exclude", nargs="*", default=[],
+                        help="제외할 algo_name 리스트 (예: --algo-exclude cec)")
     args = parser.parse_args()
-    export_by_position(args.traj_dir, args.out_dir, args.layout, args.recompute_obs)
+    export_by_position(args.traj_dir, args.out_dir, args.layout,
+                       args.recompute_obs, algo_exclude=args.algo_exclude)

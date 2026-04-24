@@ -4,11 +4,13 @@
 #
 # 4 레이아웃: counter_circuit, coord_ring, cramped_room, forced_coord
 #
-# 각 레이아웃별 best params 기반, sweep 대상 파라미터만 변경:
+# 각 레이아웃별 best params 기반 (final/ph2 등록된 모델의 run_metadata.json 기준),
+# sweep 대상 파라미터만 변경:
 #   cramped_room:     omega=10 sigma=2 k=1 normal_prob=0.5
-#   coord_ring:       omega=10 sigma=2 k=3 normal_prob=0.0
-#   counter_circuit:  omega=10 sigma=2 k=1 normal_prob=0.0
+#   coord_ring:       omega=10 sigma=2 k=2 normal_prob=0.0
+#   counter_circuit:  omega=10 sigma=4 k=1 normal_prob=0.0
 #   forced_coord:     omega=4  sigma=8 k=1 normal_prob=0.0
+#   공통: ent=0.01 (default 사용)
 #
 # Sweep 1: penalty_state = {0, 1, 2, 3, 4}   (best omega/sigma/np 유지, k 변경)
 #   - penalty_state=0 → PH1_ENABLED=False (ph1 비활성화)
@@ -51,15 +53,16 @@ SAVE_EVAL_CHECKPOINTS=True
 GPUS="${GPUS:-1,3,4,5,6}"
 
 # =============================================================================
-# 레이아웃별 Best 파라미터
+# 레이아웃별 Best 파라미터 (final/ph2 등록 모델 기준)
 #   cramped_room:     omega=10 sigma=2 k=1 normal_prob=0.5
-#   coord_ring:       omega=10 sigma=2 k=3 normal_prob=0.0
-#   counter_circuit:  omega=10 sigma=2 k=1 normal_prob=0.0
+#   coord_ring:       omega=10 sigma=2 k=2 normal_prob=0.0
+#   counter_circuit:  omega=10 sigma=4 k=1 normal_prob=0.0
 #   forced_coord:     omega=4  sigma=8 k=1 normal_prob=0.0
+#   공통: ent=0.01 (default 사용)
 # =============================================================================
 declare -A BEST_OMEGA=( [cramped_room]=10.0 [coord_ring]=10.0 [counter_circuit]=10.0 [forced_coord]=4.0 )
-declare -A BEST_SIGMA=( [cramped_room]=2.0  [coord_ring]=2.0  [counter_circuit]=2.0  [forced_coord]=8.0 )
-declare -A BEST_K=(     [cramped_room]=1    [coord_ring]=3    [counter_circuit]=1    [forced_coord]=1 )
+declare -A BEST_SIGMA=( [cramped_room]=2.0  [coord_ring]=2.0  [counter_circuit]=4.0  [forced_coord]=8.0 )
+declare -A BEST_K=(     [cramped_room]=1    [coord_ring]=2    [counter_circuit]=1    [forced_coord]=1 )
 declare -A BEST_NP=(    [cramped_room]=0.5  [coord_ring]=0.0  [counter_circuit]=0.0  [forced_coord]=0.0 )
 
 LAYOUTS=("counter_circuit" "coord_ring" "cramped_room" "forced_coord")
@@ -130,6 +133,7 @@ echo "#################### Sweep 1: penalty_state (보강) ####################"
 # --- counter_circuit: ps3, ps4 재실행 ---
 #   k≥3에서 OOM으로 silent kill 발생 → NENVS를 64 → 32로 감량.
 #   PH1 multi-penalty 버퍼가 k에 선형 증가하므로 NENVS를 절반으로 보상.
+#   (best k=1, sigma=4, omega=10 / np=0.0)
 cc_omega=${BEST_OMEGA[counter_circuit]}
 cc_sigma=${BEST_SIGMA[counter_circuit]}
 cc_np=${BEST_NP[counter_circuit]}
@@ -138,7 +142,7 @@ for k in 3 4; do
     run_cell "counter_circuit" "$cc_omega" "$cc_sigma" "$k" "$cc_np" "ps${k}"
 done
 
-# --- coord_ring: ps1~ps4 ---
+# --- coord_ring: ps1~ps4 (best k=2) ---
 cr_omega=${BEST_OMEGA[coord_ring]}
 cr_sigma=${BEST_SIGMA[coord_ring]}
 cr_np=${BEST_NP[coord_ring]}

@@ -385,21 +385,35 @@ def _build_s2_vae_train(config, vae, vae_params):
              ck_buf, vn_state, update_step, rng) = runner_state
 
             # ---- ROLLOUT: 순수 VAE 파트너 ----
+            # Bidirectional ego slot: 원본 GAMMA coordinator 는 env 인덱스 `e % 2` 로
+            # ego 가 agent_0/agent_1 에 번갈아 배치됨. 짝수 env → ego=agent_0, 홀수 env → ego=agent_1.
+            # 이렇게 하면 ego 정책이 양쪽 slot 역할을 모두 학습 (forced_coord 처럼 역할이 비대칭인
+            # 레이아웃에서 특히 중요).
+            ego_slot0 = (jnp.arange(NUM_ENVS) % 2) == 0  # (E,) bool, fixed across updates
+
             def _env_step(step_state, _):
                 (env_state, last_obs, last_done,
                  ego_hs, dec_c, z_env, update_step, rng) = step_state
 
-                ego_obs = last_obs[env.agents[0]]        # (E, ...)
-                partner_obs = last_obs[env.agents[1]]     # (E, ...)
+                obs_0 = last_obs[env.agents[0]]           # (E, ...)
+                obs_1 = last_obs[env.agents[1]]           # (E, ...)
+                # Broadcast mask to obs shape
+                obs_mask = ego_slot0.reshape((NUM_ENVS,) + (1,) * (obs_0.ndim - 1))
+                ego_obs = jnp.where(obs_mask, obs_0, obs_1)      # ego's own obs
+                partner_obs = jnp.where(obs_mask, obs_1, obs_0)  # the other agent's obs
                 done_t = last_done
 
-                # 에피소드 리셋 시 새 z 샘플링 + decoder carry 초기화
-                rng, z_rng = jax.random.split(rng)
+                # z_change_prob: 매 step 확률적으로 z 재샘플 (원본 동작) + 에피 경계에선 항상 재샘플
+                z_change_prob = float(config.get("GAMMA_VAE_Z_CHANGE_PROB", 0.0))
+                rng, z_rng, z_flip_rng = jax.random.split(rng, 3)
                 new_z = jax.random.normal(z_rng, z_env.shape)
-                z_env = jnp.where(done_t[:, jnp.newaxis], new_z, z_env)
+                flip_prob = jax.random.uniform(z_flip_rng, (NUM_ENVS,))
+                should_change = (flip_prob < z_change_prob) | done_t
+                z_env = jnp.where(should_change[:, jnp.newaxis], new_z, z_env)
+                # decoder carry: 에피 경계에서만 초기화
                 dec_c = jnp.where(done_t[:, jnp.newaxis], jnp.zeros_like(dec_c), dec_c)
 
-                # Global obs for MAPPO critic
+                # Global obs for MAPPO critic (agent_0 view, 항상 고정 — 대칭이라 ego slot 과 무관)
                 if mappo_mode:
                     _gobs = _extract_global_obs(env_state)
                     _gobs_in = _gobs[jnp.newaxis]
@@ -430,8 +444,10 @@ def _build_s2_vae_train(config, vae, vae_params):
                 rng, k_vae = jax.random.split(rng)
                 partner_action = jax.random.categorical(k_vae, vae_logits)
 
-                # Step env
-                env_act = {env.agents[0]: ego_action, env.agents[1]: partner_action}
+                # Step env — per-env 로 ego/partner action 을 각 slot 에 배치
+                agent0_action = jnp.where(ego_slot0, ego_action, partner_action)
+                agent1_action = jnp.where(ego_slot0, partner_action, ego_action)
+                env_act = {env.agents[0]: agent0_action, env.agents[1]: agent1_action}
                 rng, k_env = jax.random.split(rng)
                 obsv, env_state, reward, done, info = jax.vmap(env.step)(
                     jax.random.split(k_env, NUM_ENVS), env_state, env_act,
@@ -441,7 +457,8 @@ def _build_s2_vae_train(config, vae, vae_params):
                 anneal = rew_shaping_anneal(update_step * NUM_STEPS * NUM_ENVS)
                 if "shaped_reward" in info:
                     reward = jax.tree_util.tree_map(lambda r, s: r + s * anneal, reward, info["shaped_reward"])
-                ego_reward = reward[env.agents[0]]
+                # Ego reward: per-env 에서 ego 가 있는 slot 의 reward 를 꺼냄
+                ego_reward = jnp.where(ego_slot0, reward[env.agents[0]], reward[env.agents[1]])
                 info.pop("shaped_reward", None)
                 info.pop("shaped_reward_events", None)
                 info = jax.tree_util.tree_map(lambda x: x.mean(axis=-1) if x.ndim > 1 else x, info)
@@ -461,7 +478,11 @@ def _build_s2_vae_train(config, vae, vae_params):
             (env_state, last_obs, last_done, ego_hstate, dec_carry, z_per_env, _, rng) = final
 
             # ---- GAE + PPO ----
-            ego_obs_last = last_obs[env.agents[0]]
+            # Ego's last obs depends on its slot (bidirectional)
+            _obs0_last = last_obs[env.agents[0]]
+            _obs1_last = last_obs[env.agents[1]]
+            _obs_mask_last = ego_slot0.reshape((NUM_ENVS,) + (1,) * (_obs0_last.ndim - 1))
+            ego_obs_last = jnp.where(_obs_mask_last, _obs0_last, _obs1_last)
             init_h_bs = ActorCriticRNN.initialize_carry(NUM_ENVS, GRU_HIDDEN_DIM)
             _last_gobs = traj.global_obs[-1][jnp.newaxis] if mappo_mode else None
             _, _, last_val, _ = network.apply(

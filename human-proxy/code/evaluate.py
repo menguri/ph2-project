@@ -53,21 +53,33 @@ def load_bc_policies(model_dir: Path, layout: str):
     return bc_policies
 
 
-def run_crossplay(bc_policies, rl_policies, layout, num_eval_seeds=10, env_kwargs=None):
+def run_crossplay(bc_policies, rl_policies, layout, num_eval_seeds=10,
+                  env_kwargs=None, fast=True):
     """BC × RL cross-play 매트릭스 평가.
 
     bc_policies: dict[int, list[BCPolicy]] — position별 BC policy 리스트
+    fast: True 면 JIT + vmap 기반 fast_eval.run_bc_rl_crossplay_fast 사용 (권장).
+          False 면 legacy per-pairing PolicyPairing/get_rollout 경로 (호환용).
     """
-    from overcooked_v2_experiments.eval.policy import PolicyPairing
-    from overcooked_v2_experiments.eval.rollout import get_rollout
     from overcooked_v2_experiments.eval.utils import make_eval_env
 
     if env_kwargs is None:
         env_kwargs = {}
-
     env, _, _ = make_eval_env(layout, env_kwargs)
-    results = []
 
+    if fast:
+        from fast_eval import run_bc_rl_crossplay_fast
+        max_steps = env_kwargs.get("max_steps", 400)
+        return run_bc_rl_crossplay_fast(
+            bc_policies, rl_policies, env,
+            num_eval_seeds=num_eval_seeds, max_steps=max_steps,
+        )
+
+    # Legacy path (per-pairing PolicyPairing → JIT 재컴파일 많음)
+    from overcooked_v2_experiments.eval.policy import PolicyPairing
+    from overcooked_v2_experiments.eval.rollout import get_rollout
+
+    results = []
     for bc_pos, bc_list in bc_policies.items():
         for bc_idx, bc_policy in enumerate(bc_list):
             for rl_idx, rl_policy in enumerate(rl_policies):
@@ -75,30 +87,20 @@ def run_crossplay(bc_policies, rl_policies, layout, num_eval_seeds=10, env_kwarg
                     pairing = PolicyPairing(bc_policy, rl_policy)
                 else:
                     pairing = PolicyPairing(rl_policy, bc_policy)
-
                 key = jax.random.PRNGKey(0)
                 eval_keys = jax.random.split(key, num_eval_seeds)
-
                 rewards = []
                 for ek in eval_keys:
                     rollout = get_rollout(pairing, env, ek, use_jit=True)
                     rewards.append(float(rollout.total_reward))
-
                 mean_r = np.mean(rewards)
                 std_r = np.std(rewards)
-
                 results.append({
-                    "bc_pos": bc_pos,
-                    "bc_seed": bc_idx,
-                    "rl_seed": rl_idx,
-                    "rewards": rewards,
-                    "mean_reward": mean_r,
-                    "std_reward": std_r,
+                    "bc_pos": bc_pos, "bc_seed": bc_idx, "rl_seed": rl_idx,
+                    "rewards": rewards, "mean_reward": mean_r, "std_reward": std_r,
                 })
-
                 print(f"    BC(pos{bc_pos},s{bc_idx}) × RL(s{rl_idx}): "
-                      f"{mean_r:.1f} ± {std_r:.1f}")
-
+                      f"{mean_r:.1f} ± {std_r:.1f}  [legacy]")
     return results
 
 
@@ -183,6 +185,8 @@ def main():
     parser.add_argument("--source", default=None, choices=["ph2", "baseline"],
                         help="RL 코드 소스 (자동 감지 가능)")
     parser.add_argument("--output-dir", default=None, help="결과 저장 디렉토리")
+    parser.add_argument("--legacy", action="store_true",
+                        help="기존 per-pairing PolicyPairing 경로 (느리지만 호환)")
     args = parser.parse_args()
 
     layout = args.layout
@@ -220,6 +224,7 @@ def main():
         bc_policies, rl_policies, layout,
         num_eval_seeds=args.num_eval_seeds,
         env_kwargs={"max_steps": args.max_steps},
+        fast=not args.legacy,
     )
 
     # 5. 결과 저장

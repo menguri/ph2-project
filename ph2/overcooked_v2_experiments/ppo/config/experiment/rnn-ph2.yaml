@@ -37,6 +37,13 @@ PH1_EPSILON: 0.0
 PH2_EPSILON: -1.0
 PH1_WARMUP_STEPS: 0
 
+# Penalty Linear Mode (Overcooked 실험용)
+# false → 기존 ω·exp(-σ·dist) 사용 (default, 원본 동작 보장)
+# true  → α/(ε+dist) 역수형 penalty 사용 (거리가 가까울수록 폭증)
+PH1_PENALTY_LINEAR_MODE: false
+PH1_LINEAR_ALPHA: 0.02      # exp 모드와 평균 penalty 스케일 매칭값 (실측 기반)
+PH1_LINEAR_EPSILON: 0.001   # 0-division 방지 + dist→0 폭주 cap (고정)
+
 # PH2 training does not run online eval, but keeps eval snapshot cadence for post-hoc eval.
 PH1_EVAL_ENABLED: False
 PH1_EVAL_NUM_SEEDS: 1

@@ -56,23 +56,46 @@ def _auto_cook(state, mdp):
                 obj.cook()
 
 
-def run_episode(rt, adapter, mdp, env, rng):
-    """self-play: 한 CEC 런타임이 양 agent 제어."""
+# overcooked-ai 의 agent_0/1 배치가 CEC 훈련 시점 (V1 agent_idx) 과 뒤바뀐 레이아웃.
+# compatability.py::LAYOUT_SWAP_AGENT_DICT 와 동일.
+LAYOUT_SLOT_SWAP = {
+    "cramped_room": True,
+    "counter_circuit": True,
+    "coord_ring": False,
+    "forced_coord": False,
+    "asymm_advantages": False,
+}
+
+
+def run_episode(rt, adapter, mdp, env, rng, slot_swap=False):
+    """self-play: 한 CEC 런타임이 양 agent 제어.
+
+    slot_swap=True: webapp 의 agent_0 이 V1 훈련 기준의 agent_1 위치에 있는 레이아웃.
+    CEC slot 0 은 훈련 시 agent_0 위치 (V1 기준) 를 경험했으므로, webapp agent_1 obs 를
+    slot 0 에 넣고 action 을 webapp agent_1 에 적용. agent_0 은 반대.
+    """
     env.reset()
     state = env.state
     hidden = rt.init_hidden(2)
     done_arr = jnp.zeros((2,), dtype=jnp.bool_)
     total = 0.0
     for t in range(NUM_STEPS):
-        # 양 agent obs 를 새 adapter 로 생성
         obs_dict = adapter.get_cec_obs_both(state, mdp, current_step=t)
-        obs_batch = jnp.stack([obs_dict["agent_0"], obs_dict["agent_1"]])
+        if slot_swap:
+            obs_batch = jnp.stack([obs_dict["agent_1"], obs_dict["agent_0"]])
+        else:
+            obs_batch = jnp.stack([obs_dict["agent_0"], obs_dict["agent_1"]])
 
         rng, sub = jax.random.split(rng)
         actions, hidden, _ = rt.step(obs_batch, hidden, done_arr, sub)
-        a0, a1 = int(actions[0]), int(actions[1])
+        if slot_swap:
+            a_for_agent0 = int(actions[1])
+            a_for_agent1 = int(actions[0])
+        else:
+            a_for_agent0 = int(actions[0])
+            a_for_agent1 = int(actions[1])
 
-        joint = (jaxmarl_to_overcooked(a0), jaxmarl_to_overcooked(a1))
+        joint = (jaxmarl_to_overcooked(a_for_agent0), jaxmarl_to_overcooked(a_for_agent1))
         next_state, reward, done, _info = env.step(joint)
         _auto_cook(next_state, mdp)
         total += float(reward)
@@ -97,11 +120,14 @@ def evaluate_layout(layout, num_episodes=NUM_EPISODES):
     env = OvercookedEnv.from_mdp(mdp, horizon=NUM_STEPS)
     print(f"  env + adapter ready", flush=True)
 
+    slot_swap = LAYOUT_SLOT_SWAP.get(layout, False)
+    print(f"  slot_swap={slot_swap}", flush=True)
+
     rewards = []
     rng = jax.random.PRNGKey(42)
     for ep in range(num_episodes):
         rng, sub = jax.random.split(rng)
-        r, steps = run_episode(rt, adapter, mdp, env, sub)
+        r, steps = run_episode(rt, adapter, mdp, env, sub, slot_swap=slot_swap)
         print(f"  ep{ep}: reward={r:.1f} steps={steps}", flush=True)
         rewards.append(r)
     mean = statistics.mean(rewards)
@@ -111,7 +137,8 @@ def evaluate_layout(layout, num_episodes=NUM_EPISODES):
     ratio_str = f"{ratio:.0%}" if baseline > 0 else "n/a"
     print(f"  direct-adapter mean = {mean:.2f} ± {std:.2f}   "
           f"(native baseline={baseline:.2f}, ratio={ratio_str})", flush=True)
-    return {"mean": mean, "std": std, "native": baseline, "ratio": ratio}
+    return {"mean": mean, "std": std, "native": baseline, "ratio": ratio,
+            "slot_swap": slot_swap}
 
 
 def main():

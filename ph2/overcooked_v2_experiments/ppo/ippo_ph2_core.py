@@ -1656,9 +1656,18 @@ def make_train(
                     valid_slots = valid_slots[:, :num_slots]
                     lat_dist_slots = jnp.where(valid_slots, lat_dist_slots, 0.0)
 
-                    ph1_omega = config.get("PH1_OMEGA", 1.0)
-                    ph1_sigma = config.get("PH1_SIGMA", 1.0)
-                    penalty_slots = ph1_omega * jnp.exp(-ph1_sigma * lat_dist_slots)
+                    # Penalty mode 분기 (Overcooked 전용 실험)
+                    # - linear: α / (ε + dist)  → 거리가 가까울수록 penalty 폭증, 멀수록 0에 수렴
+                    # - exponential (기본/원본): ω · exp(-σ · dist)
+                    # PH1_PENALTY_LINEAR_MODE=False(default) → 기존 동작 100% 유지
+                    if config.get("PH1_PENALTY_LINEAR_MODE", False):
+                        ph1_alpha = config.get("PH1_LINEAR_ALPHA", 0.02)
+                        ph1_epsilon_lin = config.get("PH1_LINEAR_EPSILON", 0.001)
+                        penalty_slots = ph1_alpha / (ph1_epsilon_lin + lat_dist_slots)
+                    else:
+                        ph1_omega = config.get("PH1_OMEGA", 1.0)
+                        ph1_sigma = config.get("PH1_SIGMA", 1.0)
+                        penalty_slots = ph1_omega * jnp.exp(-ph1_sigma * lat_dist_slots)
                     penalty_slots = jnp.where(valid_slots, penalty_slots, 0.0)
 
                     # [Warmup] Disable penalty if warming up

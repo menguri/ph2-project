@@ -7,7 +7,7 @@ cd "$(dirname "$0")" || exit 1
 PRESET_FACTORY_COMMANDS=(
   # GridSpread baseline level-one cross-play — combined (step_cost 미포함)
   # --per_ckpt_cross 
-  "./run_visualize.sh --gpu 5 --dir runs/20260408-141316_e8dwz0ys_GridSpread_fcp --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
+  "./run_visualize.sh --gpu 6 --dir runs/20260415-052017_e3jtaj0r_counter_circuit_gamma-vae_pop8_z16 --cross --num_seeds 5 --no_viz"
   # "./run_visualize.sh --gpu 1 --dir runs/20260407-180000_dt6clc2k_GridSpread_sp_e128 --cross --num_seeds 5 --no_viz --max_steps 100"
   # "./run_visualize.sh --gpu 0 --dir runs/20260405-195201_fpre9e74_GridSpread_e3t --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"
   # "./run_visualize.sh --gpu 1 --dir runs/20260405-204455_qtvxc1xs_GridSpread_mep_h64_pop5 --cross --cross_mode level_one --num_seeds 5 --no_viz --max_steps 100"

@@ -28,7 +28,7 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 
 # JAX 메모리 설정
 : "${XLA_PYTHON_CLIENT_PREALLOCATE:=false}"    # 메모리 선할당 방지
-: "${XLA_PYTHON_CLIENT_MEM_FRACTION:=0.7}"     # 0.0~1.0 비율 (너무 낮으면 성능 저하 가능)
+: "${XLA_PYTHON_CLIENT_MEM_FRACTION:=0.8}"     # 0.0~1.0 비율 (너무 낮으면 성능 저하 가능)
 
 # FCP_DEVICE 설정 (기본값: cpu)
 : "${FCP_DEVICE:=cpu}"

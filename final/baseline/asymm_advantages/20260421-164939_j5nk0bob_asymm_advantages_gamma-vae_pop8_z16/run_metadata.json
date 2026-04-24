@@ -1,0 +1,28 @@
+{
+  "alg_name": "GAMMA",
+  "layout": "asymm_advantages",
+  "wandb_id": "j5nk0bob",
+  "timestamp": "20260421-164939",
+  "num_seeds": 1,
+  "model": {
+    "GRU_HIDDEN_DIM": 128,
+    "FC_DIM_SIZE": 128,
+    "LR": 0.00025,
+    "NUM_ENVS": 64,
+    "NUM_STEPS": 256,
+    "TOTAL_TIMESTEPS": 30000000.0,
+    "ENT_COEF": 0.01,
+    "VF_COEF": 0.5,
+    "MAX_GRAD_NORM": 0.25,
+    "GAE_LAMBDA": 0.95,
+    "CLIP_EPS": 0.2,
+    "UPDATE_EPOCHS": 4,
+    "NUM_MINIBATCHES": 64,
+    "REW_SHAPING_HORIZON": 30000000.0
+  },
+  "population_size": 8,
+  "entropy_alpha": 0.01,
+  "gamma_method": "vae",
+  "vae_z_dim": 16,
+  "s2_num_seeds": 10
+}

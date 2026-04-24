@@ -75,6 +75,9 @@ LEGACY_VENV_DIR="${REPO_ROOT}/overcookedv2"
 : "${PH1_PAIR_MODE:=}"
 : "${PH1_RAW_DISTANCE:=}"
 : "${PH1_AGENTWISE_PENALTY:=}"
+: "${PH1_PENALTY_LINEAR_MODE:=}"
+: "${PH1_LINEAR_ALPHA:=}"
+: "${PH1_LINEAR_EPSILON:=}"
 : "${LATENT_MODE:=}"
 : "${SHARED_PREDICTION:=}"
 : "${SAVE_EVAL_CHECKPOINTS:=}"
@@ -282,6 +285,9 @@ while [[ $# -gt 0 ]]; do
     --pair-mode) PH1_PAIR_MODE="$2"; shift 2;;
     --ph1-raw-distance) PH1_RAW_DISTANCE="$2"; shift 2;;
     --ph1-agentwise-penalty) PH1_AGENTWISE_PENALTY="$2"; shift 2;;
+    --ph1-penalty-linear-mode) PH1_PENALTY_LINEAR_MODE="$2"; shift 2;;
+    --ph1-linear-alpha) PH1_LINEAR_ALPHA="$2"; shift 2;;
+    --ph1-linear-epsilon) PH1_LINEAR_EPSILON="$2"; shift 2;;
     --z-prediction-enabled) Z_PREDICTION_ENABLED="$2"; shift 2;;
     --z-pred-loss-coef) Z_PRED_LOSS_COEF="$2"; shift 2;;
     --latent-mode) LATENT_MODE="$2"; shift 2;;
@@ -646,6 +652,15 @@ if [[ -n "$PH1_RAW_DISTANCE" ]]; then
 fi
 if [[ -n "$PH1_AGENTWISE_PENALTY" ]]; then
   PY_ARGS+=("PH1_AGENTWISE_PENALTY=$PH1_AGENTWISE_PENALTY")
+fi
+if [[ -n "$PH1_PENALTY_LINEAR_MODE" ]]; then
+  PY_ARGS+=("PH1_PENALTY_LINEAR_MODE=$PH1_PENALTY_LINEAR_MODE")
+fi
+if [[ -n "$PH1_LINEAR_ALPHA" ]]; then
+  PY_ARGS+=("PH1_LINEAR_ALPHA=$PH1_LINEAR_ALPHA")
+fi
+if [[ -n "$PH1_LINEAR_EPSILON" ]]; then
+  PY_ARGS+=("PH1_LINEAR_EPSILON=$PH1_LINEAR_EPSILON")
 fi
 if [[ -n "$LATENT_MODE" ]]; then
   PY_ARGS+=("LATENT_MODE=$LATENT_MODE")

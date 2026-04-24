@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PH2 Human-AI Overcooked Study</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=consent3">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
 </head>
 <body>
     <div id="app">
@@ -20,24 +23,102 @@
             </div>
         </div>
 
-        <!-- Page: Consent -->
+        <!-- Page: Consent (Korean only — UNIST IRB document is Korean-authoritative) -->
         <div id="page-consent" class="page">
-            <h1>Overcooked Human-AI Coordination Study</h1>
+            <h1>연구 참여 안내</h1>
             <div class="card">
-                <h2 data-i18n="consent_title">Welcome</h2>
-                <p data-i18n="consent_desc">You will play the cooperative cooking game <strong>Overcooked</strong> with an AI partner.</p>
-                <p data-i18n="consent_task">Your task is to work together to prepare and deliver soup orders as efficiently as possible.</p>
-                <h3 data-i18n="consent_study_info_title">Study Overview</h3>
-                <p data-i18n="consent_study_info">You will play across <strong>5 different kitchen layouts</strong>, with <strong>7 games per layout</strong> (each game is 60 seconds). Total: <strong>35 games, approximately 40 minutes</strong>.</p>
-                <p data-i18n="consent_incentive">A gift card will be provided upon completion of all games.</p>
-                <h3 data-i18n="consent_controls_title">Controls</h3>
-                <ul>
-                    <li data-i18n="consent_controls_move"><strong>Arrow keys</strong> or <strong>WASD</strong> — Move</li>
-                    <li data-i18n="consent_controls_interact"><strong>Space</strong> or <strong>E</strong> — Interact (pick up / place / deliver)</li>
+                <h2>제로샷 협력을 위한 상태 차단 기반 다중에이전트 학습</h2>
+                <p>본 연구는 AI 에이전트가 사람과 얼마나 잘 협력하는지 측정하기 위한 <strong>컴퓨터 기반 협력 게임 연구</strong>입니다.</p>
+
+                <h3>요약</h3>
+                <ul class="consent-bullets">
+                    <li>AI 파트너와 <strong>Overcooked</strong> 협력 요리 게임을 플레이합니다.</li>
+                    <li>약 <strong>30–40분</strong> 소요 (짧은 에피소드 여러 회 + 에피소드 후 짧은 설문).</li>
+                    <li>완료 시 약 <strong>10,000원 기프티콘</strong> 지급 (중도 종료 시 미지급).</li>
+                    <li>개인식별정보(성명·연락처·이메일 등)를 <strong>일절 수집하지 않음</strong>.</li>
+                    <li>참여는 자발적이며 언제든지 브라우저를 닫아 중단할 수 있습니다.</li>
+                    <li>문의: <strong>mingukang@unist.ac.kr</strong></li>
                 </ul>
-                <p data-i18n="consent_survey_note">After each game, you'll be asked to fill out a short survey about your experience.</p>
-                <p data-i18n="consent_disconnect_note" style="color:#FF9800;">If you experience a disconnection, please contact <strong>mingukang@unist.ac.kr</strong>.</p>
-                <button onclick="showPage('page-pre-survey')" data-i18n="consent_agree">I Agree &amp; Continue</button>
+
+                <details class="consent-full">
+                    <summary>전체 안내문 보기</summary>
+                    <div class="consent-full-body">
+                        <h4>1. 연구의 배경 및 목적</h4>
+                        <p>본 연구는 인공지능(AI) 에이전트가 사람과 얼마나 잘 협력하는지를 측정하기 위한 컴퓨터 기반 협력 게임 연구입니다. 본 연구의 목적은 우리 연구팀이 새롭게 제안한 협력 학습 방법(SBC, State-Blocked Coordination)이 기존 6가지 방법(IPPO, FCP, E3T, MEP, GAMMA, CEC) 대비 사람과 더 잘 협력하는지를 객관적인 게임 점수와 주관적인 사용자 평가를 통해 검증하는 것입니다.</p>
+
+                        <h4>2. 참여 대상 및 참여 방법</h4>
+                        <ul>
+                            <li>만 18세 이상의 성인 (UNIST 구성원 및 일반인 모두 가능)</li>
+                            <li>한국어로 실험 설명을 이해하실 수 있는 분</li>
+                            <li>본인 소유의 PC 또는 노트북과 안정적인 인터넷 환경을 갖추고 계신 분</li>
+                            <li>시각적 자극(컴퓨터 화면)에 의한 어지러움, 두통, 발작 등의 증상이 없으신 분</li>
+                        </ul>
+                        <p>본 연구는 원격 비동기 방식으로 진행되며, 본인이 편리한 시간에 실험 링크에 접속하여 세션을 수행하시면 됩니다.</p>
+
+                        <h4>3. 연구 절차 및 소요 시간</h4>
+                        <p>1회 약 30–40분 소요:</p>
+                        <ol>
+                            <li>본 안내문을 읽고 두 체크박스에 동의한 뒤 ‘동의합니다’ 버튼을 누릅니다.</li>
+                            <li>간단한 설문(연령, 성별, 게임 경험 등)에 응답합니다 (약 1분).</li>
+                            <li>조작법을 익히는 짧은 튜토리얼을 진행합니다 (3–5분).</li>
+                            <li>7개의 AI 에이전트 × 3개 게임 환경에서 총 21회의 짧은 협력 에피소드를 수행합니다 (에피소드당 60–90초 + 짧은 설문).</li>
+                            <li>세션 완료 시 사례비(기프티콘 코드)가 화면에 표시됩니다.</li>
+                        </ol>
+
+                        <h4>4. 실험 내용</h4>
+                        <p>공개된 2인 협력 요리 시뮬레이션 게임 <strong>Overcooked</strong> 기반 웹 인터페이스를 사용합니다. 브라우저로 실험 링크에 접속해 방향키 + 상호작용 키로 캐릭터를 조작, AI 파트너와 재료를 준비·조리·배달합니다. 별도 소프트웨어 설치 불필요, 물리적 위험 없음.</p>
+
+                        <h4>5. 예상되는 위험과 불편</h4>
+                        <p>컴퓨터 기반 게임만 수행하는 최소 위험 수준 연구입니다. 다만 가벼운 불편이 발생할 수 있습니다:</p>
+                        <ul>
+                            <li>30–40분간 화면 응시로 인한 눈의 피로</li>
+                            <li>키보드 조작으로 인한 손목/손가락의 가벼운 피로</li>
+                            <li>AI 파트너와의 협력이 원활하지 않을 경우 가벼운 답답함</li>
+                        </ul>
+                        <p>언제든지 브라우저를 닫으면 즉시 세션이 종료됩니다. 침습적 처치·약물·신체 접촉·민감한 개인 질문은 일절 포함되지 않습니다.</p>
+
+                        <h4>6. 예상되는 이익</h4>
+                        <p>직접적인 의학적·학문적 이익은 보장되지 않습니다. 결과는 사람과 자연스럽게 협력하는 AI 시스템 개발에 기여할 것으로 기대되며, 최신 AI 협력 알고리즘을 직접 체험해 보는 간접적 의의가 있습니다.</p>
+
+                        <h4>7. 사례비(보상)</h4>
+                        <p>약 <strong>10,000원 상당의 카카오톡 기프티콘 코드</strong>가 지급됩니다. 세션 완료 시 완료 화면에 즉시 표시되므로, 스크린샷/복사하여 사용하실 수 있습니다. 연구팀은 누가 어떤 코드를 수령하였는지 추적하지 않습니다. <strong>중간 종료 시 기프티콘이 지급되지 않습니다</strong> (완료 화면 미도달의 결과이며, 중단에 대한 불이익 아님).</p>
+
+                        <h4>8. 개인정보 보호</h4>
+                        <p>개인식별정보(성명·전화번호·이메일·주소·주민등록번호 등)를 <strong>일절 수집하지 않습니다</strong>. 수집 항목:</p>
+                        <ul>
+                            <li>게임 로그 (키 입력 및 게임 상태 기록)</li>
+                            <li>게임 성과 지표 (점수, 소요 시간 등)</li>
+                            <li>주관적 평가 설문 응답</li>
+                            <li>비식별 인구통계 정보 (연령대·성별·게임 경험·UNIST 구성원 여부)</li>
+                        </ul>
+                        <p>모든 데이터는 연구용 ID(예: P01, P02)로만 관리되며, 학술 논문 출판 시 집단 수준 통계만 공개됩니다.</p>
+
+                        <h4>9. 자발적 참여 및 중단 권리</h4>
+                        <p>참여는 전적으로 자발적이며, 참여하지 않으시더라도 어떠한 불이익이나 차별도 없습니다. 동의 후에도 언제든 브라우저를 닫아 즉시 중단하실 수 있으며, 사유 설명 불필요. 중단된 세션의 데이터는 분석에서 제외됩니다.</p>
+
+                        <h4>10. 연락처</h4>
+                        <ul>
+                            <li>연구책임자: 한승열 (UNIST AI대학원 & 전기전자공학과 부교수) — <strong>syhan@unist.ac.kr</strong></li>
+                            <li>공동연구자: 강민구 (UNIST AI대학원 석사과정) — <strong>mingukang@unist.ac.kr</strong></li>
+                            <li>공동연구자: 이선우 (UNIST AI대학원 통합과정) — <strong>sunwoolee@unist.ac.kr</strong></li>
+                            <li>참여자 권리 관련 문의: UNIST 생명윤리위원회 행정간사 (Tel. 052-217-5214)</li>
+                        </ul>
+                        <p style="color:#aaa;margin-top:1rem;">본 연구는 UNIST 생명윤리위원회(IRB)의 심의 면제 확인을 받은 연구입니다.</p>
+                    </div>
+                </details>
+
+                <div class="consent-checks">
+                    <label class="consent-check">
+                        <input type="checkbox" id="consent-18plus">
+                        <span>본인은 <strong>만 18세 이상</strong>입니다.</span>
+                    </label>
+                    <label class="consent-check">
+                        <input type="checkbox" id="consent-voluntary">
+                        <span>본인은 안내문의 내용을 이해하였으며 <strong>자발적으로 본 연구에 참여</strong>합니다.</span>
+                    </label>
+                </div>
+
+                <button id="consent-agree-btn" onclick="submitConsent()" disabled>동의합니다</button>
             </div>
         </div>
 
@@ -140,8 +221,10 @@
                 <span id="hud-progress"></span>
                 <span id="hud-score">Score: 0</span>
                 <span id="hud-timer">Time: 0:00</span>
+                <span id="hud-model" style="margin-left:auto;padding:2px 8px;background:#222;color:#9ef;border-radius:4px;font-family:monospace;font-size:0.85em;"></span>
             </div>
             <canvas id="game-canvas" width="500" height="400"></canvas>
+            <div id="countdown-overlay"></div>
             <div id="game-status"></div>
             <!-- Mobile controls (터치 기기에서만 표시) -->
             <div id="mobile-controls">
@@ -164,33 +247,38 @@
             <div class="card">
                 <h2 data-i18n="post_title">Rate Your AI Partner</h2>
                 <p id="post-score-display"></p>
+                <p class="likert-legend" data-i18n="post_legend">1 = Strongly Disagree, 7 = Strongly Agree</p>
                 <form id="post-survey-form">
-                    <label><span data-i18n="post_fluency">The agent and I worked together fluently.</span>
-                        <input type="range" id="post-fluency" min="1" max="7" value="4">
+                    <label><span data-i18n="post_adaptive">The AI partner adapted to my actions and strategy.</span>
+                        <input type="range" id="post-adaptive" min="1" max="7" value="4">
                         <span class="likert-val">4</span>
                     </label>
-                    <label><span data-i18n="post_contribution">The agent contributed to our team performance.</span>
-                        <input type="range" id="post-contribution" min="1" max="7" value="4">
+                    <label><span data-i18n="post_consistent">The AI partner's behavior was consistent and predictable.</span>
+                        <input type="range" id="post-consistent" min="1" max="7" value="4">
                         <span class="likert-val">4</span>
                     </label>
-                    <label><span data-i18n="post_trust">I trusted the agent's actions.</span>
-                        <input type="range" id="post-trust" min="1" max="7" value="4">
+                    <label><span data-i18n="post_human_like">The AI partner behaved in a human-like way.</span>
+                        <input type="range" id="post-human-like" min="1" max="7" value="4">
                         <span class="likert-val">4</span>
                     </label>
-                    <label><span data-i18n="post_human_likeness">The agent felt like a human player.</span>
-                        <input type="range" id="post-human-likeness" min="1" max="7" value="4">
+                    <label><span data-i18n="post_in_my_way">The AI partner often got in my way.</span>
+                        <input type="range" id="post-in-my-way" min="1" max="7" value="4">
                         <span class="likert-val">4</span>
                     </label>
-                    <label><span data-i18n="post_obstruction">The agent got in my way.</span>
-                        <input type="range" id="post-obstruction" min="1" max="7" value="4">
+                    <label><span data-i18n="post_frustrating">Playing with this AI partner was frustrating.</span>
+                        <input type="range" id="post-frustrating" min="1" max="7" value="4">
                         <span class="likert-val">4</span>
                     </label>
-                    <label><span data-i18n="post_frustration">I felt frustrated during the game.</span>
-                        <input type="range" id="post-frustration" min="1" max="7" value="4">
+                    <label><span data-i18n="post_enjoyed">I enjoyed collaborating with this AI partner.</span>
+                        <input type="range" id="post-enjoyed" min="1" max="7" value="4">
                         <span class="likert-val">4</span>
                     </label>
-                    <label><span data-i18n="post_play_again">I would want to play with this agent again.</span>
-                        <input type="range" id="post-play-again" min="1" max="7" value="4">
+                    <label><span data-i18n="post_coordination">The AI partner and I coordinated well as a team.</span>
+                        <input type="range" id="post-coordination" min="1" max="7" value="4">
+                        <span class="likert-val">4</span>
+                    </label>
+                    <label><span data-i18n="post_workload">How mentally demanding was it to work with this partner? (1 = Very Low, 7 = Very High)</span>
+                        <input type="range" id="post-workload" min="1" max="7" value="4">
                         <span class="likert-val">4</span>
                     </label>
                     <label><span data-i18n="post_open">Describe your experience with the agent.</span>
@@ -232,7 +320,7 @@
         </div>
     </div>
 
-    <script src="/static/js/i18n.js"></script>
-    <script src="/static/js/main.js"></script>
+    <script src="/static/js/i18n.js?v=consent3"></script>
+    <script src="/static/js/main.js?v=consent3"></script>
 </body>
 </html>

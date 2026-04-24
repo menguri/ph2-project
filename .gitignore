@@ -246,3 +246,6 @@ overcooked_v2_experiments/human_rl/imitation/processed_data
 # Human-proxy: models and training data (large files)
 human-proxy/models/
 human-proxy/data/
+
+# CEC integration checkpoints (확장자 없는 'checkpoint' 파일)
+cec_integration/ckpts/

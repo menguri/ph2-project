@@ -55,6 +55,15 @@ def init_routes(config: dict):
         }
         _models_by_layout = {k: v for k, v in _models_by_layout.items() if v}
         print(f"[init] Algo filter: {_algo_filter}")
+    # 특정 레이아웃만 활성화 (파일럿/테스트용, 없거나 빈 리스트면 전체)
+    _layout_filter = config.get("agent", {}).get("layout_filter", None)
+    if _layout_filter:
+        _models_by_layout = {
+            layout: models
+            for layout, models in _models_by_layout.items()
+            if layout in _layout_filter
+        }
+        print(f"[init] Layout filter: {_layout_filter}")
     total = sum(len(v) for v in _models_by_layout.values())
     print(f"[init] Found {total} model checkpoints in {model_path}")
     for layout, models in _models_by_layout.items():
@@ -222,6 +231,11 @@ async def game_websocket(websocket: WebSocket, participant_id: str):
             tick_interval = _config["game"].get("tick_interval_ms", 250) / 1000.0
             episode_length = _config["game"].get("episode_length", 400)
 
+            # [JIT warmup — background] session.warmup() 은 동기 + JAX compile 로 수 초 걸림.
+            # 이것을 thread executor 로 띄워서 client 카운트다운(3-2-1-시작!) 과 **병렬** 실행되게 한다.
+            # game_start 를 즉시 보내 client 는 바로 카운트다운 시작, 그 3.2초 동안 서버는 JIT 컴파일.
+            warmup_task = asyncio.create_task(asyncio.to_thread(session.warmup))
+
             # 초기 상태 전송 (진행 상황 포함)
             init_info = session.get_init_info()
             init_info["algo_name"] = model_info["algo_name"]
@@ -233,6 +247,25 @@ async def game_websocket(websocket: WebSocket, participant_id: str):
             init_info["total_played"] = next_game["total_played"]
             init_info["total_needed"] = next_game["total_needed"]
             await websocket.send_json({"type": "game_start", **init_info})
+
+            # [Countdown handshake] 클라이언트가 "3-2-1-시작!/Start!" 카운트다운을 마치면
+            # {"type":"ready"} 를 보낸다. 그 전까지 서버는 step 을 진행하지 않아
+            # agent/human 이 동시에 출발하도록 보장.
+            try:
+                while True:
+                    msg = await websocket.receive_json()
+                    if msg.get("type") == "ready":
+                        break
+                    # 드물게 ready 전에 action 이 먼저 들어오는 경우 무시 (ready 대기 유지)
+            except WebSocketDisconnect:
+                warmup_task.cancel()
+                continue
+
+            # warmup 이 카운트다운보다 오래 걸렸다면 여기서 완료를 기다림 (보통은 이미 끝남)
+            try:
+                await warmup_task
+            except Exception as e:
+                print(f"[warmup-task] error: {e}")
 
             # 실시간 게임 루프: 서버가 틱을 주도하고, 인간 액션은 비동기 수신
             latest_action = None
@@ -300,6 +333,9 @@ async def game_websocket(websocket: WebSocket, participant_id: str):
                             episode_length=session.timestep,
                             collisions=session.collisions,
                             deliveries=session.deliveries,
+                            role_specialization=session.role_specialization,
+                            idle_time_ratio=session.idle_time_ratio,
+                            task_events=session._task_events,
                         )
                         db.add(ep)
                         db.commit()
@@ -344,6 +380,9 @@ async def submit_pre_survey(data: PreSurveySubmit):
         "gender": data.gender,
         "gaming_exp": data.gaming_exp,
         "overcooked_exp": data.overcooked_exp,
+        "consent_18plus": data.consent_18plus,
+        "consent_voluntary": data.consent_voluntary,
+        "consent_timestamp": data.consent_timestamp,
     }
     db.commit()
     db.close()
@@ -361,13 +400,14 @@ async def submit_post_survey(data: PostSurveySubmit):
     survey = SurveyResponse(
         id=str(uuid.uuid4()),
         episode_id=data.episode_id,
-        fluency=data.fluency,
-        contribution=data.contribution,
-        trust=data.trust,
-        human_likeness=data.human_likeness,
-        obstruction=data.obstruction,
-        frustration=data.frustration,
-        play_again=data.play_again,
+        adaptive=data.adaptive,
+        consistent=data.consistent,
+        human_like=data.human_like,
+        in_my_way=data.in_my_way,
+        frustrating=data.frustrating,
+        enjoyed=data.enjoyed,
+        coordination=data.coordination,
+        workload=data.workload,
         open_text=data.open_text,
     )
     db.add(survey)
@@ -407,10 +447,15 @@ async def admin_export(password: str = Query(...)):
     writer.writerow([
         "episode_id", "participant_id", "algo_name", "seed_id", "layout",
         "human_player_index", "final_score", "episode_length",
-        "collisions", "deliveries", "created_at",
+        # 객관 지표 (H1/H3/H4)
+        "collisions", "deliveries", "role_specialization", "idle_time_ratio",
+        "task_events",
+        "created_at",
         "age", "gender", "gaming_exp", "overcooked_exp",
-        "fluency", "contribution", "trust",
-        "human_likeness", "obstruction", "frustration", "play_again",
+        "consent_18plus", "consent_voluntary", "consent_timestamp",
+        # 주관 지표 8개 (H2/H3)
+        "adaptive", "consistent", "human_like", "in_my_way",
+        "frustrating", "enjoyed", "coordination", "workload",
         "open_text",
     ])
 
@@ -422,12 +467,16 @@ async def admin_export(password: str = Query(...)):
             ep.id, ep.participant_id, ep.algo_name, ep.seed_id, ep.layout,
             ep.human_player_index, ep.final_score, ep.episode_length,
             getattr(ep, "collisions", ""), getattr(ep, "deliveries", ""),
+            getattr(ep, "role_specialization", ""),
+            getattr(ep, "idle_time_ratio", ""),
+            json.dumps(getattr(ep, "task_events", None) or {}),
             ep.created_at,
             pre.get("age"), pre.get("gender"), pre.get("gaming_exp"), pre.get("overcooked_exp"),
-            s.fluency if s else "", s.contribution if s else "",
-            s.trust if s else "",
-            s.human_likeness if s else "", s.obstruction if s else "",
-            s.frustration if s else "", s.play_again if s else "",
+            pre.get("consent_18plus"), pre.get("consent_voluntary"), pre.get("consent_timestamp"),
+            s.adaptive if s else "", s.consistent if s else "",
+            s.human_like if s else "", s.in_my_way if s else "",
+            s.frustrating if s else "", s.enjoyed if s else "",
+            s.coordination if s else "", s.workload if s else "",
             s.open_text if s else "",
         ])
 

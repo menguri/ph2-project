@@ -35,20 +35,14 @@ def _float_to_slug(value, fallback="na"):
 def _ph_param_suffix(config) -> str:
     """Add PH1/PH2 run-name params for easier run tracking.
 
-    Included fields:
-    - PH1_EPSILON
-    - PH1_OMEGA
-    - PH1_SIGMA
-    - PH1_MAX_PENALTY_COUNT (k)
-    - TRANSFORMER_ACTION (ct0 / ct1)
+    Exp mode  (default)  : _e{eps}_o{omega}_s{sigma}_k{k}_ct{01}[_pair]
+    Linear mode           : _e{eps}_a{alpha}_k{k}_ct{01}[_pair]   (omega/sigma 의미 없음)
     """
     alg_name = str(config.get("ALG_NAME", "")).upper()
     if ("PH1" not in alg_name) and ("PH2" not in alg_name):
         return ""
 
     eps = _float_to_slug(config.get("PH1_EPSILON", None))
-    omega = _float_to_slug(config.get("PH1_OMEGA", None))
-    sigma = _float_to_slug(config.get("PH1_SIGMA", None))
 
     # penalty 슬롯 수 (PH1_MAX_PENALTY_COUNT)
     max_k = config.get("PH1_MAX_PENALTY_COUNT", None)
@@ -62,6 +56,14 @@ def _ph_param_suffix(config) -> str:
     pair_on = _as_bool(config.get("PH1_PAIR_MODE", False))
     pair_str = "_pair" if pair_on else ""
 
+    # Linear penalty mode → omega/sigma 대신 alpha 표기
+    linear_mode = _as_bool(config.get("PH1_PENALTY_LINEAR_MODE", False))
+    if linear_mode:
+        alpha = _float_to_slug(config.get("PH1_LINEAR_ALPHA", None))
+        return f"_e{eps}_a{alpha}{k_str}{ct_str}{pair_str}"
+
+    omega = _float_to_slug(config.get("PH1_OMEGA", None))
+    sigma = _float_to_slug(config.get("PH1_SIGMA", None))
     return f"_e{eps}_o{omega}_s{sigma}{k_str}{ct_str}{pair_str}"
 
 

@@ -1,0 +1,6 @@
+layout,mean_reward,std_reward,n_pairs
+cramped_room,64.64,16.11,25
+asymm_advantages,52.32,33.62,25
+coord_ring,47.84,14.82,25
+counter_circuit,32.96,12.66,25
+forced_coord,9.76,6.70,25
