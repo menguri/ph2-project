@@ -12,7 +12,7 @@ monotonic==1.5
 python-engineio==3.13.0
 python-socketio==4.6.0
 six==1.15.0
-Werkzeug==2.0.3
+Werkzeug==3.1.6
 tensorflow==2.0.3
 requests==2.23.0
 protobuf==3.19
